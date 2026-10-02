@@ -1,6 +1,7 @@
 pragma Singleton
 import Quickshell
 import QtQuick
+
 // Central palette. Later, your theme-set script can rewrite this file
 // and Quickshell live-reloads on change.
 Singleton {
