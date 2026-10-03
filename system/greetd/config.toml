@@ -2,5 +2,5 @@
 vt = 1
 
 [default_session]
-command = "Hyprland -c /etc/greetd/hyprland.conf"
+command = "Hyprland -c /etc/greetd/hyprland.lua"
 user = "greetd"
