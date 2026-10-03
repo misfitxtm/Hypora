@@ -21,6 +21,8 @@ Variants {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 8 }
             spacing: 4
 
+            ControlCenter { window: bar }
+
             Repeater {
                 model: 9
                 Rectangle {
