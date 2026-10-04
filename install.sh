@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Minimal installer for testing on a fresh Fedora install.
-# Covers: packages, Hyprland (Lua) config, Quickshell config, theme.
-# NOT included: greeter (run ./install-greeter.sh separately), packages/ lists.
+# Covers: packages, Hyprland (Lua) config, Quickshell config, theme, SDDM login screen.
+# NOT included: packages/ lists.
 #
 # Safe to re-run. Config files are SYMLINKED into the repo, so keep the repo where it is.
 set -euo pipefail
@@ -41,15 +41,12 @@ available() { [ -n "$(dnf repoquery --quiet "$1" 2>/dev/null)" ]; }
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
 
-if ! available hyprland; then
-    log "hyprland not in enabled repos; enabling COPR solopasha/hyprland"
-    sudo dnf copr enable -y solopasha/hyprland
-fi
-if ! available quickshell; then
-    # Verify this COPR is current before relying on it; Terra or a source build also work.
-    log "quickshell not in enabled repos; enabling COPR errornosugar/quickshell"
-    sudo dnf copr enable -y errornosugar/quickshell
-fi
+# Fedora doesn't ship Hyprland or uwsm; sdegler/hyprland tracks current releases
+# (the old solopasha COPR stopped at 0.49, before Lua configs existed).
+sudo dnf copr disable -y solopasha/hyprland >/dev/null 2>&1 || true
+log "Enabling COPR sdegler/hyprland"
+sudo dnf copr enable -y sdegler/hyprland
+available quickshell || die "quickshell not found in enabled repos (it ships in Fedora 42+)."
 
 # ---------- packages ----------
 REQUIRED=(
@@ -57,7 +54,7 @@ REQUIRED=(
     NetworkManager NetworkManager-tui
     pipewire wireplumber upower
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
-    polkit jetbrains-mono-fonts
+    polkit jetbrains-mono-fonts sddm
 )
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
@@ -72,6 +69,15 @@ log "Installing optional packages"
 for p in "${OPTIONAL[@]}"; do
     sudo dnf install -y "$p" || warn "Skipped optional package: $p"
 done
+# 'install' leaves an already-installed (possibly old) Hyprland alone
+sudo dnf upgrade -y hyprland uwsm || true
+
+# Hyprland reads hyprland.lua only from 0.55 on; older versions ignore it entirely
+# (no autostart, no keybinds) and generate a default hyprland.conf instead.
+hypr_ver=$(Hyprland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ -n "$hypr_ver" ] && [ "$(printf '%s\n' 0.55.0 "$hypr_ver" | sort -V | head -1)" != 0.55.0 ]; then
+    die "Hyprland $hypr_ver is too old for hyprland.lua (need 0.55+). Run: sudo dnf upgrade --refresh hyprland"
+fi
 
 # ---------- services ----------
 log "Enabling services"
@@ -106,7 +112,34 @@ mkdir -p "$CONF/quickshell"
 for f in "$REPO"/config/quickshell/*; do
     [ -f "$f" ] && link "$f" "$CONF/quickshell/$(basename "$f")"
 done
+# Drop links to files that were removed from the repo (e.g. the old qmldir)
+for l in "$CONF"/quickshell/*; do
+    if [ -L "$l" ] && [ ! -e "$l" ] && [[ "$(readlink "$l")" == "$REPO"/* ]]; then rm "$l"; fi
+done
 link "$CONF/hypora/themes/current/Theme.qml" "$CONF/quickshell/Theme.qml"
+
+# ---------- login screen (SDDM) ----------
+# Same setup as Omarchy: SDDM on a minimal Hyprland session with a small QML theme.
+# The theme's colors are generated from the active Hypora theme.
+log "Installing SDDM login screen"
+SDDM_THEME=/usr/share/sddm/themes/hypora
+sudo install -d "$SDDM_THEME" /etc/sddm.conf.d
+sudo install -m644 "$REPO"/system/sddm/hypora/{Main.qml,metadata.desktop} "$SDDM_THEME/"
+sudo install -m644 "$REPO/system/sddm/hyprland.lua" "$SDDM_THEME/hyprland.lua"
+{
+    echo "[General]"
+    sed -nE 's/.*property (color|string) (bg|surface|fg|dim|accent|error|font): *("[^"]*").*/\2=\3/p' \
+        "$REPO/themes/$THEME/Theme.qml"
+} | sudo tee "$SDDM_THEME/theme.conf" >/dev/null
+sudo install -m644 "$REPO/system/sddm/10-hypora.conf" /etc/sddm.conf.d/10-hypora.conf
+
+for dm in gdm lightdm greetd; do
+    if systemctl is-enabled -q "$dm" 2>/dev/null; then
+        sudo systemctl disable "$dm"
+        warn "Disabled $dm (Hypora uses SDDM)"
+    fi
+done
+sudo systemctl enable sddm
 
 # ---------- bin (optional) ----------
 shopt -s nullglob
@@ -124,10 +157,10 @@ log "Done."
 cat <<EOF
 
 Next steps:
-  1. No login screen is installed yet. From a text console (TTY), start the desktop with:
-         uwsm start hyprland-uwsm.desktop
-     (or just 'Hyprland' if uwsm gives you trouble)
+  1. Reboot. The Hypora login screen (SDDM) starts the uwsm-managed Hyprland session.
+     If it doesn't come up: Ctrl+Alt+F2, log in, and check 'journalctl -b -u sddm'.
   2. If the bar doesn't appear, run 'qs' in a terminal to see QML errors.
+     If keybinds don't work, run 'hyprctl configerrors'.
   3. Test notifications:  notify-send "Test" "Hello"
      Test polkit:         pkexec true
 

@@ -129,7 +129,8 @@ Item {
                     PowerButton {
                         label: "Logout"
                         confirm: true
-                        onActivated: Quickshell.execDetached(["uwsm", "stop"])
+                        onActivated: Quickshell.execDetached(["sh", "-c",
+                            "uwsm check is-active >/dev/null 2>&1 && uwsm stop || hyprctl dispatch 'hl.dsp.exit()'"])
                     }
                     PowerButton {
                         label: "Reboot"
