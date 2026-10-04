@@ -8,7 +8,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 
 - Omarchy's "install and it just looks good" experience, on Fedora instead of Arch
 - A small, readable codebase: plain shell scripts and QML, no framework on top
-- One place to change colors; everything reads from the active theme
+- One place to change colors; the Quickshell shell reads everything from the active theme
 - Deliberately minimal, with no bundled AI tooling
 
 ## What you get
@@ -45,7 +45,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 ## Install
 
 ```bash
-git clone <repo-url> ~/.local/share/hypora
+git clone https://github.com/misfitxtm/Hypora.git ~/.local/share/hypora
 cd ~/.local/share/hypora
 ./install.sh
 ```
@@ -108,11 +108,10 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │       ├── config.toml
 │       ├── hyprland.lua    # minimal session that hosts the greeter
 │       └── quickshell/     # greeter shell.qml + qmldir (PowerButton and Theme come from elsewhere)
-├── bin/                    # helper scripts, linked to ~/.local/bin (empty for now)
-├── packages/               # planned: package lists read by the installer
-├── install/                # planned: modular install steps
-└── src/
+└── LICENSE
 ```
+
+Not created yet: `bin/` (helper scripts; `install.sh` links anything placed there into `~/.local/bin/`), `packages/` and `install/` (see [Status](#status)).
 
 ## Customizing
 
@@ -137,6 +136,7 @@ In progress / planned:
 ## Known limitations
 
 - Developed and tested in a VM so far; real hardware (GPU, laptop battery and backlight) is less tested
+- Hyprland window borders are hardcoded to Nord colors in `hyprland.lua` and don't follow the selected theme yet
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
 - The Quickshell COPR is a third-party dependency, so builds may lag behind or break after Fedora updates
 - Fedora versions tested: _fill in_
