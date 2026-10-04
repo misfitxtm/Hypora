@@ -2,7 +2,7 @@
 
 An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, installed with a single post-install script on top of a stock Fedora install (no custom ISO). The shell is built on [Quickshell](https://quickshell.org): a custom bar, control center, notification daemon and polkit prompt, all themeable from one palette file.
 
-> **Status: early / work in progress.** The desktop shell and installer work for testing on a fresh install. The greetd login screen is written but untested, and is installed separately. See [Status](#status).
+> **Status: early / work in progress.** The desktop shell, installer and SDDM login screen are ready for testing on a fresh install. See [Status](#status).
 
 ## Goals
 
@@ -14,6 +14,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 ## What you get
 
 **Desktop**
+- A minimal SDDM login screen (the same approach Omarchy uses) that follows the active theme
 - Hyprland, started through `uwsm`
 - Quickshell as the shell layer (replaces Waybar, Mako and a standalone polkit agent)
 
@@ -29,6 +30,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Tray (`Tray.qml`) | System tray: left click activates, middle click secondary action, right click menu |
 | Battery (`Battery.qml`) | Shown on laptops only, turns red when low |
 | Notifications (`Notifications.qml`) | Quickshell *is* the notification daemon: popups top-right, auto-expire, critical ones persist, action buttons supported |
+| Launcher (`Launcher.qml`) | App launcher on **SUPER + R**: type to filter installed apps, Up/Down or Tab to select, Enter to launch, Esc to close |
 | Polkit (`PolkitDialog.qml`) | Full-screen authentication prompt (works with `pkexec` and other polkit requests) |
 
 **Theming**
@@ -59,12 +61,13 @@ THEME=Nord ./install.sh
 The installer is safe to re-run. It:
 
 1. Checks you're on Fedora and not running as root
-2. Enables the Hyprland and Quickshell COPRs only when the packages aren't already available
+2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
 3. Installs required packages (warns and continues if an optional one is unavailable)
 4. Enables `NetworkManager` and `upower`, and sets the default boot target to graphical
 5. Points `~/.config/hypora/themes/current` at the chosen theme
 6. **Symlinks** `config/hypr/hyprland.lua` and each file in `config/quickshell/` into `~/.config/`, and links `Theme.qml` from the current theme
-7. Links any scripts in `bin/` into `~/.local/bin/`
+7. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
+8. Links any scripts in `bin/` into `~/.local/bin/`
 
 Anything it replaces is saved as `<name>.bak.<timestamp>`.
 
@@ -72,13 +75,23 @@ Because configs are symlinks into the repo, **keep the repo where you cloned it*
 
 ### Starting the desktop
 
-There's no login screen installed yet, so from a text console (TTY) run:
+Reboot. SDDM shows the Hypora login screen and starts the **Hyprland (uwsm-managed)** session. Click your name (or press Up/Down) to switch users.
 
-```bash
-uwsm start hyprland-uwsm.desktop
-```
+Without the login screen, start it from a text console (TTY) with `uwsm start hyprland-uwsm.desktop` (or `start-hyprland`). Quickshell starts from the `hyprland.start` hook in `hyprland.lua` either way.
 
-(or plain `Hyprland` if you aren't using uwsm). Quickshell starts from the `hyprland.start` hook in `hyprland.lua`.
+## Keybindings
+
+| Keys | Action |
+|---|---|
+| SUPER + Enter | Terminal |
+| SUPER + R | App launcher |
+| SUPER + C | Close window |
+| SUPER + V | Toggle floating |
+| SUPER + L | Lock (hyprlock) |
+| SUPER + M | Log out |
+| SUPER + arrows | Move focus |
+| SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace |
+| SUPER + drag (left / right mouse) | Move / resize window |
 
 ## Usage and testing
 
@@ -86,6 +99,7 @@ uwsm start hyprland-uwsm.desktop
 qs                          # run Quickshell manually to see QML errors in the terminal
 notify-send "Test" "Hello"  # test notifications
 pkexec true                 # test the polkit prompt
+qs ipc call launcher toggle # open the launcher without the keybind
 ```
 
 Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alongside Quickshell. They will conflict with it.
@@ -95,19 +109,18 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 ```
 .
 ├── install.sh              # main installer
-├── install-greeter.sh      # greeter installer (run separately)
 ├── config/                 # symlinked into ~/.config
 │   ├── hypr/hyprland.lua
 │   └── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
-│                           # Battery, Notifications, PolkitDialog, Slider, PowerButton, qmldir
+│                           # Battery, Notifications, PolkitDialog, Launcher, Slider, PowerButton
 ├── themes/
 │   ├── Nord/Theme.qml      # palette, font, app defaults
 │   └── TokyoNight/Theme.qml
 ├── system/
-│   └── greetd/             # root-owned files for the greeter, installed to /etc/greetd/
-│       ├── config.toml
-│       ├── hyprland.lua    # minimal session that hosts the greeter
-│       └── quickshell/     # greeter shell.qml + qmldir (PowerButton and Theme come from elsewhere)
+│   └── sddm/               # login screen, installed by install.sh
+│       ├── 10-hypora.conf  # -> /etc/sddm.conf.d/ (Wayland greeter on Hyprland, hypora theme)
+│       ├── hyprland.lua    # minimal Hyprland session that hosts the greeter
+│       └── hypora/         # SDDM theme -> /usr/share/sddm/themes/hypora/
 └── LICENSE
 ```
 
@@ -126,10 +139,10 @@ Working:
 - Installer for packages, services, theme and config links
 - Quickshell bar, control center, tray, volume, network, battery, notifications and polkit prompt
 - Hyprland Lua config with keybinds, Nord-style borders and Quickshell autostart
+- SDDM login screen (needs testing on real hardware)
 
 In progress / planned:
-- Quickshell-based **greetd greeter** (login screen): written (`system/greetd/`, `install-greeter.sh`) but untested, and not part of `install.sh`
-- Runtime theme switching (`theme-set`) that reloads apps and syncs the greeter
+- Runtime theme switching (`theme-set`) that reloads apps and syncs the login screen
 - Package lists in `packages/*.txt` and a modular `install/` directory
 - Brightness control in the control center
 
@@ -138,7 +151,8 @@ In progress / planned:
 - Developed and tested in a VM so far; real hardware (GPU, laptop battery and backlight) is less tested
 - Hyprland window borders are hardcoded to Nord colors in `hyprland.lua` and don't follow the selected theme yet
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
-- The Quickshell COPR is a third-party dependency, so builds may lag behind or break after Fedora updates
+- Hyprland comes from the third-party `sdegler/hyprland` COPR, so builds may lag behind or break after Fedora updates
+- Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
 - Fedora versions tested: _fill in_
 
 ## License

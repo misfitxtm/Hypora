@@ -5,4 +5,5 @@ ShellRoot {
     Bar {}
     PolkitDialog {}
     Notifications {}
+    Launcher {}
 }

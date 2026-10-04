@@ -9,6 +9,13 @@
 local terminal = "kitty"
 local mainMod  = "SUPER"
 
+-- Run through uwsm when the session is uwsm-managed (the login screen picks that
+-- session), but still work when Hyprland was started directly from a TTY.
+local function app(cmd)
+    return "if uwsm check is-active >/dev/null 2>&1; then exec uwsm app -- " .. cmd .. "; else exec " .. cmd .. "; fi"
+end
+local logout = "uwsm check is-active >/dev/null 2>&1 && uwsm stop || hyprctl dispatch 'hl.dsp.exit()'"
+
 ------------------ MONITORS ------------------
 hl.monitor({
     output   = "",
@@ -25,7 +32,7 @@ hl.env("HYPRCURSOR_SIZE", "24")
 -- Quickshell replaces waybar + mako + a standalone polkit agent.
 -- Don't start any of those alongside it.
 hl.on("hyprland.start", function()
-    hl.exec_cmd("uwsm app -- qs")
+    hl.exec_cmd(app("qs"))
 end)
 
 ------------------ LOOK AND FEEL -------------
@@ -101,13 +108,14 @@ hl.config({
 })
 
 ------------------ KEYBINDINGS ---------------
-hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
+hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(terminal))
+hl.bind(mainMod .. " + R", hl.dsp.exec_cmd("qs ipc call launcher toggle"))   -- app launcher (Launcher.qml)
 hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))      -- dwindle only
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))
-hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("uwsm stop"))      -- log out; uwsm sessions shouldn't use hl.dsp.exit()
+hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(logout))          -- log out
 
 -- Move focus
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
