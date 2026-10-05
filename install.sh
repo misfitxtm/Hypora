@@ -84,6 +84,9 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 REQUIRED=(
     hyprland hyprland-guiutils uwsm quickshell kitty firefox git
     python3-pillow
+    # Shell and editor
+    zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
+    neovim ripgrep fd-find
     polkit sddm qt6-qtsvg gnupg2 curl tar xz
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts papirus-icon-theme adwaita-icon-theme
@@ -200,6 +203,32 @@ else
     rm -f "$script"
 fi
 
+# ---------- shell and editor ----------
+# Oh My Zsh: installed unattended, keeping Hypora's .zshrc (installed further down) and
+# leaving the login shell alone until we set it ourselves below.
+if [ -d "$HOME/.oh-my-zsh" ]; then
+    log "Oh My Zsh already installed"
+else
+    log "Installing Oh My Zsh"
+    omz=$(mktemp)
+    if curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o "$omz"; then
+        RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$omz" --unattended || warn "Oh My Zsh install failed"
+    else
+        warn "Could not download the Oh My Zsh installer"
+    fi
+    rm -f "$omz"
+fi
+
+# LazyVim starter, only when ~/.config/nvim is empty; an existing config is left alone.
+if [ -e "$CONF/nvim/init.lua" ] || [ -e "$CONF/nvim/init.vim" ]; then
+    log "Keeping your existing Neovim config"
+elif git clone -q --depth 1 https://github.com/LazyVim/starter "$CONF/nvim" 2>/dev/null; then
+    rm -rf "$CONF/nvim/.git"
+    log "Installed the LazyVim starter"
+else
+    warn "Could not clone the LazyVim starter"
+fi
+
 # ---------- services ----------
 log "Enabling services"
 sudo systemctl enable --now NetworkManager || warn "Could not enable NetworkManager"
@@ -288,9 +317,21 @@ done
 sudo systemctl enable sddm
 
 # ---------- terminal and session environment ----------
-log "Installing kitty and uwsm settings"
+log "Installing kitty, uwsm, zsh, fastfetch and Neovim settings"
 put "$REPO/config/kitty/kitty.conf" "$CONF/kitty/kitty.conf"
 put "$REPO/config/uwsm/env" "$CONF/uwsm/env"
+put "$REPO/config/zsh/zshrc" "$HOME/.zshrc"
+put "$REPO/config/fastfetch/config.jsonc" "$CONF/fastfetch/config.jsonc"
+put "$REPO/config/fastfetch/hypora.txt" "$CONF/fastfetch/hypora.txt"
+# Only this one file under ~/.config/nvim is ours; the rest is yours to change
+[ -d "$CONF/nvim" ] && put "$REPO/config/nvim/lua/plugins/hypora.lua" "$CONF/nvim/lua/plugins/hypora.lua"
+
+# zsh as the login shell
+if [ "$(getent passwd "$USER" | cut -d: -f7)" != "$(command -v zsh)" ]; then
+    sudo chsh -s "$(command -v zsh)" "$USER" \
+        && log "Login shell set to zsh (starts at your next login)" \
+        || warn "Could not set zsh as your login shell; run: chsh -s $(command -v zsh)"
+fi
 
 # ---------- app entries ----------
 # e.g. "Display Settings", so it shows up in the launcher and app menu
@@ -332,11 +373,12 @@ cat <<EOF
 Next steps:
   1. Reboot (this also switches Wi-Fi to iwd). The Hypora login screen (SDDM) starts the
      uwsm-managed Hyprland session. Log out and back in for the libvirt and wireshark
-     group memberships to take effect.
+     group memberships, and your new zsh login shell, to take effect.
+  2. Neovim opens with LazyVim; the first start downloads its plugins.
      If it doesn't come up: Ctrl+Alt+F2, log in, and check 'journalctl -b -u sddm'.
-  2. If the bar doesn't appear, run 'qs' in a terminal to see QML errors.
+  3. If the bar doesn't appear, run 'qs' in a terminal to see QML errors.
      If keybinds don't work, run 'hyprctl configerrors'.
-  3. Test notifications:  notify-send "Test" "Hello"
+  4. Test notifications:  notify-send "Test" "Hello"
      Test polkit:         pkexec true
 
 Your configs are copies, so this folder can be moved or deleted. To update Hypora later,
