@@ -115,11 +115,11 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 
 # ---------- packages ----------
 REQUIRED=(
-    hyprland hyprland-guiutils uwsm quickshell kitty git
+    hyprland hyprland-guiutils hyprlock hypridle uwsm quickshell kitty git
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
-    polkit sddm qt6-qtsvg gnupg2 curl tar xz unzip
+    polkit sddm qt6-qtsvg gnupg2 curl tar xz unzip firewalld
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
     papirus-icon-theme breeze-icon-theme
@@ -144,7 +144,7 @@ REQUIRED=(
 )
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
-    hyprlock hypridle hyprsunset brightnessctl
+    hyprsunset brightnessctl
     pamixer playerctl
     google-noto-emoji-fonts
     # Network and security tools
@@ -356,6 +356,18 @@ if [ -e "$IWD_CONF" ]; then
     sudo systemctl disable iwd 2>/dev/null || true
     sudo systemctl enable wpa_supplicant 2>/dev/null || true
 fi
+# Firewall. Fedora's FedoraWorkstation zone leaves ports 1025-65535 open on TCP and UDP;
+# `public` allows only ssh, mDNS and DHCPv6, which is the right baseline for a desktop that
+# serves nothing. LocalSend is the one thing here that listens, so it gets its port back.
+log "Enabling the firewall"
+sudo systemctl enable --now firewalld || warn "Could not enable firewalld"
+if systemctl is-active --quiet firewalld; then
+    sudo firewall-cmd --quiet --set-default-zone=public || warn "Could not set the default firewall zone"
+    sudo firewall-cmd --quiet --permanent --add-port=53317/tcp || true   # LocalSend
+    sudo firewall-cmd --quiet --permanent --add-port=53317/udp || true
+    sudo firewall-cmd --quiet --reload || true
+fi
+
 sudo systemctl set-default graphical.target
 
 # ---------- themes ----------
@@ -425,6 +437,7 @@ sudo systemctl enable sddm
 log "Installing kitty, uwsm, zsh, fastfetch and Neovim settings"
 put "$REPO/config/kitty/kitty.conf" "$CONF/kitty/kitty.conf"
 put "$REPO/config/uwsm/env" "$CONF/uwsm/env"
+put "$REPO/config/hypr/hypridle.conf" "$CONF/hypr/hypridle.conf"
 put "$REPO/config/zsh/zshrc" "$HOME/.zshrc"
 put "$REPO/config/fastfetch/config.jsonc" "$CONF/fastfetch/config.jsonc"
 put "$REPO/config/fastfetch/hypora.txt" "$CONF/fastfetch/hypora.txt"
