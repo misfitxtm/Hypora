@@ -27,6 +27,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
+| System usage (`SystemUsage.qml`, `SysInfo.qml`) | Live RAM %, CPU %, CPU temperature and, on machines that report them, GPU usage and GPU temperature — left of the control center. Readings warm to the accent colour and then to red as they climb. Click it to pick which ones appear; the choice is kept in `~/.config/hypora/sysinfo.json`. Numbers come from `bin/hypora-sysinfo` (/proc and /sys, or `nvidia-smi` for NVIDIA) |
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
 | Network (`NetworkSettings.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed |
 | Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
@@ -158,6 +159,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   │                       # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
 │   │                       # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
 │   │                       # Clock, CalendarPanel, ThemePicker, Wallpaper,
+│   │                       # SystemUsage, SysInfo, NetworkSettings, BluetoothSettings,
 │   │                       # Icon, Net, ShellState, Slider, PowerButton
 │   ├── kitty/kitty.conf    # terminal (colors come from the theme)
 │   ├── zsh/zshrc           # -> ~/.zshrc
@@ -166,7 +168,8 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   └── uwsm/env            # session environment (Qt apps use qt6ct)
 ├── bin/
 │   ├── hypora-theme        # applies a theme everywhere
-│   └── hypora-wallgen      # draws each theme's pixel-art wallpapers
+│   ├── hypora-wallgen      # draws each theme's pixel-art wallpapers
+│   └── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
 │   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
@@ -196,6 +199,7 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Menu sections:** the `pages` list in `AppMenuPanel.qml`
 - **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
 - **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
+- **System usage readings:** click the widget in the bar, or edit `~/.config/hypora/sysinfo.json`
 
 ## Status
 

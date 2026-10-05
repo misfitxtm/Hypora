@@ -61,6 +61,7 @@ Variants {
             spacing: 10
 
             Tray { window: bar; anchors.verticalCenter: parent.verticalCenter }
+            SystemUsage { window: bar; anchors.verticalCenter: parent.verticalCenter }
             ControlCenter { window: bar; anchors.verticalCenter: parent.verticalCenter }
         }
     }
