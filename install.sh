@@ -137,7 +137,10 @@ REQUIRED=(
     # Read the machine's security state for the Security window
     fwupd mokutil policycoreutils
     # Files, clipboard history and screenshots (SUPER+E, SUPER+SHIFT+V, SUPER+SHIFT+S)
-    thunar thunar-volman tumbler
+    # GNOME's apps, without the GNOME session: none of these pull gnome-shell, mutter,
+    # gnome-session or gdm. Nautilus does bring `localsearch`, a background indexer that
+    # reads your home directory — see the readme if you'd rather it didn't.
+    nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
     cliphist wl-clipboard grim slurp
 )
 # Nice to have; a missing one only produces a warning

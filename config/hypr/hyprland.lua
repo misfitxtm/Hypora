@@ -10,7 +10,7 @@ local terminal    = "kitty"
 -- Firefox ships as a flatpak so the browser runs sandboxed; `flatpak run` rather than a
 -- desktop id so this still works in a session not managed by uwsm.
 local browser     = "flatpak run org.mozilla.firefox"
-local fileManager = "thunar"
+local fileManager = "nautilus"
 local mainMod  = "SUPER"
 
 -- Run through uwsm when the session is uwsm-managed (the login screen picks that
