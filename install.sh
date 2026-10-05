@@ -388,10 +388,14 @@ SDDM_THEME=/usr/share/sddm/themes/hypora
 sudo install -d "$SDDM_THEME" /etc/sddm.conf.d
 sudo install -m644 "$REPO"/system/sddm/hypora/{Main.qml,metadata.desktop} "$SDDM_THEME/"
 sudo install -m644 "$REPO/system/sddm/hyprland.lua" "$SDDM_THEME/hyprland.lua"
-# Its colors (theme.conf) are written by hypora-theme. The file is owned by you so the theme
-# picker can update it without a password; it only holds colors and a font name.
-sudo touch "$SDDM_THEME/theme.conf"
-sudo chown "$USER" "$SDDM_THEME/theme.conf"
+# Its colors (theme.conf) are written by hypora-theme. The file stays root-owned: the
+# greeter reads it as the sddm user before anyone logs in, and a file you could write would
+# put an unprivileged process on the other side of that boundary. install.sh runs with sudo
+# already, so the login screen is brought in step here; `hypora-theme <name>` from a
+# terminal updates it later, asking for sudo when it needs to.
+sudo install -m644 -o root -g root "$REPO/system/sddm/hypora/theme.conf" "$SDDM_THEME/theme.conf"
+# Hand back a copy an earlier version of this installer made user-writable
+sudo chown root:root "$SDDM_THEME/theme.conf"
 sudo install -m644 "$REPO/system/sddm/10-hypora.conf" /etc/sddm.conf.d/10-hypora.conf
 
 for dm in gdm lightdm greetd; do
@@ -452,9 +456,16 @@ log "Drawing wallpapers"
 "$HOME/.local/bin/hypora-wallgen" || warn "Could not draw wallpapers (is python3-pillow installed?)"
 
 # ---------- apply the theme ----------
-# Renders the palette into Quickshell, kitty, Hyprland, hyprlock, GTK, Qt and the login screen
+# Renders the palette into Quickshell, kitty, Hyprland, hyprlock, GTK and Qt
 log "Applying theme: $THEME"
 "$HOME/.local/bin/hypora-theme" "$THEME"
+
+# The login screen's colours live in a root-owned file, so put them in place here where we
+# already hold privileges rather than relying on hypora-theme finding a terminal to ask.
+RENDERED_SDDM="$CONF/hypora/current/sddm-theme.conf"
+if [ -f "$RENDERED_SDDM" ] && [ -d "$SDDM_THEME" ]; then
+    sudo install -m644 -o root -g root "$RENDERED_SDDM" "$SDDM_THEME/theme.conf"
+fi
 
 # ---------- bookkeeping ----------
 prune

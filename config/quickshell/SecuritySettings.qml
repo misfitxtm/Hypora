@@ -140,6 +140,31 @@ Scope {
                             }
 
                             StatusRow {
+                                readonly property var enc: win.info ? win.info.encryption : null
+                                readonly property int exposed: enc && enc.unencryptedSwap ? enc.unencryptedSwap.length : 0
+                                icon: !enc || !enc.available ? "shield"
+                                    : enc.rootEncrypted && exposed === 0 ? "shield-check" : "shield-alert"
+                                tone: !enc || !enc.available ? Theme.dim
+                                    : !enc.rootEncrypted ? Theme.error
+                                    : exposed > 0 ? Theme.warn : Theme.accent
+                                title: "Disk encryption"
+                                value: !enc ? "" : !enc.available ? "Unknown"
+                                     : enc.rootEncrypted ? "On" : "Off"
+                                detail: {
+                                    const e = win.info ? win.info.encryption : null
+                                    if (!e) return ""
+                                    if (!e.available) return e.note || ""
+                                    const swap = e.unencryptedSwap.length > 0
+                                        ? ` Swap on ${e.unencryptedSwap.join(", ")} is not encrypted, so memory can reach the disk in the clear.`
+                                        : ""
+                                    return (e.rootEncrypted
+                                        ? `This system is on an encrypted volume (${e.rootDevice}).`
+                                        : "This system is not encrypted, so anyone holding the drive can read it. "
+                                          + "Encryption can only be turned on when Fedora is installed.") + swap
+                                }
+                            }
+
+                            StatusRow {
                                 readonly property var fw: win.info ? win.info.firmware : null
                                 visible: fw !== null
                                 icon: !fw || !fw.available ? "shield"

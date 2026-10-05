@@ -105,8 +105,9 @@ if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
 fi
 pkill -USR1 -x kitty 2>/dev/null || true   # kitty reloads its config on SIGUSR1
 
-# Login screen colors. install.sh makes this file yours so no password is needed (the
-# theme picker has no terminal to ask for one); otherwise fall back to sudo.
+# Login screen colors. This file is root-owned on purpose (the greeter reads it before
+# login), so it updates when we can already ask for privileges: from a terminal, or during
+# install.sh. Switching theme from the GUI picker leaves the login screen as it was.
 SDDM_CONF=/usr/share/sddm/themes/hypora/theme.conf
 if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF"; then
     if [ -w "$SDDM_CONF" ]; then
