@@ -22,13 +22,14 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 
 | Component | What it does |
 |---|---|
-| Bar (`Bar.qml`) | Top bar on every monitor: control center button, workspaces 1-9, clock, status area |
-| Control center (`ControlCenter.qml`) | Dropdown from the button left of workspace 1: volume slider and mute, network status, Lock / Logout / Reboot / Off (the last three ask for a second click to confirm) |
+| Bar (`Bar.qml`) | Top bar on every monitor: workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
+| Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles |
 | Workspaces | Click to switch; highlights the focused workspace and dims empty ones |
-| Volume (`Volume.qml`) | PipeWire volume in the bar. Scroll to change, left click to mute, right click opens the mixer |
-| Network (`Network.qml`) | Wi-Fi / Ethernet status via NetworkManager (`nmcli`). Click opens `nmtui` |
+| Volume (`Volume.qml`) | PipeWire volume icon in the bar. Scroll over it to change the volume |
+| Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens `nmtui` |
 | Tray (`Tray.qml`) | System tray: left click activates, middle click secondary action, right click menu |
-| Battery (`Battery.qml`) | Shown on laptops only, turns red when low |
+| Battery (`Battery.qml`) | Icon and percentage, laptops only; turns red when low |
+| Icons (`Icon.qml`) | Line icons drawn from inline SVG in the theme colors, so no icon font is needed |
 | Notifications (`Notifications.qml`) | Quickshell *is* the notification daemon: popups top-right, auto-expire, critical ones persist, action buttons supported |
 | Launcher (`Launcher.qml`) | App launcher on **SUPER + R**: type to filter installed apps, Up/Down or Tab to select, Enter to launch, Esc to close |
 | Polkit (`PolkitDialog.qml`) | Full-screen authentication prompt (works with `pkexec` and other polkit requests) |
@@ -75,7 +76,7 @@ Because configs are symlinks into the repo, **keep the repo where you cloned it*
 
 ### Starting the desktop
 
-Reboot. SDDM shows the Hypora login screen and starts the **Hyprland (uwsm-managed)** session. Click your name (or press Up/Down) to switch users.
+Reboot. SDDM shows the Hypora login screen (logo and password box, styled after Omarchy's) and starts the **Hyprland (uwsm-managed)** session. On machines with more than one user, the name appears above the box; click it or press Up/Down to switch.
 
 Without the login screen, start it from a text console (TTY) with `uwsm start hyprland-uwsm.desktop` (or `start-hyprland`). Quickshell starts from the `hyprland.start` hook in `hyprland.lua` either way.
 
@@ -112,7 +113,8 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 ├── config/                 # symlinked into ~/.config
 │   ├── hypr/hyprland.lua
 │   └── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
-│                           # Battery, Notifications, PolkitDialog, Launcher, Slider, PowerButton
+│                           # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
+│                           # Icon, Net, ShellState, Slider, PowerButton
 ├── themes/
 │   ├── Nord/Theme.qml      # palette, font, app defaults
 │   └── TokyoNight/Theme.qml
@@ -131,7 +133,8 @@ Not created yet: `bin/` (helper scripts; `install.sh` links anything placed ther
 - **Colors and font:** edit `themes/Nord/Theme.qml`, or copy the folder to `themes/<NewName>/` and install with `THEME=<NewName>`
 - **Terminal and mixer launched by widgets:** `terminal` and `mixer` in `Theme.qml`
 - **Autostart, keybinds, monitors:** `config/hypr/hyprland.lua`
-- **Bar contents:** `Bar.qml` (the right-hand `Row` holds tray, network, volume and battery)
+- **Bar contents:** `Bar.qml` (the right-hand `Row` holds the tray and the control center button)
+- **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
 
 ## Status
 
@@ -144,7 +147,6 @@ Working:
 In progress / planned:
 - Runtime theme switching (`theme-set`) that reloads apps and syncs the login screen
 - Package lists in `packages/*.txt` and a modular `install/` directory
-- Brightness control in the control center
 
 ## Known limitations
 

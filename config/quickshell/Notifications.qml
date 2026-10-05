@@ -14,8 +14,11 @@ Scope {
         onNotification: n => { n.tracked = true }
     }
 
+    // With Do Not Disturb on, only critical notifications pop up
+    function shown(n) { return !ShellState.dnd || n.urgency === NotificationUrgency.Critical }
+
     PanelWindow {
-        visible: server.trackedNotifications.values.length > 0
+        visible: server.trackedNotifications.values.some(n => shown(n))
         anchors { top: true; right: true }
         margins { top: 40; right: 12 }
         exclusionMode: ExclusionMode.Ignore
@@ -39,6 +42,7 @@ Scope {
                     readonly property bool critical: modelData.urgency === NotificationUrgency.Critical
 
                     Layout.fillWidth: true
+                    visible: shown(modelData)
                     implicitHeight: content.implicitHeight + 24
                     radius: 8
                     color: Theme.surface

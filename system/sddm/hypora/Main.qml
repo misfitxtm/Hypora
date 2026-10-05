@@ -1,14 +1,14 @@
 import QtQuick
 
-// Hypora login screen (SDDM). Colors come from theme.conf, which install.sh
-// generates from the active Hypora theme.
+// Hypora login screen (SDDM), styled after Omarchy's: a block-letter logo over a
+// password box. The user name only appears when there is more than one user.
+// Colors come from theme.conf, which install.sh generates from the active Hypora theme.
 Rectangle {
     id: root
     width: 1280
     height: 800
     color: config.bg || "#2e3440"
 
-    readonly property color surface: config.surface || "#3b4252"
     readonly property color fg: config.fg || "#eceff4"
     readonly property color dim: config.dim || "#7b88a1"
     readonly property color accent: config.accent || "#88c0d0"
@@ -16,6 +16,7 @@ Rectangle {
     readonly property string font: config.font || "JetBrains Mono"
 
     // UserModel roles: name = UserRole + 1, realName = UserRole + 2
+    readonly property int userCount: userModel.rowCount()
     property int userIndex: Math.max(0, userModel.lastIndex)
     readonly property string userName: userModel.data(userModel.index(userIndex, 0), Qt.UserRole + 1) || ""
     readonly property string realName: userModel.data(userModel.index(userIndex, 0), Qt.UserRole + 2) || ""
@@ -33,11 +34,9 @@ Rectangle {
 
     property bool failed: false
     property bool busy: false
-    property date now: new Date()
 
     function cycleUser(step) {
-        const n = userModel.rowCount()
-        if (n > 1) userIndex = (userIndex + step + n) % n
+        if (userCount > 1) userIndex = (userIndex + step + userCount) % userCount
         password.text = ""
     }
 
@@ -45,6 +44,14 @@ Rectangle {
         if (busy || password.text === "" || userName === "") return
         busy = true
         sddm.login(userName, password.text, sessionIndex)
+    }
+
+    // Inline SVG lock (Feather, MIT), recolored on failure
+    function lockIcon(c) {
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="' + c + '" '
+                  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                  + '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+        return "data:image/svg+xml;utf8," + encodeURIComponent(svg)
     }
 
     Connections {
@@ -58,116 +65,122 @@ Rectangle {
         }
     }
 
-    Timer {
-        interval: 1000; running: true; repeat: true
-        onTriggered: root.now = new Date()
-    }
-
     Column {
         anchors.centerIn: parent
-        spacing: 0
+        spacing: 48
 
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: Qt.formatTime(root.now, "HH:mm")
-            font.family: root.font; font.pixelSize: 96; font.weight: Font.Light
-            color: root.fg
-        }
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: Qt.formatDate(root.now, "dddd, MMMM d")
-            font.family: root.font; font.pixelSize: 16
-            color: root.dim
-        }
-
-        Item { width: 1; height: 64 }
-
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: root.realName || root.userName
-            font.family: root.font; font.pixelSize: 18
-            color: root.fg
-            MouseArea {
-                anchors.fill: parent
-                enabled: userModel.rowCount() > 1
-                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: root.cycleUser(1)
-            }
-        }
-
-        Item { width: 1; height: 16 }
-
-        Rectangle {
-            id: field
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: 300; height: 44; radius: 22
-            color: root.surface
-            border.width: 1
-            border.color: root.failed ? root.error : (password.activeFocus ? root.accent : "transparent")
-            opacity: root.busy ? 0.6 : 1
-            Behavior on border.color { ColorAnimation { duration: 150 } }
-
-            transform: Translate { id: offset }
-            SequentialAnimation {
-                id: shake
-                loops: 2
-                NumberAnimation { target: offset; property: "x"; to: -8; duration: 40 }
-                NumberAnimation { target: offset; property: "x"; to: 8; duration: 80 }
-                NumberAnimation { target: offset; property: "x"; to: 0; duration: 40 }
-            }
-
-            Text {
-                anchors.centerIn: parent
-                visible: password.text === ""
-                text: root.failed ? "Wrong password" : "Password"
-                font.family: root.font; font.pixelSize: 14
-                color: root.failed ? root.error : root.dim
-            }
-
-            TextInput {
-                id: password
-                anchors { fill: parent; leftMargin: 20; rightMargin: 20 }
-                verticalAlignment: TextInput.AlignVCenter
-                horizontalAlignment: TextInput.AlignHCenter
-                echoMode: TextInput.Password
-                passwordCharacter: "•"
-                font.family: root.font; font.pixelSize: 16; font.letterSpacing: 2
-                color: root.fg
-                selectionColor: root.accent
-                clip: true
-                focus: true
-                enabled: !root.busy
-
-                onTextChanged: if (text !== "") root.failed = false
-                onAccepted: root.login()
-                Keys.onUpPressed: root.cycleUser(-1)
-                Keys.onDownPressed: root.cycleUser(1)
-            }
-        }
-    }
-
-    // Bottom right: power actions
-    Row {
-        anchors { right: parent.right; bottom: parent.bottom; margins: 32 }
-        spacing: 24
-
-        Repeater {
-            model: [
-                { label: "Reboot",    show: sddm.canReboot,   act: () => sddm.reboot() },
-                { label: "Power off", show: sddm.canPowerOff, act: () => sddm.powerOff() }
+        // "HYPORA" in terminal-style blocks with a drop shadow, drawn as shapes so it
+        // doesn't depend on font metrics. Each '#' is one cell.
+        Canvas {
+            id: logo
+            readonly property var rows: [
+                "##   ##  ##    ##  ######    #####   ######    ##### ",
+                "##   ##   ##  ##   ##   ##  ##   ##  ##   ##  ##   ##",
+                "#######    ####    ######   ##   ##  ######   #######",
+                "##   ##     ##     ##       ##   ##  ##  ##   ##   ##",
+                "##   ##     ##     ##        #####   ##   ##  ##   ##"
             ]
+            readonly property real cw: 9      // cell width
+            readonly property real ch: 18     // cell height (terminal cells are ~1:2)
+            readonly property real drop: 4    // shadow offset
+
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: rows[0].length * cw + drop
+            height: rows.length * ch + drop
+
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                const pass = (color, d) => {
+                    ctx.fillStyle = color
+                    rows.forEach((row, y) => {
+                        for (let x = 0; x < row.length; x++)
+                            if (row[x] === "#") ctx.fillRect(x * cw + d, y * ch + d, cw + 0.5, ch + 0.5)
+                    })
+                }
+                pass(Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.35), drop)
+                pass(root.accent, 0)
+            }
+        }
+
+        Column {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 14
+
+            // Only on multi-user machines: click or Up/Down to switch
             Text {
-                required property var modelData
-                visible: modelData.show
-                text: modelData.label
-                font.family: root.font; font.pixelSize: 13
-                color: area.containsMouse ? root.fg : root.dim
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.userCount > 1
+                text: root.realName || root.userName
+                font.family: root.font; font.pixelSize: 16
+                color: root.dim
                 MouseArea {
-                    id: area
                     anchors.fill: parent
-                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: parent.modelData.act()
+                    onClicked: root.cycleUser(1)
+                }
+            }
+
+            Row {
+                id: entry
+                spacing: 16
+                transform: Translate { id: offset }
+
+                SequentialAnimation {
+                    id: shake
+                    loops: 2
+                    NumberAnimation { target: offset; property: "x"; to: -10; duration: 40 }
+                    NumberAnimation { target: offset; property: "x"; to: 10; duration: 80 }
+                    NumberAnimation { target: offset; property: "x"; to: 0; duration: 40 }
+                }
+
+                Image {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 30; height: 30
+                    sourceSize: Qt.size(30, 30)
+                    source: root.lockIcon(root.failed ? root.error : root.fg)
+                }
+
+                Rectangle {
+                    width: 380; height: 50
+                    color: "transparent"
+                    border.width: 2
+                    border.color: root.failed ? root.error : root.fg
+                    opacity: root.busy ? 0.6 : 1
+
+                    TextInput {
+                        id: password
+                        anchors { fill: parent; leftMargin: 18; rightMargin: 18 }
+                        verticalAlignment: TextInput.AlignVCenter
+                        echoMode: TextInput.Password
+                        passwordCharacter: "•"
+                        font.family: root.font; font.pixelSize: 22; font.letterSpacing: 4
+                        color: root.failed ? root.error : root.fg
+                        selectionColor: "transparent"
+                        selectedTextColor: color
+                        clip: true
+                        focus: true
+                        enabled: !root.busy
+
+                        // Blinking block cursor, terminal style
+                        cursorDelegate: Rectangle {
+                            width: 10
+                            color: root.accent
+                            SequentialAnimation on opacity {
+                                loops: Animation.Infinite
+                                running: password.activeFocus
+                                NumberAnimation { to: 1; duration: 0 }
+                                PauseAnimation { duration: 530 }
+                                NumberAnimation { to: 0; duration: 0 }
+                                PauseAnimation { duration: 530 }
+                            }
+                        }
+
+                        onTextChanged: if (text !== "") root.failed = false
+                        onAccepted: root.login()
+                        Keys.onUpPressed: root.cycleUser(-1)
+                        Keys.onDownPressed: root.cycleUser(1)
+                    }
                 }
             }
         }
