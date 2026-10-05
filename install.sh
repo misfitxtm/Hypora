@@ -82,7 +82,7 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 
 # ---------- packages ----------
 REQUIRED=(
-    hyprland hyprland-guiutils uwsm quickshell kitty git
+    hyprland hyprland-guiutils uwsm quickshell kitty firefox git
     polkit sddm qt6-qtsvg gnupg2 curl tar xz
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts papirus-icon-theme adwaita-icon-theme
@@ -222,6 +222,20 @@ done
 for f in "$REPO"/themes/templates/*.tpl; do
     put "$f" "$CONF/hypora/templates/$(basename "$f")"
 done
+
+# Wallpapers (Unsplash; see themes/<Name>/wallpapers.txt for credits). Downloaded once;
+# your own images in the backgrounds folder are left alone.
+log "Downloading wallpapers"
+for list in "$REPO"/themes/*/wallpapers.txt; do
+    dest="$CONF/hypora/themes/$(basename "$(dirname "$list")")/backgrounds"
+    mkdir -p "$dest"
+    sed '/^[[:space:]]*#/d' "$list" | while read -r file url _; do
+        [ -n "$file" ] && [ ! -s "$dest/$file" ] || continue
+        curl -fsSL "$url?w=3840&q=85&fm=jpg&fit=max" -o "$dest/$file.part" \
+            && mv "$dest/$file.part" "$dest/$file" \
+            || { rm -f "$dest/$file.part"; warn "Could not download wallpaper $file"; }
+    done
+done
 # Older installs kept a 'current' symlink here; the rendered theme now lives in hypora/current/
 if [ -L "$CONF/hypora/themes/current" ]; then rm "$CONF/hypora/themes/current"; fi
 
@@ -257,7 +271,10 @@ SDDM_THEME=/usr/share/sddm/themes/hypora
 sudo install -d "$SDDM_THEME" /etc/sddm.conf.d
 sudo install -m644 "$REPO"/system/sddm/hypora/{Main.qml,metadata.desktop} "$SDDM_THEME/"
 sudo install -m644 "$REPO/system/sddm/hyprland.lua" "$SDDM_THEME/hyprland.lua"
-# (its colors, theme.conf, are written by hypora-theme)
+# Its colors (theme.conf) are written by hypora-theme. The file is owned by you so the theme
+# picker can update it without a password; it only holds colors and a font name.
+sudo touch "$SDDM_THEME/theme.conf"
+sudo chown "$USER" "$SDDM_THEME/theme.conf"
 sudo install -m644 "$REPO/system/sddm/10-hypora.conf" /etc/sddm.conf.d/10-hypora.conf
 
 for dm in gdm lightdm greetd; do

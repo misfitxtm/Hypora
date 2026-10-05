@@ -10,9 +10,11 @@ ShellRoot {
         function reload(): void { Quickshell.reload(true) }
     }
 
+    Wallpaper {}
     Bar {}
     PolkitDialog {}
     Notifications {}
     Launcher {}
     DisplaySettings {}
+    ThemePicker {}
 }

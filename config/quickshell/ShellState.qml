@@ -9,4 +9,10 @@ Singleton {
 
     // Display Settings window (DisplaySettings.qml)
     property bool displaySettingsOpen: false
+
+    // Theme picker (ThemePicker.qml)
+    property bool themePickerOpen: false
+
+    // Set by Wallpaper.qml; lets the menu cycle wallpapers
+    property var nextWallpaper: () => {}
 }

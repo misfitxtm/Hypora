@@ -7,6 +7,7 @@
 
 ------------------ PROGRAMS ------------------
 local terminal = "kitty"
+local browser  = "firefox"
 local mainMod  = "SUPER"
 
 -- Run through uwsm when the session is uwsm-managed (the login screen picks that
@@ -117,8 +118,10 @@ hl.config({
 
 ------------------ KEYBINDINGS ---------------
 hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(terminal))
-hl.bind(mainMod .. " + R", hl.dsp.exec_cmd("qs ipc call launcher toggle"))   -- app launcher (Launcher.qml)
-hl.bind(mainMod .. " + C", hl.dsp.window.close())
+hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(app(browser)))
+hl.bind(mainMod .. " + R", hl.dsp.exec_cmd("qs ipc call launcher toggle"))       -- app launcher (Launcher.qml)
+hl.bind(mainMod .. " + ALT + T", hl.dsp.exec_cmd("qs ipc call themes toggle"))   -- theme picker (ThemePicker.qml)
+hl.bind(mainMod .. " + Q", hl.dsp.window.close())                                -- close the focused window
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))      -- dwindle only

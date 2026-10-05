@@ -2,6 +2,7 @@
 # hypora-theme [NAME]: apply a Hypora theme everywhere: the Quickshell shell, kitty,
 # Hyprland borders, the lock screen, GTK and Qt apps, and the login screen.
 # Without NAME, lists the installed themes (* marks the current one).
+# Each theme's wallpapers are in ~/.config/hypora/themes/<NAME>/backgrounds/ (add your own there).
 #
 # Each theme is a palette, ~/.config/hypora/themes/<NAME>/colors.toml. The templates in
 # ~/.config/hypora/templates/ are rendered into ~/.config/hypora/current/, and each app's
@@ -55,6 +56,10 @@ for tpl in "$TEMPLATES"/*.tpl; do
     fi
     mv "$out.new" "$out"
 done
+# Wallpapers: the shell shows current/backgrounds/; a new theme starts at its first one
+[ "$(current)" = "$NAME" ] || rm -f "$OUT/wallpaper"
+mkdir -p "$THEMES/$NAME/backgrounds"
+ln -sfn "$THEMES/$NAME/backgrounds" "$OUT/backgrounds"
 echo "$NAME" > "$OUT/name"
 
 # ---------- point each app at the rendered files ----------
@@ -88,10 +93,16 @@ if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
 fi
 pkill -USR1 -x kitty 2>/dev/null || true   # kitty reloads its config on SIGUSR1
 
-# The login screen's colors live outside your home directory, so this step needs sudo
+# Login screen colors. install.sh makes this file yours so no password is needed (the
+# theme picker has no terminal to ask for one); otherwise fall back to sudo.
 SDDM_CONF=/usr/share/sddm/themes/hypora/theme.conf
 if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF"; then
-    sudo install -m644 "$OUT/sddm-theme.conf" "$SDDM_CONF" \
+    if [ -w "$SDDM_CONF" ]; then
+        cat "$OUT/sddm-theme.conf" > "$SDDM_CONF"
+    elif [ -t 0 ]; then
+        sudo install -m644 "$OUT/sddm-theme.conf" "$SDDM_CONF" || true
+    fi
+    cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF" \
         || echo "Couldn't update the login screen colors; run: sudo install -m644 $OUT/sddm-theme.conf $SDDM_CONF" >&2
 fi
 

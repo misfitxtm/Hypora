@@ -14,7 +14,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 ## What you get
 
 **Desktop**
-- A minimal SDDM login screen (the same setup Omarchy uses) with the Hypora logo, following the active theme
+- A minimal SDDM login screen (the same setup Omarchy uses): the time, the date and a password field, in the active theme's colors
 - Hyprland, started through `uwsm`
 - Quickshell as the shell layer (replaces Waybar, Mako and a standalone polkit agent)
 
@@ -23,7 +23,9 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Component | What it does |
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
-| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Omarchy-style menu from the Hypora logo at the top left. Four sections: **Apps** (everything installed), **Settings** (Display, Network, Bluetooth, Sound), **Files** (Home, Documents, Downloads, ...) and **Tools** (Terminal, Claude Code, Hermes Agent, region screenshot). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Omarchy-style menu from the Hypora logo at the top left. Four sections: **Apps** (everything installed), **Settings** (Theme, Display, Network, Bluetooth, Sound, Next wallpaper), **Files** (Home, Documents, Downloads, ...) and **Tools** (Terminal, Claude Code, Hermes Agent, region screenshot). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
+| Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
 | Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
@@ -56,7 +58,8 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 **Themes**
 - Included: **Nord** (default) and **Tokyo Night**
 - A theme is one palette, `themes/<Name>/colors.toml`, applied everywhere: the Quickshell shell, kitty, Hyprland window borders, the hyprlock lock screen, GTK 3/4 apps (adw-gtk3 + libadwaita colors), Qt apps (qt6ct) and the SDDM login screen
-- Switch any time with `hypora-theme TokyoNight` (or `hypora-theme` to list themes). The shell, borders and terminals change immediately; other open apps pick it up when restarted
+- Each theme comes with three wallpapers from [Unsplash](https://unsplash.com/license) (credits in `themes/<Name>/wallpapers.txt`), downloaded by the installer into `~/.config/hypora/themes/<Name>/backgrounds/`. Drop your own images in that folder to add them to the rotation
+- Switch any time with the theme picker (**SUPER + ALT + T**) or `hypora-theme TokyoNight` (`hypora-theme` alone lists themes). The shell, borders and terminals change immediately; other open apps pick it up when restarted
 
 ## Requirements
 
@@ -106,8 +109,10 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | Keys | Action |
 |---|---|
 | SUPER + Enter | Terminal |
+| SUPER + B | Browser (Firefox; change `browser` in `hyprland.lua`) |
 | SUPER + R | App launcher |
-| SUPER + C | Close window |
+| SUPER + ALT + T | Theme picker |
+| SUPER + Q | Close window |
 | SUPER + V | Toggle floating |
 | SUPER + L | Lock (hyprlock) |
 | SUPER + M | Log out |
@@ -138,15 +143,15 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
 │   │                       # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
 │   │                       # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
-│   │                       # Clock, CalendarPanel,
+│   │                       # Clock, CalendarPanel, ThemePicker, Wallpaper,
 │   │                       # Icon, Net, ShellState, Slider, PowerButton
 │   ├── kitty/kitty.conf    # terminal (colors come from the theme)
 │   └── uwsm/env            # session environment (Qt apps use qt6ct)
 ├── bin/hypora-theme        # applies a theme everywhere
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
-│   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
-│   ├── TokyoNight/colors.toml
+│   ├── Nord/               # colors.toml (palette) and wallpapers.txt (download list, credits)
+│   ├── TokyoNight/
 │   └── templates/          # one per app; {{ key }} is filled from colors.toml
 ├── system/
 │   ├── fontconfig/         # system font defaults -> /etc/fonts/conf.d/
