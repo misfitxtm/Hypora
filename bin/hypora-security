@@ -154,6 +154,72 @@ def encryption():
     }
 
 
+def dns():
+    """Are lookups going through systemd-resolved, and are they encrypted?
+
+    The DNS-over-TLS mode comes from resolved's own D-Bus property rather than the config
+    file, because a config file says what was asked for and the property says what is
+    actually in effect (`resolvectl dnsovertls` can change it at runtime, which is how you
+    get past a captive portal).
+    """
+    rc, state = run(["systemctl", "is-active", "systemd-resolved.service"])
+    if state != "active":
+        return {"available": False,
+                "note": "systemd-resolved isn't running, so DNS goes wherever the network says."}
+
+    out = {"available": True, "mode": "unknown", "server": ""}
+
+    rc, text = run(["busctl", "--json=short", "get-property", "org.freedesktop.resolve1",
+                    "/org/freedesktop/resolve1", "org.freedesktop.resolve1.Manager",
+                    "DNSOverTLS"])
+    if rc == 0 and text:
+        try:
+            out["mode"] = json.loads(text).get("data") or "unknown"
+        except ValueError:
+            pass
+
+    rc, text = run(["resolvectl", "status", "--no-pager"])
+    if rc == 0 and text:
+        if out["mode"] == "unknown":
+            # Older resolved versions don't expose the property; the status text still says
+            if "+DNSOverTLS" in text:
+                out["mode"] = "yes"
+            elif "-DNSOverTLS" in text:
+                out["mode"] = "no"
+        m = re.search(r"^\s*Current DNS Server:\s*(\S+)", text, re.M)
+        if not m:
+            m = re.search(r"^\s*DNS Servers:\s*(\S+)", text, re.M)
+        if m:
+            out["server"] = m.group(1)
+        m = re.search(r"^\s*resolv\.conf mode:\s*(\S+)", text, re.M)
+        if m:
+            out["resolvConf"] = m.group(1)
+
+    out["encrypted"] = out["mode"] in ("yes", "opportunistic")
+    out["strict"] = out["mode"] == "yes"
+    return out
+
+
+def firewall():
+    """firewalld's state and zone. Fedora's own zone leaves the high ports open."""
+    if not shutil.which("firewall-cmd"):
+        return {"available": False, "note": "firewalld is not installed."}
+    rc, state = run(["firewall-cmd", "--state"])
+    if state != "running":
+        return {"available": True, "running": False,
+                "note": "firewalld is installed but not running, so nothing is filtering."}
+    _, zone = run(["firewall-cmd", "--get-default-zone"])
+    rc, ports = run(["firewall-cmd", f"--zone={zone}", "--list-ports"])
+    return {
+        "available": True,
+        "running": True,
+        "zone": zone,
+        "openPorts": ports.split() if rc == 0 and ports else [],
+        # FedoraWorkstation permits 1025-65535 on TCP and UDP; public is closed by default
+        "permissive": zone == "FedoraWorkstation",
+    }
+
+
 def selinux():
     if not shutil.which("getenforce"):
         return {"available": False, "note": "SELinux tools are not installed."}
@@ -221,6 +287,8 @@ def status():
         "secureBoot": secure_boot(),
         "encryption": encryption(),
         "firmware": firmware_checks(),
+        "dns": dns(),
+        "firewall": firewall(),
         "selinux": selinux(),
         "camera": camera(),
         "location": location(),
