@@ -16,6 +16,15 @@ Rectangle {
     readonly property var adapter: Bluetooth.defaultAdapter
     readonly property var battery: UPower.displayDevice
 
+    // PowerProfiles reports Balanced even without a daemon; check the daemon is really there
+    property bool profilesAvailable: false
+    Process {
+        command: ["sh", "-c", "busctl --system status org.freedesktop.UPower.PowerProfiles >/dev/null 2>&1 "
+                            + "|| busctl --system status net.hadess.PowerProfiles >/dev/null 2>&1"]
+        running: true
+        onExited: code => root.profilesAvailable = code === 0
+    }
+
     // Which power button is waiting for its second click, for the hint text
     property string armedHint: lock.armed ? "" : logout.armed ? "Click again to log out"
                              : reboot.armed ? "Click again to restart" : off.armed ? "Click again to power off" : ""
@@ -126,6 +135,20 @@ Rectangle {
                 value: root.audio ? root.audio.volume : 0
                 onMoved: v => { if (root.audio) { root.audio.volume = v; root.audio.muted = false } }
             }
+            // Full mixer (outputs, inputs, per-app volume)
+            Icon {
+                name: "sliders"
+                size: 16
+                color: mixerArea.containsMouse ? Theme.accent : Theme.dim
+                MouseArea {
+                    id: mixerArea
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { root.closeRequested(); Apps.inTerminal(Theme.mixer) }
+                }
+            }
         }
         RowLayout {
             Layout.fillWidth: true
@@ -136,6 +159,55 @@ Rectangle {
                 Layout.fillWidth: true
                 value: root.brightness
                 onMoved: v => root.setBrightness(v)
+            }
+        }
+
+        // Power mode (power-profiles-daemon / tuned-ppd)
+        Row {
+            Layout.fillWidth: true
+            visible: root.profilesAvailable
+            spacing: 6
+            Repeater {
+                model: [
+                    { label: "Saver", value: PowerProfile.PowerSaver },
+                    { label: "Balanced", value: PowerProfile.Balanced },
+                    { label: "Performance", value: PowerProfile.Performance }
+                ]
+                Rectangle {
+                    id: seg
+                    required property var modelData
+                    readonly property bool current: PowerProfiles.profile === modelData.value
+                    visible: modelData.value !== PowerProfile.Performance || PowerProfiles.hasPerformanceProfile
+                    readonly property int count: PowerProfiles.hasPerformanceProfile ? 3 : 2
+                    width: (parent.width - parent.spacing * (count - 1)) / count
+                    height: 32
+                    radius: height / 2
+                    color: current ? Theme.accent : (segArea.containsMouse ? Qt.lighter(Theme.surface, 1.25) : Theme.surface)
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Icon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "zap"
+                            size: 13
+                            visible: seg.current
+                            color: Theme.bg
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: seg.modelData.label
+                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 2; font.bold: seg.current
+                            color: seg.current ? Theme.bg : Theme.fg
+                        }
+                    }
+                    MouseArea {
+                        id: segArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: PowerProfiles.profile = seg.modelData.value
+                    }
+                }
             }
         }
 
@@ -160,7 +232,7 @@ Rectangle {
                     if (Net.hasWifi) Net.setWifiEnabled(!Net.wifiEnabled)
                     else menu()
                 }
-                onMenu: { root.closeRequested(); Quickshell.execDetached([Theme.terminal, "-e", "nmtui"]) }
+                onMenu: { root.closeRequested(); Apps.inTerminal(Theme.network) }
             }
             Tile {
                 Layout.fillWidth: true
@@ -170,7 +242,9 @@ Rectangle {
                 available: root.adapter !== null
                 active: root.adapter?.enabled ?? false
                 subtitle: !root.adapter ? "Unavailable" : root.adapter.enabled ? "On" : "Off"
+                hasMenu: root.adapter !== null
                 onToggled: root.adapter.enabled = !root.adapter.enabled
+                onMenu: { root.closeRequested(); Apps.inTerminal(Theme.bluetooth) }
             }
             Tile {
                 Layout.fillWidth: true

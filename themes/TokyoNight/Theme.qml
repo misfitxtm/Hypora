@@ -14,7 +14,10 @@ Singleton {
     readonly property string font: "JetBrains Mono"
     readonly property int fontSize: 13
 
-    // Apps launched from widget clicks
+    // Apps launched from widget clicks. The last three are commands run in the terminal
+    // (the same TUIs Omarchy uses); impala falls back to nmtui when iwd isn't running.
     readonly property string terminal: "kitty"
-    readonly property string mixer: "pavucontrol"
+    readonly property string mixer: "wiremix"
+    readonly property string network: "impala || nmtui"
+    readonly property string bluetooth: "bluetui"
 }

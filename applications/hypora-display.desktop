@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Display Settings
+Comment=Resolution, refresh rate, scale and arrangement of your monitors
+Exec=qs ipc call display open
+Icon=preferences-desktop-display
+Categories=Settings;HardwareSettings;
+Keywords=monitor;screen;resolution;scale;refresh;rotate;

@@ -10,7 +10,6 @@ import QtQuick
 Scope {
     id: root
     property bool open: false
-    property bool useUwsm: false
 
     IpcHandler {
         target: "launcher"
@@ -19,32 +18,9 @@ Scope {
         function hide(): void { root.open = false }
     }
 
-    // In a uwsm session, launch apps as their own systemd units like everything else
-    Process {
-        command: ["uwsm", "check", "is-active"]
-        running: true
-        onExited: code => root.useUwsm = code === 0
-    }
-
     function launch(entry) {
         open = false
-        let cmd = entry.runInTerminal ? [Theme.terminal, "-e", ...entry.command] : null
-        if (useUwsm)
-            Quickshell.execDetached(["uwsm", "app", "--", ...(cmd ?? [entry.id + ".desktop"])])
-        else if (cmd)
-            Quickshell.execDetached(cmd)
-        else
-            entry.execute()
-    }
-
-    // Lower rank = better match; -1 = no match
-    function rank(entry, q) {
-        const name = entry.name.toLowerCase()
-        if (name.startsWith(q)) return 0
-        if (name.split(/[\s\-_.]+/).some(w => w.startsWith(q))) return 1
-        if (name.includes(q)) return 2
-        const extra = [entry.genericName, entry.comment, ...entry.keywords].join(" ").toLowerCase()
-        return extra.includes(q) ? 3 : -1
+        Apps.launch(entry)
     }
 
     LazyLoader {
@@ -59,16 +35,7 @@ Scope {
             WlrLayershell.namespace: "hypora-launcher"
             color: "#66000000"
 
-            readonly property var results: {
-                const q = search.text.trim().toLowerCase()
-                const apps = DesktopEntries.applications.values.filter(e => !e.noDisplay)
-                if (q === "") return apps.slice().sort((a, b) => a.name.localeCompare(b.name))
-                return apps
-                    .map(e => ({ e, r: root.rank(e, q) }))
-                    .filter(x => x.r >= 0)
-                    .sort((a, b) => a.r - b.r || a.e.name.localeCompare(b.e.name))
-                    .map(x => x.e)
-            }
+            readonly property var results: Apps.query(search.text, "")
 
             // Click outside the card to close
             MouseArea {

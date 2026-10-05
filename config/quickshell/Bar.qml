@@ -16,10 +16,13 @@ Variants {
 
         SystemClock { id: clock; precision: SystemClock.Minutes }
 
-        // Left: workspaces 1-9
+        // Left: app menu, workspaces 1-9
         Row {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 8 }
             spacing: 4
+
+            AppMenu { window: bar; anchors.verticalCenter: parent.verticalCenter }
+            Item { width: 4; height: 1 }
 
             Repeater {
                 model: 9

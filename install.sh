@@ -51,14 +51,21 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 # ---------- packages ----------
 REQUIRED=(
     hyprland hyprland-guiutils uwsm quickshell kitty git
-    NetworkManager NetworkManager-tui
-    pipewire wireplumber upower
-    xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
-    polkit jetbrains-mono-fonts sddm qt6-qtsvg
+    polkit jetbrains-mono-fonts sddm qt6-qtsvg adwaita-icon-theme
+    xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
+    # Network: NetworkManager on the iwd Wi-Fi backend (impala, the Wi-Fi TUI, needs iwd)
+    NetworkManager NetworkManager-tui NetworkManager-wifi iwd
+    # Sound: PipeWire + WirePlumber, wiremix (sound TUI), pulseaudio compatibility
+    pipewire wireplumber pipewire-pulseaudio wiremix
+    # Bluetooth (bluetui, the Bluetooth TUI, is downloaded below)
+    bluez
+    # Battery and power modes
+    upower
 )
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
-    hyprlock hypridle hyprsunset pavucontrol brightnessctl bluez
+    hyprlock hypridle hyprsunset brightnessctl
+    pamixer playerctl pavucontrol nautilus
     wl-clipboard grim slurp google-noto-emoji-fonts
 )
 
@@ -72,6 +79,28 @@ done
 # 'install' leaves an already-installed (possibly old) Hyprland alone
 sudo dnf upgrade -y hyprland uwsm || true
 
+# Power modes: Fedora's default is tuned-ppd (same D-Bus API as power-profiles-daemon).
+# Keep power-profiles-daemon if it's already there; the two conflict.
+if ! rpm -q power-profiles-daemon >/dev/null 2>&1; then
+    sudo dnf install -y tuned-ppd || warn "Could not install tuned-ppd (power modes unavailable)"
+fi
+
+# impala (Wi-Fi) and bluetui (Bluetooth) aren't packaged for Fedora; install their static
+# release builds from GitHub into /usr/local/bin. Re-running the installer updates them.
+install_release() {   # install_release <name> <github repo> <asset name>
+    local tmp; tmp=$(mktemp)
+    if curl -fsSL "https://github.com/$2/releases/latest/download/$3" -o "$tmp"; then
+        sudo install -m755 "$tmp" "/usr/local/bin/$1"
+    else
+        warn "Could not download $1 from github.com/$2"
+    fi
+    rm -f "$tmp"
+}
+log "Installing impala and bluetui"
+arch=$(uname -m)
+install_release impala  pythops/impala  "impala-$arch-unknown-linux-musl"
+install_release bluetui pythops/bluetui "bluetui-$arch-linux-musl"
+
 # Hyprland reads hyprland.lua only from 0.55 on; older versions ignore it entirely
 # (no autostart, no keybinds) and generate a default hyprland.conf instead.
 hypr_ver=$(Hyprland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -84,6 +113,18 @@ log "Enabling services"
 sudo systemctl enable --now NetworkManager || warn "Could not enable NetworkManager"
 sudo systemctl enable --now upower || warn "Could not enable upower (battery widget may show nothing)"
 sudo systemctl enable --now bluetooth 2>/dev/null || warn "No bluetooth service (the Bluetooth tile will show Unavailable)"
+if rpm -q tuned-ppd >/dev/null 2>&1; then
+    sudo systemctl enable --now tuned tuned-ppd || warn "Could not enable tuned-ppd"
+else
+    sudo systemctl enable --now power-profiles-daemon || warn "Could not enable power-profiles-daemon"
+fi
+
+# Wi-Fi through iwd so impala works. NetworkManager keeps managing connections (the bar
+# and nmcli still work); this takes effect after a reboot so the install isn't cut off.
+sudo install -d /etc/NetworkManager/conf.d
+printf '[device]\nwifi.backend=iwd\n' | sudo tee /etc/NetworkManager/conf.d/hypora-iwd.conf >/dev/null
+sudo systemctl enable iwd || warn "Could not enable iwd"
+sudo systemctl disable wpa_supplicant 2>/dev/null || true
 sudo systemctl set-default graphical.target
 fc-cache -f >/dev/null 2>&1 || true
 
@@ -142,6 +183,13 @@ for dm in gdm lightdm greetd; do
 done
 sudo systemctl enable sddm
 
+# ---------- app entries ----------
+# e.g. "Display Settings", so it shows up in the launcher and app menu
+log "Linking app entries"
+for f in "$REPO"/applications/*.desktop; do
+    [ -f "$f" ] && link "$f" "$HOME/.local/share/applications/$(basename "$f")"
+done
+
 # ---------- bin (optional) ----------
 shopt -s nullglob
 bin_files=("$REPO"/bin/*)
@@ -158,7 +206,8 @@ log "Done."
 cat <<EOF
 
 Next steps:
-  1. Reboot. The Hypora login screen (SDDM) starts the uwsm-managed Hyprland session.
+  1. Reboot (this also switches Wi-Fi to iwd). The Hypora login screen (SDDM) starts the
+     uwsm-managed Hyprland session.
      If it doesn't come up: Ctrl+Alt+F2, log in, and check 'journalctl -b -u sddm'.
   2. If the bar doesn't appear, run 'qs' in a terminal to see QML errors.
      If keybinds don't work, run 'hyprctl configerrors'.
