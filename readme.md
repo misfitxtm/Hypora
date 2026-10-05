@@ -23,11 +23,13 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Component | What it does |
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
-| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Omarchy-style menu from the Hypora logo at the top left. Four sections: **Apps** (everything installed), **Settings** (Theme, Display, Network, Bluetooth, Sound, Next wallpaper), **Files** (Home, Documents, Downloads, ...) and **Tools** (Terminal, Claude Code, Hermes Agent, region screenshot). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Omarchy-style menu from the Hypora logo at the top left. Five sections: **Apps** (everything installed), **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound), **Files** (Home, Documents, Downloads, ...) and **Tools** (Terminal, Claude Code, Hermes Agent, region screenshot). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
+| Network (`NetworkSettings.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed |
+| Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
 | Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
 | Workspaces | Click to switch; highlights the focused workspace and dims empty ones |
 | Volume (`Volume.qml`) | PipeWire volume icon in the bar. Scroll over it to change the volume |
@@ -43,9 +45,11 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 
 | Tool | For | Opened from |
 |---|---|---|
-| `impala` | Wi-Fi (needs iwd; falls back to `nmtui`) | Wi-Fi tile arrow, menu > Network |
-| `bluetui` | Bluetooth devices | Bluetooth tile arrow, menu > Bluetooth |
+| `impala` | Wi-Fi, advanced (needs iwd; falls back to `nmtui`) | Network window > Advanced |
+| `bluetui` | Bluetooth, advanced | Bluetooth window > Advanced |
 | `wiremix` | Sound outputs, inputs and per-app volume | Mixer button in the control center, menu > Sound |
+
+Network and Bluetooth have proper Quickshell windows (above); the `impala` and `bluetui` TUIs are still one click away under "Advanced..." in each.
 
 **Fonts and icons**
 - **JetBrainsMono Nerd Font** for monospace and the shell UI, with **Liberation Sans / Serif** for the rest, the same defaults Omarchy uses. Set system-wide in `/etc/fonts/conf.d/50-hypora.conf`
@@ -55,10 +59,14 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 - **Claude Code** from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update). Run `claude` to log in
 - **Hermes Agent** (Nous Research), installed per-user under `~/.hermes` with its official script. Run `hermes setup` to pick a model provider
 
+**Virtualization and network tools**
+- `@virtualization` (libvirt, QEMU/KVM, virt-manager), with `libvirtd` enabled and your user added to the `libvirt` group
+- `nmap`, `aircrack-ng` and `wireshark`/`tshark`, with your user added to the `wireshark` group so captures work without root. Both group changes need a logout to take effect
+
 **Themes**
-- Included: **Nord** (default) and **Tokyo Night**
+- Included: **Nord** (default), **Tokyo Night** and **Catppuccin Mocha**
 - A theme is one palette, `themes/<Name>/colors.toml`, applied everywhere: the Quickshell shell, kitty, Hyprland window borders, the hyprlock lock screen, GTK 3/4 apps (adw-gtk3 + libadwaita colors), Qt apps (qt6ct) and the SDDM login screen
-- Each theme comes with three wallpapers from [Unsplash](https://unsplash.com/license) (credits in `themes/<Name>/wallpapers.txt`), downloaded by the installer into `~/.config/hypora/themes/<Name>/backgrounds/`. Drop your own images in that folder to add them to the rotation
+- Each theme comes with three **pixel-art wallpapers drawn from its own palette** by `hypora-wallgen` (peaks, city and grove), so a new theme gets matching wallpapers for free. They land in `~/.config/hypora/themes/<Name>/backgrounds/`; drop your own images in that folder to add them to the rotation
 - Switch any time with the theme picker (**SUPER + ALT + T**) or `hypora-theme TokyoNight` (`hypora-theme` alone lists themes). The shell, borders and terminals change immediately; other open apps pick it up when restarted
 
 ## Requirements
@@ -86,7 +94,7 @@ The installer is safe to re-run. It:
 
 1. Checks you're on Fedora and not running as root
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
-3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, and downloads impala and bluetui into `/usr/local/bin`
+3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), and downloads impala and bluetui into `/usr/local/bin`
 4. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
 5. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
 6. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
@@ -112,9 +120,9 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | SUPER + B | Browser (Firefox; change `browser` in `hyprland.lua`) |
 | SUPER + R | App launcher |
 | SUPER + ALT + T | Theme picker |
+| SUPER + L | Lock |
 | SUPER + Q | Close window |
 | SUPER + V | Toggle floating |
-| SUPER + L | Lock (hyprlock) |
 | SUPER + M | Log out |
 | SUPER + arrows | Move focus |
 | SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace |
@@ -147,11 +155,14 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   │                       # Icon, Net, ShellState, Slider, PowerButton
 │   ├── kitty/kitty.conf    # terminal (colors come from the theme)
 │   └── uwsm/env            # session environment (Qt apps use qt6ct)
-├── bin/hypora-theme        # applies a theme everywhere
+├── bin/
+│   ├── hypora-theme        # applies a theme everywhere
+│   └── hypora-wallgen      # draws each theme's pixel-art wallpapers
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
-│   ├── Nord/               # colors.toml (palette) and wallpapers.txt (download list, credits)
-│   ├── TokyoNight/
+│   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
+│   ├── TokyoNight/colors.toml
+│   ├── CatppuccinMocha/colors.toml
 │   └── templates/          # one per app; {{ key }} is filled from colors.toml
 ├── system/
 │   ├── fontconfig/         # system font defaults -> /etc/fonts/conf.d/
@@ -167,7 +178,7 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 
 ## Customizing
 
-- **Colors and font:** edit `themes/<Name>/colors.toml`, or copy a theme folder to `themes/<NewName>/`, re-run `./install.sh`, then `hypora-theme <NewName>`. To theme another app, add a template to `themes/templates/` and link its output in `bin/hypora-theme`
+- **Colors and font:** edit `themes/<Name>/colors.toml`, or copy a theme folder to `themes/<NewName>/`, re-run `./install.sh`, then `hypora-theme <NewName>`. Wallpapers are drawn from the palette, so `hypora-wallgen <NewName>` gives the new theme matching ones. To theme another app, add a template to `themes/templates/` and link its output in `bin/hypora-theme`
 - **Terminal and TUIs launched by widgets:** `terminal`, `mixer`, `network` and `bluetooth` in `themes/templates/Theme.qml.tpl`
 - **Autostart, keybinds:** `config/hypr/hyprland.lua`
 - **Monitors:** Display Settings, or edit `~/.config/hypr/monitors.lua` (loaded by `hyprland.lua`)

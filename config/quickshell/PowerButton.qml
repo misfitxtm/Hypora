@@ -11,7 +11,7 @@ Rectangle {
 
     implicitWidth: 36
     implicitHeight: 36
-    radius: height / 2
+    radius: Math.min(width, height) / 2
     color: armed ? Theme.error : (area.containsMouse ? Qt.lighter(Theme.surface, 1.25) : Theme.surface)
     Behavior on color { ColorAnimation { duration: 120 } }
 

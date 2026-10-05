@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Network
+Comment=Wi-Fi networks, connect and forget
+Exec=qs ipc call network open
+Icon=preferences-system-network
+Categories=Settings;
+Keywords=wifi;wireless;network;internet;

@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""hypora-wallgen [THEME...]: draw each theme's pixel-art wallpapers from its own palette.
+
+Three scenes per theme (peaks, city, grove), drawn at 480x270 and scaled 8x with
+nearest-neighbour so the pixels stay crisp at 3840x2160. Because the colors come from
+themes/<NAME>/colors.toml, a new theme gets matching wallpapers for free:
+
+    hypora-wallgen MyTheme
+
+With no arguments, every installed theme is redrawn. Output goes to
+~/.config/hypora/themes/<NAME>/backgrounds/ and overwrites only the files it generates
+(1-peaks.png, 2-city.png, 3-grove.png), so your own images there are left alone.
+"""
+import os
+import random
+import re
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+W, H, SCALE = 480, 270, 8
+
+# 4x4 ordered dither: spreads two colors over a band so gradients stay in palette
+BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+
+
+def read_palette(path):
+    out = {}
+    for line in path.read_text().splitlines():
+        m = re.match(r'^([a-z_]+)\s*=\s*"([^"]*)"', line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def rgb(c):
+    c = c.lstrip("#")
+    return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def mix(a, b, t):
+    t = max(0.0, min(1.0, t))
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def shade(c, t):
+    """Darken (t<0) or lighten (t>0) a color."""
+    return mix(c, (0, 0, 0) if t < 0 else (255, 255, 255), abs(t))
+
+
+class Scene:
+    def __init__(self, pal):
+        self.p = {k: rgb(v) for k, v in pal.items() if v.startswith("#")}
+        self.img = Image.new("RGB", (W, H), self.c("background"))
+        self.d = ImageDraw.Draw(self.img)
+
+    def c(self, key, fallback="foreground"):
+        return self.p.get(key) or self.p[fallback]
+
+    def gradient(self, y0, y1, top, bottom, dither=True):
+        """Vertical gradient, dithered between the two nearest steps."""
+        span = max(1, y1 - y0)
+        for y in range(y0, y1):
+            t = (y - y0) / span
+            lo, hi = mix(top, bottom, t), mix(top, bottom, min(1.0, t + 1 / span))
+            for x in range(W):
+                use_hi = dither and (BAYER[y % 4][x % 4] / 16.0) < ((t * span) % 1.0)
+                self.img.putpixel((x, y), hi if use_hi else lo)
+
+    def stars(self, rnd, horizon, color, n=120):
+        for _ in range(n):
+            x, y = rnd.randrange(W), rnd.randrange(0, horizon)
+            # thin them out toward the horizon
+            if rnd.random() > 1.0 - (y / max(1, horizon)) * 0.85:
+                continue
+            b = rnd.choice([0.25, 0.5, 0.5, 1.0])
+            self.img.putpixel((x, y), mix(self.img.getpixel((x, y)), color, b))
+
+    def moon(self, cx, cy, r, color, glow):
+        for y in range(cy - r * 4, cy + r * 4):
+            for x in range(cx - r * 4, cx + r * 4):
+                if not (0 <= x < W and 0 <= y < H):
+                    continue
+                d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+                if d <= r:
+                    self.img.putpixel((x, y), color)
+                elif d <= r * 4:
+                    t = (1 - (d - r) / (r * 3)) ** 3 * 0.55
+                    self.img.putpixel((x, y), mix(self.img.getpixel((x, y)), glow, t))
+
+    def ridge(self, rnd, base_y, height, color, rough=0.55, step=6):
+        """One mountain layer: a jagged skyline filled down to the bottom."""
+        pts, y = [], base_y
+        for x in range(-step, W + step * 2, step):
+            y += rnd.uniform(-1, 1) * height * rough
+            y = max(base_y - height, min(base_y + height * 0.35, y))
+            pts.append((x, round(y)))
+        for i in range(len(pts) - 1):
+            (x0, y0), (x1, y1) = pts[i], pts[i + 1]
+            for x in range(x0, x1):
+                if 0 <= x < W:
+                    t = (x - x0) / max(1, x1 - x0)
+                    self.d.line([(x, round(y0 + (y1 - y0) * t)), (x, H)], fill=color)
+        return pts
+
+    def reflect(self, horizon, fade_to, strength=0.5):
+        """Mirror the image below the horizon, fading out with depth."""
+        for y in range(horizon, H):
+            src = horizon - (y - horizon) * 2
+            if src < 0:
+                break
+            t = (y - horizon) / max(1, H - horizon)
+            for x in range(W):
+                wob = x + (1 if (y // 3 + x // 7) % 5 == 0 else 0)
+                px = self.img.getpixel((min(W - 1, wob), src))
+                self.img.putpixel((x, y), mix(mix(px, fade_to, t * 0.8), fade_to, 1 - strength))
+
+    def save(self, path):
+        self.img.resize((W * SCALE, H * SCALE), Image.NEAREST).save(path, optimize=True)
+
+
+def peaks(pal, seed):
+    """Layered mountains over a lake, with a moon and stars."""
+    s, rnd = Scene(pal), random.Random(seed)
+    sky_top = shade(s.c("background"), -0.25)
+    sky_low = mix(s.c("background"), s.c("accent"), 0.45)
+    horizon = 168
+    s.gradient(0, horizon, sky_top, sky_low)
+    s.stars(rnd, 120, s.c("white", "foreground"))
+    s.moon(366, 46, 11, s.c("foreground"), s.c("accent"))
+
+    far = mix(s.c("muted", "dim"), sky_low, 0.55)
+    for i, (base, h, col) in enumerate([
+        (horizon - 46, 34, far),
+        (horizon - 30, 30, mix(far, s.c("background"), 0.45)),
+        (horizon - 14, 24, mix(s.c("background"), (0, 0, 0), 0.35)),
+    ]):
+        s.ridge(rnd, base, h, col, rough=0.5 + i * 0.1)
+
+    water = mix(s.c("background"), (0, 0, 0), 0.5)
+    s.d.rectangle([0, horizon, W, H], fill=water)
+    s.reflect(horizon, water, 0.45)
+    # moonlight: a narrow shimmer straight below the moon, broken into ripples
+    for y in range(horizon, H):
+        if (y - horizon) % 3 == 1:
+            continue
+        w = 2 + (y - horizon) // 14
+        t = 1 - (y - horizon) / (H - horizon)
+        for x in range(366 - w, 366 + w + 1):
+            if 0 <= x < W and rnd.random() < 0.55:
+                s.img.putpixel((x, y), mix(s.img.getpixel((x, y)), s.c("foreground"), 0.22 * t))
+    return s
+
+
+def city(pal, seed):
+    """Skyline of lit towers under a gradient sky."""
+    s, rnd = Scene(pal), random.Random(seed)
+    sky_top = shade(s.c("background"), -0.3)
+    glow = mix(s.c("accent"), s.c("magenta", "accent"), 0.5)
+    horizon = 196
+    s.gradient(0, horizon, sky_top, mix(s.c("background"), glow, 0.6))
+    s.stars(rnd, 100, s.c("white", "foreground"), n=90)
+    s.moon(92, 40, 9, s.c("foreground"), glow)
+
+    lights = [s.c("yellow", "accent"), s.c("accent"), s.c("cyan", "accent"), s.c("foreground")]
+    # three bands of buildings, nearest last and darkest
+    for depth, (ymin, ymax, tint) in enumerate([
+        (horizon - 74, horizon - 34, 0.5),
+        (horizon - 104, horizon - 48, 0.25),
+        (horizon - 64, horizon - 20, 0.0),
+    ]):
+        body = mix(mix(s.c("background"), (0, 0, 0), 0.55), glow, tint * 0.3)
+        x = -rnd.randrange(0, 14)
+        while x < W:
+            w = rnd.randrange(14, 34)
+            top = rnd.randrange(ymin, ymax)
+            s.d.rectangle([x, top, x + w - 2, horizon], fill=body)
+            # antenna
+            if rnd.random() < 0.22:
+                ax = x + w // 2
+                s.d.line([(ax, top - rnd.randrange(6, 16)), (ax, top)], fill=body)
+            # windows
+            for wy in range(top + 4, horizon - 3, 5):
+                for wx in range(x + 3, x + w - 4, 4):
+                    if rnd.random() < 0.3 + depth * 0.1:
+                        col = rnd.choice(lights)
+                        s.d.rectangle([wx, wy, wx + 1, wy + 2],
+                                      fill=mix(body, col, 0.85 - depth * 0.15))
+            x += w + rnd.randrange(1, 5)
+
+    ground = mix(s.c("background"), (0, 0, 0), 0.72)
+    s.d.rectangle([0, horizon, W, H], fill=ground)
+    # wet street: smeared reflections of the skyline
+    for y in range(horizon, H):
+        src = horizon - (y - horizon) * 3
+        if src < 0:
+            break
+        t = (y - horizon) / (H - horizon)
+        for x in range(W):
+            px = s.img.getpixel((max(0, min(W - 1, x + rnd.randrange(-2, 3))), src))
+            s.img.putpixel((x, y), mix(ground, px, (1 - t) * 0.28))
+    return s
+
+
+def grove(pal, seed):
+    """Rolling wooded hills against a low sun."""
+    s, rnd = Scene(pal), random.Random(seed)
+    sun = mix(s.c("yellow", "accent"), s.c("foreground"), 0.3)
+    horizon, sun_x, sun_y, sun_r = 150, 236, 126, 34
+    s.gradient(0, horizon + 50, shade(s.c("background"), -0.22),
+               mix(s.c("background"), sun, 0.55))
+    s.stars(rnd, 70, s.c("white", "foreground"), n=60)
+
+    # sun disc, with gaps cut out of its lower half only
+    reach = round(sun_r * 2.6)
+    for y in range(sun_y - reach, sun_y + reach + 1):
+        band = (y > sun_y - sun_r // 2) and ((y - sun_y) // 5) % 2 == 1
+        for x in range(sun_x - reach, sun_x + reach + 1):
+            if not (0 <= x < W and 0 <= y < H):
+                continue
+            d = ((x - sun_x) ** 2 + (y - sun_y) ** 2) ** 0.5
+            if d <= sun_r and not band:
+                s.img.putpixel((x, y), mix(sun, s.c("background"), (d / sun_r) * 0.3))
+            elif d <= reach:
+                t = (1 - (d - sun_r) / (reach - sun_r)) ** 2 * 0.3
+                s.img.putpixel((x, y), mix(s.img.getpixel((x, y)), sun, t))
+
+    def tree(x, base, h, color):
+        """A simple conifer: trunk plus stacked tiers."""
+        s.d.rectangle([x, base - h // 4, x + 1, base + 2], fill=color)
+        tiers = max(2, h // 7)
+        for i in range(tiers):
+            ty = base - h + (h * 0.75) * i / tiers
+            half = max(1, round((h / 5) * (i + 1.2) / tiers))
+            s.d.polygon([(x - half, ty + h / tiers), (x + 1 + half, ty + h / tiers),
+                         (x + 0.5, ty)], fill=color)
+
+    # three bands of hills, each with its own treeline; nearest is darkest
+    for base, col, th, step, rough in [
+        (horizon + 2, mix(s.c("green", "accent"), s.c("background"), 0.68), 13, 13, 6),
+        (horizon + 30, mix(s.c("green", "accent"), (0, 0, 0), 0.5), 19, 17, 9),
+        (horizon + 72, mix(s.c("background"), (0, 0, 0), 0.6), 28, 23, 12),
+    ]:
+        pts, y = [], base
+        for x in range(-20, W + 40, 20):
+            y += rnd.uniform(-1, 1) * rough
+            y = max(base - rough * 2, min(base + rough * 2, y))
+            pts.append((x, y))
+
+        def hill_y(px):
+            for i in range(len(pts) - 1):
+                if pts[i][0] <= px <= pts[i + 1][0]:
+                    (x0, y0), (x1, y1) = pts[i], pts[i + 1]
+                    t = (px - x0) / max(1, x1 - x0)
+                    t = t * t * (3 - 2 * t)          # smooth the ridge line
+                    return y0 + (y1 - y0) * t
+            return base
+
+        for x in range(W):
+            s.d.line([(x, round(hill_y(x))), (x, H)], fill=col)
+        x = rnd.randrange(step)
+        while x < W:
+            tree(x, round(hill_y(x)) + 1, th + rnd.randrange(-4, 5), col)
+            x += step + rnd.randrange(-3, 6)
+    return s
+
+
+SCENES = [("1-peaks.png", peaks), ("2-city.png", city), ("3-grove.png", grove)]
+
+
+def main(argv):
+    home = Path(os.path.expanduser("~"))
+    themes_dir = home / ".config/hypora/themes"
+    names = argv[1:] or sorted(p.name for p in themes_dir.iterdir()
+                               if (p / "colors.toml").is_file())
+    if not names:
+        print(f"No themes found in {themes_dir}", file=sys.stderr)
+        return 1
+
+    for name in names:
+        colors = themes_dir / name / "colors.toml"
+        if not colors.is_file():
+            print(f"No palette for theme '{name}' ({colors})", file=sys.stderr)
+            return 1
+        pal = read_palette(colors)
+        out = themes_dir / name / "backgrounds"
+        out.mkdir(parents=True, exist_ok=True)
+        # same seed per theme name, so a redraw gives the same picture
+        seed = sum(ord(ch) * (i + 1) for i, ch in enumerate(name))
+        for i, (fname, fn) in enumerate(SCENES):
+            fn(pal, seed + i * 977).save(out / fname)
+        print(f"{name}: {', '.join(f for f, _ in SCENES)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -17,4 +17,6 @@ ShellRoot {
     Launcher {}
     DisplaySettings {}
     ThemePicker {}
+    NetworkSettings {}
+    BluetoothSettings {}
 }

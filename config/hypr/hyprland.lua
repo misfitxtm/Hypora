@@ -166,8 +166,8 @@ hl.bind("XF86AudioPrev",  hl.dsp.exec_cmd("playerctl previous"),   { locked = tr
 ------------------ WINDOW RULES --------------
 hl.window_rule({
     -- Hypora's Display Settings window
-    name  = "hypora-display-settings",
-    match = { title = "^Display Settings$" },
+    name  = "hypora-settings-windows",
+    match = { title = "^(Display Settings|Network|Bluetooth)$" },
     float  = true,
     center = true,
 })

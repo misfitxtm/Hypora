@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetooth
+Comment=Pair and connect Bluetooth devices
+Exec=qs ipc call bluetooth open
+Icon=preferences-system-bluetooth
+Categories=Settings;
+Keywords=bluetooth;pair;device;

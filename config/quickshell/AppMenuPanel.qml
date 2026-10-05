@@ -14,20 +14,23 @@ Rectangle {
 
     readonly property var sections: [
         { icon: "grid", label: "Apps", page: "Apps" },
+        { icon: "image", label: "Style", page: "Style" },
         { icon: "sliders", label: "Settings", page: "Settings" },
         { icon: "folder", label: "Files", page: "Files" },
         { icon: "tool", label: "Tools", page: "Tools" }
     ]
 
     readonly property var pages: ({
-        "Settings": [
+        "Style": [
             { icon: "image", label: "Theme", run: () => ShellState.themePickerOpen = true },
-            { icon: "monitor", label: "Display", run: () => ShellState.displaySettingsOpen = true },
-            { icon: "wifi", label: "Network", run: () => Apps.inTerminal(Theme.network) },
-            { icon: "bluetooth", label: "Bluetooth", run: () => Apps.inTerminal(Theme.bluetooth) },
-            { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) },
             // Stays open so you can keep clicking through the theme's wallpapers
             { icon: "reboot", label: "Next wallpaper", stayOpen: true, run: () => ShellState.nextWallpaper() }
+        ],
+        "Settings": [
+            { icon: "monitor", label: "Display", run: () => ShellState.displaySettingsOpen = true },
+            { icon: "wifi", label: "Network", run: () => ShellState.networkSettingsOpen = true },
+            { icon: "bluetooth", label: "Bluetooth", run: () => ShellState.bluetoothSettingsOpen = true },
+            { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) }
         ],
         "Files": [
             { icon: "home", label: "Home", run: () => openFolder("HOME") },
