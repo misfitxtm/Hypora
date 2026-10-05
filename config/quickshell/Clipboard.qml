@@ -68,6 +68,12 @@ Rectangle {
     function refresh() { if (!load.running) load.running = true }
 
     function paste(id) {
+        // The pipe needs a shell, so the id must not be able to carry anything else into
+        // it. cliphist ids are plain integers; refuse whatever isn't one.
+        if (!/^[0-9]+$/.test(id)) {
+            notice = "Skipped an entry with an unexpected id."
+            return
+        }
         drop.open = false
         Quickshell.execDetached(["sh", "-c", `cliphist decode ${id} | wl-copy`])
     }

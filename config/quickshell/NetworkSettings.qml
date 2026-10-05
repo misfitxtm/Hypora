@@ -58,13 +58,16 @@ Scope {
                 else { pending = n; password.text = ""; password.forceActiveFocus() }
             }
 
-            // First-time join: create the profile with nmcli, then let Quickshell track it
+            // First-time join: create the profile with nmcli, then let Quickshell track it.
+            // The password goes in on stdin, never on the command line: arguments are
+            // world-readable in /proc/<pid>/cmdline for as long as the process lives.
+            property string secret: ""
+
             function joinWithPassword() {
                 if (!pending || password.text === "") return
-                join.exec({
-                    command: ["nmcli", "device", "wifi", "connect", pending.name, "password", password.text],
-                    stdout: joinOut, stderr: joinOut
-                })
+                secret = password.text
+                join.command = ["nmcli", "--ask", "device", "wifi", "connect", pending.name]
+                join.running = true
                 notice = `Connecting to ${pending.name}...`
                 pending = null
                 password.text = ""
@@ -72,7 +75,15 @@ Scope {
 
             Process {
                 id: join
-                onExited: code => win.notice = code === 0 ? "" : "Could not connect. Check the password and try again."
+                stdinEnabled: true
+                stdout: joinOut
+                stderr: joinOut
+                // nmcli --ask prompts for the secret once it's running
+                onStarted: { write(win.secret + "\n"); win.secret = "" }
+                onExited: code => {
+                    win.secret = ""
+                    win.notice = code === 0 ? "" : "Could not connect. Check the password and try again."
+                }
             }
             StdioCollector { id: joinOut }
 
