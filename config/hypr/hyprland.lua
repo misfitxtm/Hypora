@@ -1,7 +1,7 @@
 -- hyprland.lua  (Hyprland 0.55+ Lua config)
 -- Based on the upstream example config, adapted for Hypora:
 --   * Quickshell provides the bar, notifications and polkit prompt
---   * Nord-flavoured borders to match themes/Nord
+--   * Border colors come from the active theme (theme.lua, written by hypora-theme)
 -- Docs: https://wiki.hypr.land/Configuring/Start/
 -- After editing:  hyprctl reload && hyprctl configerrors
 
@@ -24,14 +24,20 @@ hl.monitor({
     scale    = "auto",
 })
 
--- Monitor layout saved by Display Settings (~/.config/hypr/monitors.lua), if any
-if package.searchpath("monitors", package.path) then
-    require("monitors")
+-- Optional files next to this one in ~/.config/hypr/. dofile (not require) so that
+-- `hyprctl reload` picks up changes.
+local function load(name)
+    local path = package.searchpath(name, package.path)
+    if path then dofile(path) end
 end
+
+-- Monitor layout saved by Display Settings (~/.config/hypr/monitors.lua)
+load("monitors")
 
 ------------------ ENVIRONMENT ---------------
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
+hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")   -- Qt apps follow the theme (also set in ~/.config/uwsm/env)
 
 ------------------ AUTOSTART -----------------
 -- Quickshell replaces waybar + mako + a standalone polkit agent.
@@ -46,12 +52,6 @@ hl.config({
         gaps_in     = 5,
         gaps_out    = 10,
         border_size = 2,
-
-        col = {
-            -- Nord frost
-            active_border   = { colors = { "rgba(88c0d0ee)", "rgba(81a1c1ee)" }, angle = 45 },
-            inactive_border = "rgba(4c566aaa)",
-        },
 
         resize_on_border = false,
         allow_tearing    = false,
@@ -93,6 +93,9 @@ hl.config({
         disable_hyprland_logo   = true,
     },
 })
+
+-- Border colors from the active theme (~/.config/hypr/theme.lua, written by hypora-theme)
+load("theme")
 
 ------------------ INPUT ---------------------
 hl.config({

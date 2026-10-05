@@ -1,0 +1,2 @@
+# Environment for apps started through uwsm (the Hypora session). Read by uwsm at login.
+export QT_QPA_PLATFORMTHEME=qt6ct

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# hypora-theme [NAME]: apply a Hypora theme everywhere: the Quickshell shell, kitty,
+# Hyprland borders, the lock screen, GTK and Qt apps, and the login screen.
+# Without NAME, lists the installed themes (* marks the current one).
+#
+# Each theme is a palette, ~/.config/hypora/themes/<NAME>/colors.toml. The templates in
+# ~/.config/hypora/templates/ are rendered into ~/.config/hypora/current/, and each app's
+# config points there.
+set -euo pipefail
+
+DIR="$HOME/.config/hypora"
+THEMES="$DIR/themes"
+TEMPLATES="$DIR/templates"
+OUT="$DIR/current"
+
+current() { cat "$OUT/name" 2>/dev/null || true; }
+
+list() {
+    for f in "$THEMES"/*/colors.toml; do
+        [ -f "$f" ] || continue
+        local name; name=$(basename "$(dirname "$f")")
+        if [ "$name" = "$(current)" ]; then echo "* $name"; else echo "  $name"; fi
+    done
+}
+
+if [ $# -eq 0 ]; then list; exit 0; fi
+NAME=$1
+COLORS="$THEMES/$NAME/colors.toml"
+if [ ! -f "$COLORS" ]; then
+    { echo "No theme named '$NAME'. Installed themes:"; list; } >&2
+    exit 1
+fi
+
+value() { sed -nE "s/^$1[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\1/p" "$COLORS"; }
+
+# ---------- render ----------
+# Every `key = "value"` becomes {{ key }}; colors also get {{ key_hex }} without the '#'.
+subs=$(mktemp)
+trap 'rm -f "$subs"' EXIT
+{
+    printf 's|{{ home }}|%s|g\n' "$HOME"
+    printf 's|{{ prefer_dark }}|%s|g\n' "$([ "$(value mode)" = dark ] && echo 1 || echo 0)"
+    sed -nE 's/^([a-z_]+)[[:space:]]*=[[:space:]]*"([^"]*)".*/\1 \2/p' "$COLORS" | while read -r key val; do
+        printf 's|{{ %s }}|%s|g\n' "$key" "$val"
+        if [[ $val == \#* ]]; then printf 's|{{ %s_hex }}|%s|g\n' "$key" "${val#\#}"; fi
+    done
+} > "$subs"
+
+mkdir -p "$OUT"
+for tpl in "$TEMPLATES"/*.tpl; do
+    out="$OUT/$(basename "${tpl%.tpl}")"
+    sed -f "$subs" "$tpl" > "$out.new"
+    if grep -q '{{ ' "$out.new"; then
+        echo "warning: $(basename "$tpl") uses a key that $NAME's colors.toml doesn't define" >&2
+    fi
+    mv "$out.new" "$out"
+done
+echo "$NAME" > "$OUT/name"
+
+# ---------- point each app at the rendered files ----------
+link() {   # link <target> <path>: symlink, backing up a real file that's in the way
+    mkdir -p "$(dirname "$2")"
+    if [ -e "$2" ] && [ ! -L "$2" ]; then mv "$2" "$2.bak.$(date +%s)"; fi
+    ln -sfn "$1" "$2"
+}
+link "$OUT/Theme.qml"         "$HOME/.config/quickshell/Theme.qml"
+link "$OUT/kitty.conf"        "$HOME/.config/kitty/current-theme.conf"
+link "$OUT/hyprland.lua"      "$HOME/.config/hypr/theme.lua"
+link "$OUT/hyprlock.conf"     "$HOME/.config/hypr/hyprlock.conf"
+link "$OUT/gtk.css"           "$HOME/.config/gtk-3.0/gtk.css"
+link "$OUT/gtk.css"           "$HOME/.config/gtk-4.0/gtk.css"
+link "$OUT/gtk-settings.ini"  "$HOME/.config/gtk-3.0/settings.ini"
+link "$OUT/gtk-settings.ini"  "$HOME/.config/gtk-4.0/settings.ini"
+link "$OUT/qt6ct.conf"        "$HOME/.config/qt6ct/qt6ct.conf"
+
+# ---------- apply to what's running ----------
+if command -v gsettings >/dev/null 2>&1; then
+    gs() { gsettings set org.gnome.desktop.interface "$1" "$2" 2>/dev/null || true; }
+    gs gtk-theme "$(value gtk_theme)"
+    gs icon-theme "$(value icon_theme)"
+    gs color-scheme "$(value color_scheme)"
+    gs monospace-font-name "$(value font) 11"
+    gs font-name "Liberation Sans 11"
+fi
+if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    hyprctl reload >/dev/null 2>&1 || true
+    qs ipc call shell reload >/dev/null 2>&1 || true
+fi
+pkill -USR1 -x kitty 2>/dev/null || true   # kitty reloads its config on SIGUSR1
+
+# The login screen's colors live outside your home directory, so this step needs sudo
+SDDM_CONF=/usr/share/sddm/themes/hypora/theme.conf
+if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF"; then
+    sudo install -m644 "$OUT/sddm-theme.conf" "$SDDM_CONF" \
+        || echo "Couldn't update the login screen colors; run: sudo install -m644 $OUT/sddm-theme.conf $SDDM_CONF" >&2
+fi
+
+echo "Theme set to $NAME. Already-open GTK and Qt apps pick it up when restarted."

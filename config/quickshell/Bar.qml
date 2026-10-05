@@ -14,8 +14,6 @@ Variants {
         implicitHeight: 30
         color: Theme.bg
 
-        SystemClock { id: clock; precision: SystemClock.Minutes }
-
         // Left: app menu, workspaces 1-9
         Row {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 8 }
@@ -51,13 +49,10 @@ Variants {
             }
         }
 
-        // Center: clock
-        Text {
+        // Center: clock (click for the calendar)
+        Clock {
             anchors.centerIn: parent
-            text: Qt.formatDateTime(clock.date, "ddd MMM d   HH:mm")
-            font.family: Theme.font
-            font.pixelSize: Theme.fontSize
-            color: Theme.fg
+            window: bar
         }
 
         // Right: tray, then the status icons that open the control center
