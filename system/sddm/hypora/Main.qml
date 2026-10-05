@@ -1,6 +1,6 @@
 import QtQuick
 
-// Hypora login screen (SDDM), styled after Omarchy's: a block-letter logo over a
+// Hypora login screen (SDDM): the Hypora mark and wordmark over a
 // password box. The user name only appears when there is more than one user.
 // Colors come from theme.conf, which install.sh generates from the active Hypora theme.
 Rectangle {
@@ -46,6 +46,21 @@ Rectangle {
         sddm.login(userName, password.text, sessionIndex)
     }
 
+    // The Hypora mark: same SVG as config/quickshell/Logo.qml (keep them in sync)
+    function logo(from, to) {
+        const hex = c => "#" + [c.r, c.g, c.b].map(v => Math.round(v * 255).toString(16).padStart(2, "0")).join("")
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="url(#g)" '
+                  + 'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'
+                  + '<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="3" y1="2" x2="21" y2="22">'
+                  + '<stop offset="0" stop-color="' + hex(from) + '"/><stop offset="1" stop-color="' + hex(to) + '"/>'
+                  + '</linearGradient></defs>'
+                  + '<polygon points="12 1.8 20.8 6.9 20.8 17.1 12 22.2 3.2 17.1 3.2 6.9"/>'
+                  + '<line x1="8.4" y1="7.6" x2="8.4" y2="16.4"/><line x1="15.6" y1="7.6" x2="15.6" y2="16.4"/>'
+                  + '<path d="M8.4 12c1.2-1.7 2.4-1.7 3.6 0s2.4 1.7 3.6 0"/>'
+                  + '</svg>'
+        return "data:image/svg+xml;utf8," + encodeURIComponent(svg)
+    }
+
     // Inline SVG lock (Feather, MIT), recolored on failure
     function lockIcon(c) {
         const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="' + c + '" '
@@ -69,37 +84,23 @@ Rectangle {
         anchors.centerIn: parent
         spacing: 48
 
-        // "HYPORA" in terminal-style blocks with a drop shadow, drawn as shapes so it
-        // doesn't depend on font metrics. Each '#' is one cell.
-        Canvas {
-            id: logo
-            readonly property var rows: [
-                "##   ##  ##    ##  ######    #####   ######    ##### ",
-                "##   ##   ##  ##   ##   ##  ##   ##  ##   ##  ##   ##",
-                "#######    ####    ######   ##   ##  ######   #######",
-                "##   ##     ##     ##       ##   ##  ##  ##   ##   ##",
-                "##   ##     ##     ##        #####   ##   ##  ##   ##"
-            ]
-            readonly property real cw: 9      // cell width
-            readonly property real ch: 18     // cell height (terminal cells are ~1:2)
-            readonly property real drop: 4    // shadow offset
-
+        // The Hypora mark and wordmark
+        Column {
             anchors.horizontalCenter: parent.horizontalCenter
-            width: rows[0].length * cw + drop
-            height: rows.length * ch + drop
+            spacing: 18
 
-            onPaint: {
-                const ctx = getContext("2d")
-                ctx.reset()
-                const pass = (color, d) => {
-                    ctx.fillStyle = color
-                    rows.forEach((row, y) => {
-                        for (let x = 0; x < row.length; x++)
-                            if (row[x] === "#") ctx.fillRect(x * cw + d, y * ch + d, cw + 0.5, ch + 0.5)
-                    })
-                }
-                pass(Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.35), drop)
-                pass(root.accent, 0)
+            Image {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 96; height: 96
+                sourceSize: Qt.size(96, 96)
+                source: root.logo(root.accent, Qt.hsla((root.accent.hslHue + 0.15) % 1, root.accent.hslSaturation, root.accent.hslLightness, 1))
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "hypora"
+                font.family: root.font; font.pixelSize: 30; font.weight: Font.Light; font.letterSpacing: 14
+                leftPadding: 14   // balance the trailing letter spacing
+                color: root.fg
             }
         }
 
@@ -142,15 +143,16 @@ Rectangle {
                 }
 
                 Rectangle {
-                    width: 380; height: 50
-                    color: "transparent"
-                    border.width: 2
-                    border.color: root.failed ? root.error : root.fg
+                    width: 360; height: 50
+                    radius: 25
+                    color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.05)
+                    border.width: 1.5
+                    border.color: root.failed ? root.error : (password.activeFocus ? root.accent : root.dim)
                     opacity: root.busy ? 0.6 : 1
 
                     TextInput {
                         id: password
-                        anchors { fill: parent; leftMargin: 18; rightMargin: 18 }
+                        anchors { fill: parent; leftMargin: 24; rightMargin: 24 }
                         verticalAlignment: TextInput.AlignVCenter
                         echoMode: TextInput.Password
                         passwordCharacter: "•"
@@ -162,9 +164,9 @@ Rectangle {
                         focus: true
                         enabled: !root.busy
 
-                        // Blinking block cursor, terminal style
+                        // Slim blinking cursor in the accent color
                         cursorDelegate: Rectangle {
-                            width: 10
+                            width: 2
                             color: root.accent
                             SequentialAnimation on opacity {
                                 loops: Animation.Infinite

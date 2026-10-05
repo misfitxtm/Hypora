@@ -14,7 +14,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 ## What you get
 
 **Desktop**
-- A minimal SDDM login screen (the same approach Omarchy uses) that follows the active theme
+- A minimal SDDM login screen (the same setup Omarchy uses) with the Hypora logo, following the active theme
 - Hyprland, started through `uwsm`
 - Quickshell as the shell layer (replaces Waybar, Mako and a standalone polkit agent)
 
@@ -22,20 +22,30 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 
 | Component | What it does |
 |---|---|
-| Bar (`Bar.qml`) | Top bar on every monitor: workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
-| Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles |
+| Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
+| App menu (`AppMenu.qml`, `AppMenuPanel.qml`) | ArcMenu-style menu from the Hypora logo at the top left: app search, categories and all installed apps, plus a sidebar with places (Home, Documents, ...), settings (Display, Network, Bluetooth, Sound, Terminal) and session buttons |
+| Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
+| Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
 | Workspaces | Click to switch; highlights the focused workspace and dims empty ones |
 | Volume (`Volume.qml`) | PipeWire volume icon in the bar. Scroll over it to change the volume |
-| Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens `nmtui` |
+| Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens `impala` |
 | Tray (`Tray.qml`) | System tray: left click activates, middle click secondary action, right click menu |
 | Battery (`Battery.qml`) | Icon and percentage, laptops only; turns red when low |
-| Icons (`Icon.qml`) | Line icons drawn from inline SVG in the theme colors, so no icon font is needed |
+| Icons (`Icon.qml`, `Logo.qml`) | Line icons and the Hypora logo, drawn from inline SVG in the theme colors, so no icon font is needed |
 | Notifications (`Notifications.qml`) | Quickshell *is* the notification daemon: popups top-right, auto-expire, critical ones persist, action buttons supported |
 | Launcher (`Launcher.qml`) | App launcher on **SUPER + R**: type to filter installed apps, Up/Down or Tab to select, Enter to launch, Esc to close |
 | Polkit (`PolkitDialog.qml`) | Full-screen authentication prompt (works with `pkexec` and other polkit requests) |
 
+**Terminal tools** (the same ones Omarchy has used)
+
+| Tool | For | Opened from |
+|---|---|---|
+| `impala` | Wi-Fi (needs iwd; falls back to `nmtui`) | Wi-Fi tile arrow, menu > Network |
+| `bluetui` | Bluetooth devices | Bluetooth tile arrow, menu > Bluetooth |
+| `wiremix` | Sound outputs, inputs and per-app volume | Mixer button in the control center, menu > Sound |
+
 **Theming**
-- `themes/<Name>/Theme.qml` holds the palette, font and a few app defaults (terminal, mixer)
+- `themes/<Name>/Theme.qml` holds the palette, font and a few app defaults (terminal and the TUIs above)
 - Included themes: **Nord**, **TokyoNight**
 
 ## Requirements
@@ -63,10 +73,10 @@ The installer is safe to re-run. It:
 
 1. Checks you're on Fedora and not running as root
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
-3. Installs required packages (warns and continues if an optional one is unavailable)
-4. Enables `NetworkManager` and `upower`, and sets the default boot target to graphical
+3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, and downloads impala and bluetui into `/usr/local/bin`
+4. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
 5. Points `~/.config/hypora/themes/current` at the chosen theme
-6. **Symlinks** `config/hypr/hyprland.lua` and each file in `config/quickshell/` into `~/.config/`, and links `Theme.qml` from the current theme
+6. **Symlinks** `config/hypr/hyprland.lua` and each file in `config/quickshell/` into `~/.config/`, links `Theme.qml` from the current theme, and links `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
 7. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
 8. Links any scripts in `bin/` into `~/.local/bin/`
 
@@ -101,6 +111,8 @@ qs                          # run Quickshell manually to see QML errors in the t
 notify-send "Test" "Hello"  # test notifications
 pkexec true                 # test the polkit prompt
 qs ipc call launcher toggle # open the launcher without the keybind
+qs ipc call menu toggle     # open the app menu
+qs ipc call display open    # open Display Settings
 ```
 
 Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alongside Quickshell. They will conflict with it.
@@ -114,7 +126,9 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypr/hyprland.lua
 │   └── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
 │                           # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
+│                           # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
 │                           # Icon, Net, ShellState, Slider, PowerButton
+├── applications/           # .desktop entries linked into ~/.local/share/applications
 ├── themes/
 │   ├── Nord/Theme.qml      # palette, font, app defaults
 │   └── TokyoNight/Theme.qml
@@ -131,16 +145,18 @@ Not created yet: `bin/` (helper scripts; `install.sh` links anything placed ther
 ## Customizing
 
 - **Colors and font:** edit `themes/Nord/Theme.qml`, or copy the folder to `themes/<NewName>/` and install with `THEME=<NewName>`
-- **Terminal and mixer launched by widgets:** `terminal` and `mixer` in `Theme.qml`
-- **Autostart, keybinds, monitors:** `config/hypr/hyprland.lua`
+- **Terminal and TUIs launched by widgets:** `terminal`, `mixer`, `network` and `bluetooth` in `Theme.qml`
+- **Autostart, keybinds:** `config/hypr/hyprland.lua`
+- **Monitors:** Display Settings, or edit `~/.config/hypr/monitors.lua` (loaded by `hyprland.lua`)
 - **Bar contents:** `Bar.qml` (the right-hand `Row` holds the tray and the control center button)
 - **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
+- **App menu sidebar:** the `SidebarItem` entries in `AppMenuPanel.qml`
 
 ## Status
 
 Working:
 - Installer for packages, services, theme and config links
-- Quickshell bar, control center, tray, volume, network, battery, notifications and polkit prompt
+- Quickshell bar, app menu, control center, display settings, tray, volume, network, battery, notifications and polkit prompt
 - Hyprland Lua config with keybinds, Nord-style borders and Quickshell autostart
 - SDDM login screen (needs testing on real hardware)
 
@@ -154,6 +170,7 @@ In progress / planned:
 - Hyprland window borders are hardcoded to Nord colors in `hyprland.lua` and don't follow the selected theme yet
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
 - Hyprland comes from the third-party `sdegler/hyprland` COPR, so builds may lag behind or break after Fedora updates
+- impala needs iwd: the installer switches NetworkManager's Wi-Fi backend to iwd. If Wi-Fi misbehaves, delete `/etc/NetworkManager/conf.d/hypora-iwd.conf`, run `sudo systemctl enable wpa_supplicant`, and reboot (`nmtui` then works as before)
 - Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
 - Fedora versions tested: _fill in_
 

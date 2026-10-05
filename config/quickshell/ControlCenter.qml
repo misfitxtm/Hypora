@@ -1,8 +1,8 @@
 import Quickshell
-import Quickshell.Hyprland
 import QtQuick
 
-// Status icons on the right of the bar. Clicking them opens the control center.
+// Status icons on the right of the bar. Clicking them opens the control center;
+// clicking anywhere else (or Escape) closes it.
 Rectangle {
     id: root
     required property var window
@@ -10,14 +10,14 @@ Rectangle {
     implicitWidth: icons.implicitWidth + 20
     implicitHeight: 24
     radius: height / 2
-    color: popup.visible ? Theme.surface : (area.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+    color: drop.open ? Theme.surface : (area.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
 
     MouseArea {
         id: area
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: popup.visible = !popup.visible
+        onClicked: drop.open = true
     }
 
     Row {
@@ -36,27 +36,12 @@ Rectangle {
         Battery { anchors.verticalCenter: parent.verticalCenter }
     }
 
-    // Close when clicking anywhere else
-    HyprlandFocusGrab {
-        windows: [popup]
-        active: popup.visible
-        onCleared: popup.visible = false
-    }
+    Dropdown {
+        id: drop
+        screen: root.window.screen
+        barHeight: root.window.height
+        alignRight: true
 
-    PopupWindow {
-        id: popup
-        visible: false
-        anchor.window: root.window
-        anchor.rect.x: root.window.width - implicitWidth - 8
-        anchor.rect.y: root.window.height + 6
-        implicitWidth: panel.implicitWidth
-        implicitHeight: panel.implicitHeight
-        color: "transparent"
-
-        ControlPanel {
-            id: panel
-            anchors.fill: parent
-            onCloseRequested: popup.visible = false
-        }
+        ControlPanel { onCloseRequested: drop.open = false }
     }
 }
