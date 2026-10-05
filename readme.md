@@ -102,7 +102,7 @@ The installer is safe to re-run. It:
 3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), and downloads impala and bluetui into `/usr/local/bin`
 4. Installs Oh My Zsh and the LazyVim starter, and makes zsh your login shell (an existing `~/.config/nvim` is left alone)
 5. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
-6. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
+6. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd on machines that have a Wi-Fi radio (taking effect at the next reboot), and sets the default boot target to graphical
 7. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
 8. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
 9. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
@@ -213,7 +213,8 @@ In progress / planned:
 - Developed and tested in a VM so far; real hardware (GPU, laptop battery and backlight) is less tested
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
 - Hyprland comes from the third-party `sdegler/hyprland` COPR, so builds may lag behind or break after Fedora updates
-- impala needs iwd: the installer switches NetworkManager's Wi-Fi backend to iwd. If Wi-Fi misbehaves, delete `/etc/NetworkManager/conf.d/hypora-iwd.conf`, run `sudo systemctl enable wpa_supplicant`, and reboot (`nmtui` then works as before)
+- impala needs iwd, so the installer switches NetworkManager's Wi-Fi backend to iwd — but only when the machine actually has a Wi-Fi radio, so VMs are left alone. If Wi-Fi misbehaves, delete `/etc/NetworkManager/conf.d/hypora-iwd.conf`, run `sudo systemctl enable wpa_supplicant`, and reboot (`nmtui` then works as before)
+- In a VM with no Wi-Fi or Bluetooth adapter, impala and bluetui exit straight away with "no device" — expected, not a fault. The Network and Bluetooth windows say so plainly too
 - Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
 - `~/.config/quickshell/Theme.qml`, `~/.config/kitty/current-theme.conf`, `~/.config/hypr/theme.lua`, `hyprlock.conf`, the GTK `gtk.css`/`settings.ini` and `qt6ct.conf` are links to files `hypora-theme` generates; edit the palette or templates instead, or your changes are lost on the next theme switch
 - Fedora versions tested: Fedora 44

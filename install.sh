@@ -251,10 +251,29 @@ fi
 
 # Wi-Fi through iwd so impala works. NetworkManager keeps managing connections (the bar
 # and nmcli still work); this takes effect after a reboot so the install isn't cut off.
-sudo install -d /etc/NetworkManager/conf.d
-printf '[device]\nwifi.backend=iwd\n' | sudo tee /etc/NetworkManager/conf.d/hypora-iwd.conf >/dev/null
-sudo systemctl enable iwd || warn "Could not enable iwd"
-sudo systemctl disable wpa_supplicant 2>/dev/null || true
+# Machines with no Wi-Fi radio (most VMs) are left on the stock backend: the kernel is
+# asked directly, so this doesn't depend on NetworkManager already being up.
+has_wifi() {
+    local d
+    for d in /sys/class/net/*/wireless /sys/class/net/*/phy80211; do
+        [ -e "$d" ] && return 0
+    done
+    return 1
+}
+
+IWD_CONF=/etc/NetworkManager/conf.d/hypora-iwd.conf
+if has_wifi; then
+    log "Wi-Fi found; switching NetworkManager to the iwd backend"
+    sudo install -d /etc/NetworkManager/conf.d
+    printf '[device]\nwifi.backend=iwd\n' | sudo tee "$IWD_CONF" >/dev/null
+    sudo systemctl enable iwd || warn "Could not enable iwd"
+    sudo systemctl disable wpa_supplicant 2>/dev/null || true
+else
+    log "No Wi-Fi device; leaving the NetworkManager backend alone"
+    # Undo the switch if an earlier run made it on this machine
+    [ -e "$IWD_CONF" ] && { sudo rm -f "$IWD_CONF"; warn "Removed $IWD_CONF (no Wi-Fi device)"; }
+    sudo systemctl disable iwd 2>/dev/null || true
+fi
 sudo systemctl set-default graphical.target
 
 # ---------- themes ----------
