@@ -56,9 +56,14 @@ Singleton {
         Quickshell.execDetached(useUwsm ? ["uwsm", "app", "--", ...argv] : argv)
     }
 
-    // Run a shell command line in the theme's terminal
+    // Run a shell command line in the theme's terminal. If it exits non-zero, hold the
+    // window open: terminal tools like impala and bluetui print why they can't start and
+    // quit straight away, and without this the window vanishes before you can read it.
+    readonly property string holdOnError:
+        '; rc=$?; if [ $rc -ne 0 ]; then printf "\\n[exited with status %s]\\nPress Enter to close. " "$rc"; read _; fi'
+
     function inTerminal(cmd) {
-        run([Theme.terminal, "-e", "sh", "-c", cmd])
+        run([Theme.terminal, "-e", "sh", "-c", cmd + holdOnError])
     }
 
     function launch(entry) {
