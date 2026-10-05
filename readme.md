@@ -9,7 +9,7 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 - Omarchy's "install and it just looks good" experience, on Fedora instead of Arch
 - A small, readable codebase: plain shell scripts and QML, no framework on top
 - One place to change colors; the Quickshell shell reads everything from the active theme
-- Deliberately minimal, with no bundled AI tooling
+- Ships Claude Code and Hermes Agent out of the box
 
 ## What you get
 
@@ -44,6 +44,14 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | `bluetui` | Bluetooth devices | Bluetooth tile arrow, menu > Bluetooth |
 | `wiremix` | Sound outputs, inputs and per-app volume | Mixer button in the control center, menu > Sound |
 
+**Fonts and icons**
+- **JetBrainsMono Nerd Font** for monospace and the shell UI, with **Liberation Sans / Serif** for the rest, the same defaults Omarchy uses. Set system-wide in `/etc/fonts/conf.d/50-hypora.conf`
+- **Papirus-Dark** icons for apps, the launcher and the app menu (GTK settings and gsettings are set to match)
+
+**AI tools**
+- **Claude Code** from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update). Run `claude` to log in
+- **Hermes Agent** (Nous Research), installed per-user under `~/.hermes` with its official script. Run `hermes setup` to pick a model provider
+
 **Theming**
 - `themes/<Name>/Theme.qml` holds the palette, font and a few app defaults (terminal and the TUIs above)
 - Included themes: **Nord**, **TokyoNight**
@@ -74,15 +82,16 @@ The installer is safe to re-run. It:
 1. Checks you're on Fedora and not running as root
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
 3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, and downloads impala and bluetui into `/usr/local/bin`
-4. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
-5. Points `~/.config/hypora/themes/current` at the chosen theme
-6. **Symlinks** `config/hypr/hyprland.lua` and each file in `config/quickshell/` into `~/.config/`, links `Theme.qml` from the current theme, and links `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
-7. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
-8. Links any scripts in `bin/` into `~/.local/bin/`
+4. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
+5. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
+6. Points `~/.config/hypora/themes/current` at the chosen theme
+7. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
+8. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
+9. Copies any scripts in `bin/` into `~/.local/bin/`
 
-Anything it replaces is saved as `<name>.bak.<timestamp>`.
+Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
 
-Because configs are symlinks into the repo, **keep the repo where you cloned it**. Editing `~/.config/quickshell/*.qml` edits the repo directly, and Quickshell live-reloads on save.
+Configs are **copies**, so the clone can be moved or deleted after installing. To update, `git pull` (or clone again) and re-run `./install.sh`. It records a checksum of every file it installs: files you haven't touched are updated quietly, files you edited are saved as `<name>.bak.<timestamp>` before being replaced, and files Hypora no longer ships are removed (unless you edited them). Quickshell live-reloads when you edit `~/.config/quickshell/*.qml`.
 
 ### Starting the desktop
 
@@ -122,17 +131,20 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 ```
 .
 ├── install.sh              # main installer
-├── config/                 # symlinked into ~/.config
+├── config/                 # copied into ~/.config
 │   ├── hypr/hyprland.lua
-│   └── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
-│                           # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
-│                           # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
-│                           # Icon, Net, ShellState, Slider, PowerButton
-├── applications/           # .desktop entries linked into ~/.local/share/applications
+│   ├── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
+│   │                       # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
+│   │                       # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
+│   │                       # Icon, Net, ShellState, Slider, PowerButton
+│   └── gtk-3.0, gtk-4.0/   # icon theme and dark preference
+├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
 │   ├── Nord/Theme.qml      # palette, font, app defaults
 │   └── TokyoNight/Theme.qml
 ├── system/
+│   ├── fontconfig/         # system font defaults -> /etc/fonts/conf.d/
+│   ├── yum.repos.d/        # Claude Code repository -> /etc/yum.repos.d/
 │   └── sddm/               # login screen, installed by install.sh
 │       ├── 10-hypora.conf  # -> /etc/sddm.conf.d/ (Wayland greeter on Hyprland, hypora theme)
 │       ├── hyprland.lua    # minimal Hyprland session that hosts the greeter

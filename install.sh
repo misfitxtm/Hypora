@@ -3,7 +3,8 @@
 # Covers: packages, Hyprland (Lua) config, Quickshell config, theme, SDDM login screen.
 # NOT included: packages/ lists.
 #
-# Safe to re-run. Config files are SYMLINKED into the repo, so keep the repo where it is.
+# Safe to re-run. Config files are COPIED into place, so the clone can be moved or deleted
+# afterwards. To update: git pull (or re-clone) and run this again.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,16 +23,46 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 [ -d "$REPO/config/quickshell" ] || die "Missing $REPO/config/quickshell"
 
 # ---------- helpers ----------
-# link <src> <dest>: symlink, backing up anything already at dest
-link() {
-    local src=$1 dest=$2
+# Every file the installer copies is recorded with its checksum, so a re-run can tell
+# files you edited (backed up before replacing) from ones it can update quietly.
+MANIFEST="$CONF/hypora/installed.sha256"
+NEW_MANIFEST=$(mktemp)
+trap 'rm -f "$NEW_MANIFEST"' EXIT
+
+sha() { sha256sum "$1" | cut -c1-64; }
+installed_sha() { [ -f "$MANIFEST" ] && awk -v p="$1" 'substr($0, 67) == p { print substr($0, 1, 64) }' "$MANIFEST"; }
+
+# put <src> <dest> [mode]: copy a file into place
+put() {
+    local src=$1 dest=$2 mode=${3:-644} new
+    new=$(sha "$src")
     mkdir -p "$(dirname "$dest")"
-    if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$src" ]; then return 0; fi
-    if [ -e "$dest" ] || [ -L "$dest" ]; then
+    if [ -L "$dest" ]; then
+        rm "$dest"   # older Hypora installs symlinked into the clone
+    elif [ -f "$dest" ]; then
+        local cur; cur=$(sha "$dest")
+        if [ "$cur" != "$new" ] && [ "$cur" != "$(installed_sha "$dest")" ]; then
+            mv "$dest" "$dest.bak.$(date +%s)"
+            warn "Backed up your edited $dest"
+        fi
+    elif [ -e "$dest" ]; then
         mv "$dest" "$dest.bak.$(date +%s)"
         warn "Backed up existing $dest"
     fi
-    ln -s "$src" "$dest"
+    install -m "$mode" "$src" "$dest"
+    printf '%s  %s\n' "$new" "$dest" >> "$NEW_MANIFEST"
+}
+
+# Remove files a previous run installed that Hypora no longer ships (unless you edited them)
+prune() {
+    [ -f "$MANIFEST" ] || return 0
+    local h p
+    while IFS= read -r line; do
+        h=${line:0:64}; p=${line:66}
+        grep -qxF "$line" "$NEW_MANIFEST" && continue
+        awk -v p="$p" 'substr($0, 67) == p { f = 1 } END { exit !f }' "$NEW_MANIFEST" && continue
+        if [ -f "$p" ] && [ "$(sha "$p")" = "$h" ]; then rm "$p"; fi
+    done < "$MANIFEST"
 }
 
 # available_in_repos <pkg>: true if dnf can find it
@@ -51,7 +82,9 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 # ---------- packages ----------
 REQUIRED=(
     hyprland hyprland-guiutils uwsm quickshell kitty git
-    polkit jetbrains-mono-fonts sddm qt6-qtsvg adwaita-icon-theme
+    polkit sddm qt6-qtsvg gnupg2 curl tar xz
+    # Fonts and icons (JetBrainsMono Nerd Font is downloaded below)
+    liberation-sans-fonts liberation-serif-fonts papirus-icon-theme adwaita-icon-theme
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
     # Network: NetworkManager on the iwd Wi-Fi backend (impala, the Wi-Fi TUI, needs iwd)
     NetworkManager NetworkManager-tui NetworkManager-wifi iwd
@@ -108,6 +141,57 @@ if [ -n "$hypr_ver" ] && [ "$(printf '%s\n' 0.55.0 "$hypr_ver" | sort -V | head 
     die "Hyprland $hypr_ver is too old for hyprland.lua (need 0.55+). Run: sudo dnf upgrade --refresh hyprland"
 fi
 
+# ---------- fonts ----------
+# Same as Omarchy: JetBrainsMono Nerd Font for monospace and the shell UI, Liberation for
+# sans-serif and serif. The Nerd Font isn't packaged for Fedora; install the official
+# release system-wide so the login screen (which runs as the sddm user) can use it too.
+NERD_FONT_DIR=/usr/local/share/fonts/JetBrainsMonoNerdFont
+if ! ls "$NERD_FONT_DIR"/*.ttf >/dev/null 2>&1; then
+    log "Installing JetBrainsMono Nerd Font"
+    tmp=$(mktemp -d)
+    if curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz -o "$tmp/font.tar.xz" \
+        && tar -xJf "$tmp/font.tar.xz" -C "$tmp"; then
+        sudo install -d "$NERD_FONT_DIR"
+        sudo install -m644 "$tmp"/*.ttf "$NERD_FONT_DIR/"
+    else
+        warn "Could not download JetBrainsMono Nerd Font"
+    fi
+    rm -rf "$tmp"
+fi
+sudo install -m644 "$REPO/system/fontconfig/50-hypora.conf" /etc/fonts/conf.d/50-hypora.conf
+sudo fc-cache -f >/dev/null 2>&1 || true
+
+# ---------- AI tools ----------
+# Claude Code from Anthropic's signed dnf repository (stable channel). The signing key is
+# checked against the fingerprint Anthropic publishes before rpm trusts it.
+CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+log "Installing Claude Code"
+key=$(mktemp)
+if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
+    && [ "$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$CLAUDE_KEY_FPR" ]; then
+    sudo rpm --import "$key"
+    sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
+    sudo dnf install -y claude-code || warn "Could not install claude-code"
+else
+    warn "Claude Code signing key missing or fingerprint mismatch; skipped Claude Code"
+fi
+rm -f "$key"
+
+# Hermes Agent (Nous Research) has no dnf repository; it installs per-user under ~/.hermes
+# with its official script, which must not run as root. Run 'hermes setup' afterwards.
+if command -v hermes >/dev/null 2>&1 || [ -x "$HOME/.local/bin/hermes" ]; then
+    log "Hermes Agent already installed (update it with: hermes update)"
+else
+    log "Installing Hermes Agent"
+    script=$(mktemp)
+    if curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o "$script"; then
+        bash "$script" --non-interactive || warn "Hermes Agent install failed; retry with: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+    else
+        warn "Could not download the Hermes Agent installer"
+    fi
+    rm -f "$script"
+fi
+
 # ---------- services ----------
 log "Enabling services"
 sudo systemctl enable --now NetworkManager || warn "Could not enable NetworkManager"
@@ -126,18 +210,19 @@ printf '[device]\nwifi.backend=iwd\n' | sudo tee /etc/NetworkManager/conf.d/hypo
 sudo systemctl enable iwd || warn "Could not enable iwd"
 sudo systemctl disable wpa_supplicant 2>/dev/null || true
 sudo systemctl set-default graphical.target
-fc-cache -f >/dev/null 2>&1 || true
 
 # ---------- theme ----------
-log "Setting theme: $THEME"
-mkdir -p "$CONF/hypora/themes"
-ln -sfn "$REPO/themes/$THEME" "$CONF/hypora/themes/current"
+log "Installing themes (current: $THEME)"
+for f in "$REPO"/themes/*/*; do
+    [ -f "$f" ] && put "$f" "$CONF/hypora/themes/${f#"$REPO"/themes/}"
+done
+ln -sfn "$CONF/hypora/themes/$THEME" "$CONF/hypora/themes/current"
 
 # ---------- Hyprland ----------
 # Hyprland 0.55+ uses a Lua config (hyprland.lua); the old hyprland.conf format is deprecated.
-log "Linking Hyprland config"
+log "Installing Hyprland config"
 if [ -f "$REPO/config/hypr/hyprland.lua" ]; then
-    link "$REPO/config/hypr/hyprland.lua" "$CONF/hypr/hyprland.lua"
+    put "$REPO/config/hypr/hyprland.lua" "$CONF/hypr/hyprland.lua"
     grep -Eq 'exec_cmd\(.*\b(qs|quickshell)\b' "$REPO/config/hypr/hyprland.lua" \
         || warn "hyprland.lua has no hl.exec_cmd line for Quickshell (e.g. hl.exec_cmd(\"uwsm app -- qs\"))"
     [ -e "$CONF/hypr/hyprland.conf" ] \
@@ -147,18 +232,18 @@ else
 fi
 
 # ---------- Quickshell ----------
-# ~/.config/quickshell is a real directory: each file links into the repo,
-# and Theme.qml links to whichever theme is current.
-log "Linking Quickshell config"
+# Each file is copied into ~/.config/quickshell; Theme.qml points at the current theme.
+log "Installing Quickshell config"
 mkdir -p "$CONF/quickshell"
+# Older installs symlinked into the clone; drop links that no longer resolve
+find "$CONF/quickshell" -maxdepth 1 -type l ! -exec test -e {} \; -delete
 for f in "$REPO"/config/quickshell/*; do
-    [ -f "$f" ] && link "$f" "$CONF/quickshell/$(basename "$f")"
+    [ -f "$f" ] && put "$f" "$CONF/quickshell/$(basename "$f")"
 done
-# Drop links to files that were removed from the repo (e.g. the old qmldir)
-for l in "$CONF"/quickshell/*; do
-    if [ -L "$l" ] && [ ! -e "$l" ] && [[ "$(readlink "$l")" == "$REPO"/* ]]; then rm "$l"; fi
-done
-link "$CONF/hypora/themes/current/Theme.qml" "$CONF/quickshell/Theme.qml"
+if [ -e "$CONF/quickshell/Theme.qml" ] && [ ! -L "$CONF/quickshell/Theme.qml" ]; then
+    mv "$CONF/quickshell/Theme.qml" "$CONF/quickshell/Theme.qml.bak.$(date +%s)"
+fi
+ln -sfn "$CONF/hypora/themes/current/Theme.qml" "$CONF/quickshell/Theme.qml"
 
 # ---------- login screen (SDDM) ----------
 # Same setup as Omarchy: SDDM on a minimal Hyprland session with a small QML theme.
@@ -183,23 +268,39 @@ for dm in gdm lightdm greetd; do
 done
 sudo systemctl enable sddm
 
+# ---------- GTK (icons, dark preference) ----------
+log "Installing GTK settings (Papirus icons)"
+for v in 3.0 4.0; do
+    put "$REPO/config/gtk-$v/settings.ini" "$CONF/gtk-$v/settings.ini"
+done
+# GTK 4 / libadwaita apps read these from gsettings rather than settings.ini
+if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.gnome.desktop.interface icon-theme 'Papirus-Dark' 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrainsMono Nerd Font 11' 2>/dev/null || true
+fi
+
 # ---------- app entries ----------
 # e.g. "Display Settings", so it shows up in the launcher and app menu
-log "Linking app entries"
+log "Installing app entries"
 for f in "$REPO"/applications/*.desktop; do
-    [ -f "$f" ] && link "$f" "$HOME/.local/share/applications/$(basename "$f")"
+    [ -f "$f" ] && put "$f" "$HOME/.local/share/applications/$(basename "$f")"
 done
 
 # ---------- bin (optional) ----------
 shopt -s nullglob
 bin_files=("$REPO"/bin/*)
 if [ ${#bin_files[@]} -gt 0 ]; then
-    log "Linking bin scripts to ~/.local/bin"
+    log "Installing bin scripts to ~/.local/bin"
     for f in "${bin_files[@]}"; do
-        chmod +x "$f"
-        link "$f" "$HOME/.local/bin/$(basename "$f")"
+        put "$f" "$HOME/.local/bin/$(basename "$f")" 755
     done
 fi
+
+# ---------- bookkeeping ----------
+prune
+mkdir -p "$(dirname "$MANIFEST")"
+mv "$NEW_MANIFEST" "$MANIFEST"
 
 # ---------- done ----------
 log "Done."
@@ -214,5 +315,7 @@ Next steps:
   3. Test notifications:  notify-send "Test" "Hello"
      Test polkit:         pkexec true
 
-Existing files that were replaced were saved as <name>.bak.<timestamp>.
+Your configs are copies, so this folder can be moved or deleted. To update Hypora later,
+git pull (or clone it again) and re-run ./install.sh. Files you had edited were saved as
+<name>.bak.<timestamp>.
 EOF

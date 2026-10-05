@@ -11,7 +11,7 @@ Singleton {
     readonly property color dim: "#7b88a1"
     readonly property color accent: "#88c0d0"
     readonly property color error: "#bf616a"
-    readonly property string font: "JetBrains Mono"
+    readonly property string font: "JetBrainsMono Nerd Font"
     readonly property int fontSize: 13
 
     // Apps launched from widget clicks. The last three are commands run in the terminal
