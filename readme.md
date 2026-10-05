@@ -8,7 +8,8 @@ Privacy here means specific things, not a slogan:
 - **The weather widget never geolocates you.** You pick a city by name; only that name is sent, and until you pick one no weather request is made at all.
 - **AI tooling is opt-in.** The installer asks before installing Claude Code, and the default answer is no.
 - **Your security state is visible and adjustable** — Secure Boot, firmware checks, SELinux, camera, microphone, location and file history all in one window, with each switch saying plainly what it does and does not cover.
-- **Flatpak apps come with the tools to audit them:** Flatseal for permissions, Warehouse for what's installed and what data it left behind.
+- **Flatpak apps come with the tools to audit them:** Flatseal for permissions, Warehouse for what's installed and what data it left behind. Firefox and Spotify run sandboxed rather than as system packages.
+- **Everything downloaded is verified.** Each file fetched outside dnf is pinned to a release and checked against a recorded SHA-256; the Hyprland COPR's signing key is checked against a pinned fingerprint before anything installs from it; Claude Code's repository key likewise. HTTPS proves which host answered, not what it sent.
 - **Full-disk encryption is checked, not assumed.** The Security window reports whether this system is on an encrypted volume, and warns about swap that reaches the disk in the clear. Encryption itself has to be chosen when Fedora is installed — see Requirements.
 - **Secrets stay out of argv and privileged paths stay out of `$HOME`.** Wi-Fi passwords are handed to `nmcli` on stdin, never as a command-line argument that any process could read from `/proc`; the one helper that runs as root lives in a root-owned directory.
 
@@ -79,6 +80,10 @@ Network and Bluetooth have proper Quickshell windows (above); the `impala` and `
 - **Neovim** with the **LazyVim** starter. Its colorscheme follows the active Hypora theme (`~/.config/nvim/lua/plugins/hypora.lua` is the only file Hypora owns there)
 - **fastfetch** with a Hypora logo and a short readout: OS (shown as *Hypora Linux* with the running kernel), host, CPU, GPU, RAM, WM, terminal, the active theme and the color palette. It greets you in new shells; set `HYPORA_NO_FETCH=1` to turn that off
 
+**Why most packages stay native**
+
+Flatpak sandboxing earns its keep for software that handles hostile input, which is why Firefox and Spotify are flatpaks. It does nothing for the rest of this list: the compositor, shell, terminal and portals *are* the session and cannot sandbox themselves; `thunar`, `kitty` and `fastfetch` have no maintained Flathub build at all; and tools like `nmap`, `aircrack-ng`, `wireshark` and `virt-manager` need raw sockets, capture privileges or host libvirt, so a sandboxed build would have to be handed the host anyway — paying the integration cost for none of the benefit.
+
 **Virtualization and network tools**
 - `@virtualization` (libvirt, QEMU/KVM, virt-manager), with `libvirtd` enabled and your user added to the `libvirt` group
 - `nmap`, `aircrack-ng` and `wireshark`/`tshark`, with your user added to the `wireshark` group so captures work without root. Both group changes need a logout to take effect
@@ -139,7 +144,7 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | Keys | Action |
 |---|---|
 | SUPER + Enter | Terminal |
-| SUPER + B | Browser (Firefox) |
+| SUPER + B | Browser (Firefox, sandboxed as a flatpak) |
 | SUPER + E | Files (Thunar) |
 | SUPER + R | App launcher |
 | SUPER + A | Hypora menu |
