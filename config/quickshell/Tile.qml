@@ -1,6 +1,6 @@
 import QtQuick
 
-// Quick-settings toggle tile (GNOME style). Click toggles; the optional chevron
+// Quick-settings toggle tile. Click toggles; the optional chevron
 // on the right opens more settings.
 Rectangle {
     id: root

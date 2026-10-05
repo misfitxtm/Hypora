@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# hypora-screenshot [region|screen|window]: take a screenshot, save it and copy it.
+#
+# Saves to ~/Pictures/Screenshots (or wherever xdg-user-dir points) and puts the image on
+# the clipboard. Bound to SUPER + SHIFT + S, and used by the menu's Tools section.
+set -euo pipefail
+
+mode=${1:-region}
+
+for tool in grim wl-copy; do
+    command -v "$tool" >/dev/null || { echo "hypora-screenshot: $tool is not installed" >&2; exit 1; }
+done
+
+dir="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Screenshots"
+mkdir -p "$dir"
+file="$dir/$(date +%Y-%m-%d_%H-%M-%S).png"
+
+case "$mode" in
+    region)
+        command -v slurp >/dev/null || { echo "hypora-screenshot: slurp is not installed" >&2; exit 1; }
+        # Let the overlay disappear before grabbing, or it lands in the shot
+        area=$(slurp) || exit 0          # cancelled with Esc: not an error
+        sleep 0.1
+        grim -g "$area" "$file"
+        ;;
+    window)
+        command -v hyprctl >/dev/null || { echo "hypora-screenshot: needs Hyprland" >&2; exit 1; }
+        geom=$(hyprctl activewindow -j | python3 -c \
+            'import json,sys; w=json.load(sys.stdin); print("%d,%d %dx%d" % (*w["at"], *w["size"]))')
+        grim -g "$geom" "$file"
+        ;;
+    screen)
+        grim "$file"
+        ;;
+    *)
+        echo "usage: hypora-screenshot [region|screen|window]" >&2
+        exit 2
+        ;;
+esac
+
+wl-copy < "$file"
+
+if command -v notify-send >/dev/null; then
+    notify-send -i "$file" "Screenshot saved" "$(basename "$file") — copied to the clipboard"
+fi
+echo "$file"

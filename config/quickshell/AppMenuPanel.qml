@@ -3,7 +3,7 @@ import Quickshell.Widgets
 import QtQuick
 import QtQuick.Layouts
 
-// The Hypora menu (Omarchy style): four sections (Apps, Settings, Files, Tools).
+// The Hypora menu: Apps, Style, Settings, Security, Tools and Help.
 // Pick one to see its items; Esc, Left or the back arrow goes up a level.
 // Typing searches installed apps from anywhere. Power actions live in the control center.
 Rectangle {
@@ -16,8 +16,9 @@ Rectangle {
         { icon: "grid", label: "Apps", page: "Apps" },
         { icon: "image", label: "Style", page: "Style" },
         { icon: "sliders", label: "Settings", page: "Settings" },
-        { icon: "folder", label: "Files", page: "Files" },
-        { icon: "tool", label: "Tools", page: "Tools" }
+        { icon: "shield", label: "Security", page: "Security" },
+        { icon: "tool", label: "Tools", page: "Tools" },
+        { icon: "message", label: "Help", page: "Help" }
     ]
 
     readonly property var pages: ({
@@ -32,25 +33,23 @@ Rectangle {
             { icon: "bluetooth", label: "Bluetooth", run: () => ShellState.bluetoothSettingsOpen = true },
             { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) }
         ],
-        "Files": [
-            { icon: "home", label: "Home", run: () => openFolder("HOME") },
-            { icon: "folder", label: "Documents", run: () => openFolder("DOCUMENTS") },
-            { icon: "download", label: "Downloads", run: () => openFolder("DOWNLOAD") },
-            { icon: "image", label: "Pictures", run: () => openFolder("PICTURES") },
-            { icon: "music", label: "Music", run: () => openFolder("MUSIC") },
-            { icon: "film", label: "Videos", run: () => openFolder("VIDEOS") }
+        "Security": [
+            { icon: "shield", label: "Security & Privacy", run: () => ShellState.securitySettingsOpen = true }
         ],
         "Tools": [
             { icon: "terminal", label: "Terminal", run: () => Apps.run([Theme.terminal]) },
-            { icon: "message", label: "Claude Code", run: () => Apps.inTerminal("claude") },
-            { icon: "message", label: "Hermes Agent", run: () => Apps.inTerminal("hermes") },
+            { icon: "claude", label: "Claude Code", run: () => Apps.inTerminal("claude") },
             { icon: "camera", label: "Screenshot (region)", run: () => screenshot() }
+        ],
+        "Help": [
+            { icon: "sliders", label: "Keybindings", run: () => ShellState.keybindHelpOpen = true }
         ]
     })
 
     // What the list shows: app search results, all apps, a section's items, or the sections
     readonly property var items: search.text !== "" ? Apps.query(search.text, "").map(e => ({ app: e }))
                                : page === "Apps" ? Apps.all.map(e => ({ app: e }))
+                               : page === "Settings" ? pages.Settings.concat(Apps.settingsApps.map(e => ({ app: e })))
                                : page !== "" ? pages[page]
                                : sections
 
@@ -84,16 +83,8 @@ Rectangle {
         else item.run()
     }
 
-    function openFolder(xdgName) {
-        Quickshell.execDetached(["sh", "-c", `xdg-open "$(xdg-user-dir ${xdgName} 2>/dev/null || echo "$HOME")"`])
-    }
-
-    // Select a region, save it to ~/Pictures/Screenshots and copy it to the clipboard
-    function screenshot() {
-        Quickshell.execDetached(["sh", "-c",
-            'sleep 0.3; d="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Screenshots"; mkdir -p "$d"; '
-            + 'f="$d/$(date +%Y-%m-%d_%H-%M-%S).png"; grim -g "$(slurp)" "$f" && wl-copy < "$f"'])
-    }
+    // Same script the SUPER + SHIFT + S keybind runs
+    function screenshot() { Quickshell.execDetached(["hypora-screenshot", "region"]) }
 
     implicitWidth: 320
     implicitHeight: column.implicitHeight + 24

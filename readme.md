@@ -1,20 +1,28 @@
 # Hypora
 
-An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, installed with a single post-install script on top of a stock Fedora install (no custom ISO). The shell is built on [Quickshell](https://quickshell.org): a custom bar, control center, notification daemon and polkit prompt, all themeable from one palette file.
+A **privacy-focused Hyprland desktop for Fedora**, installed with a single post-install script on top of a stock Fedora install (no custom ISO). The shell is built on [Quickshell](https://quickshell.org): a custom bar, control center, notification daemon and polkit prompt, all themeable from one palette file.
+
+Privacy here means specific things, not a slogan:
+
+- **Nothing phones home.** No telemetry, no analytics, no update pings of our own.
+- **The weather widget never geolocates you.** You pick a city by name; only that name is sent, and until you pick one no weather request is made at all.
+- **AI tooling is opt-in.** The installer asks before installing Claude Code, and the default answer is no.
+- **Your security state is visible and adjustable** — Secure Boot, firmware checks, SELinux, camera, microphone, location and file history all in one window, with each switch saying plainly what it does and does not cover.
+- **Flatpak apps come with the tools to audit them:** Flatseal for permissions, Warehouse for what's installed and what data it left behind.
 
 > **Status: early / work in progress.** The desktop shell, installer and SDDM login screen are ready for testing on a fresh install. See [Status](#status).
 
 ## Goals
 
-- Omarchy's "install and it just looks good" experience, on Fedora instead of Arch
+- An "install it and it just looks good" experience on Fedora, without giving up control of it
 - A small, readable codebase: plain shell scripts and QML, no framework on top
 - One place to change colors; the Quickshell shell reads everything from the active theme
-- Ships Claude Code and Hermes Agent out of the box
+- Optional AI tooling: Claude Code, offered during install but never assumed
 
 ## What you get
 
 **Desktop**
-- A minimal SDDM login screen (the same setup Omarchy uses): the time, the date and a password field, in the active theme's colors
+- A minimal SDDM login screen: the time, the date and a password field, in the active theme's colors
 - Hyprland, started through `uwsm`
 - Quickshell as the shell layer (replaces Waybar, Mako and a standalone polkit agent)
 
@@ -23,12 +31,16 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Component | What it does |
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
-| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Omarchy-style menu from the Hypora logo at the top left. Five sections: **Apps** (everything installed), **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound), **Files** (Home, Documents, Downloads, ...) and **Tools** (Terminal, Claude Code, Hermes Agent, region screenshot). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound, plus any control panels installed), **Security**, **Tools** (Terminal, Claude Code, region screenshot) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, and fwupd's firmware checks (the HSI level, how many passed, and which didn't). **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `bin/hypora-security`; run `hypora-security status` to see exactly what it reads |
+| Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
+| Weather (`Weather.qml`) | To the left of the clock: current conditions and a three-day forecast. Pick your city by name — there is no IP geolocation, and nothing is requested until you choose a place. Data from [Open-Meteo](https://open-meteo.com), which needs no account or API key. Your choice lives in `~/.config/hypora/weather.json`; `bin/hypora-weather` does the lookups and can be run on its own |
+| Clipboard (`Clipboard.qml`) | Clipboard history to the left of the clock, also on **SUPER + SHIFT + V**: recent copies, click one to put it back on the clipboard, or Clear to wipe it. Recorded by `wl-paste --watch cliphist store` (started from `hyprland.lua`) — Quickshell can't watch the clipboard itself, as it doesn't speak `wlr-data-control` |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
 | System usage (`SystemUsage.qml`, `SysInfo.qml`) | Live RAM %, CPU %, CPU temperature and, on machines that report them, GPU usage and GPU temperature — left of the control center. Readings warm to the accent colour and then to red as they climb. Click it to pick which ones appear; the choice is kept in `~/.config/hypora/sysinfo.json`. Numbers come from `bin/hypora-sysinfo` (/proc and /sys, or `nvidia-smi` for NVIDIA) |
-| Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
+| Control center (`ControlCenter.qml`, `ControlPanel.qml`) | Quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
 | Network (`NetworkSettings.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed |
 | Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
 | Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
@@ -39,10 +51,10 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Battery (`Battery.qml`) | Icon and percentage, laptops only; turns red when low |
 | Icons (`Icon.qml`, `Logo.qml`) | Line icons and the Hypora logo, drawn from inline SVG in the theme colors, so no icon font is needed |
 | Notifications (`Notifications.qml`) | Quickshell *is* the notification daemon: popups top-right, auto-expire, critical ones persist, action buttons supported |
-| Launcher (`Launcher.qml`) | App launcher on **SUPER + R**: type to filter installed apps, Up/Down or Tab to select, Enter to launch, Esc to close |
+| Launcher (`Launcher.qml`) | App launcher on **SUPER + R**: type to filter installed apps, Up/Down or Tab to select, Enter to launch, Esc to close. Shows everyday apps only — control panels (anything in the freedesktop `Settings` category, such as qt6ct) live under the menu's Settings section instead |
 | Polkit (`PolkitDialog.qml`) | Full-screen authentication prompt (works with `pkexec` and other polkit requests) |
 
-**Terminal tools** (the same ones Omarchy has used)
+**Terminal tools**
 
 | Tool | For | Opened from |
 |---|---|---|
@@ -53,12 +65,12 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 Network and Bluetooth have proper Quickshell windows (above); the `impala` and `bluetui` TUIs are still one click away under "Advanced..." in each.
 
 **Fonts and icons**
-- **JetBrainsMono Nerd Font** for monospace and the shell UI, with **Liberation Sans / Serif** for the rest, the same defaults Omarchy uses. Set system-wide in `/etc/fonts/conf.d/50-hypora.conf`
+- **JetBrainsMono Nerd Font** for monospace and the shell UI, with **Liberation Sans / Serif** for the rest. Set system-wide in `/etc/fonts/conf.d/50-hypora.conf`
 - **Papirus-Dark** icons for apps, the launcher and the app menu (GTK settings and gsettings are set to match)
 
 **AI tools**
-- **Claude Code** from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update). Run `claude` to log in
-- **Hermes Agent** (Nous Research), installed per-user under `~/.hermes` with its official script. Run `hermes setup` to pick a model provider
+- **Claude Code**, *optional*: the installer asks, and the default answer is no. Answer ahead of time with `INSTALL_CLAUDE=yes ./install.sh` (or `=no`); a non-interactive run skips it. It comes from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update) and needs a paid Claude plan. Run `claude` to log in, and remove it with `sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo`
+- Nothing else AI-related is installed, and nothing is installed without asking
 
 **Shell, editor and fetch**
 - **zsh** with **Oh My Zsh**, tab completion (menu select, case-insensitive), **autosuggestions** and **syntax highlighting**. Set as your login shell; put your own additions in `~/.zshrc.local`, which Hypora never overwrites
@@ -102,7 +114,7 @@ The installer is safe to re-run. It:
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
 3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), and downloads impala and bluetui into `/usr/local/bin`
 4. Installs Oh My Zsh and the LazyVim starter, and makes zsh your login shell (an existing `~/.config/nvim` is left alone)
-5. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
+5. Installs JetBrainsMono Nerd Font and sets the system font defaults, then **asks** whether to install Claude Code (default no)
 6. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd on machines that have a Wi-Fi radio (taking effect at the next reboot), and sets the default boot target to graphical
 7. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
 8. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
@@ -115,7 +127,7 @@ Configs are **copies**, so the clone can be moved or deleted after installing. T
 
 ### Starting the desktop
 
-Reboot. SDDM shows the Hypora login screen (logo and password box, styled after Omarchy's) and starts the **Hyprland (uwsm-managed)** session. On machines with more than one user, the name appears above the box; click it or press Up/Down to switch.
+Reboot. SDDM shows the Hypora login screen and starts the **Hyprland (uwsm-managed)** session. On machines with more than one user, the name appears above the box; click it or press Up/Down to switch.
 
 Without the login screen, start it from a text console (TTY) with `uwsm start hyprland-uwsm.desktop` (or `start-hyprland`). Quickshell starts from the `hyprland.start` hook in `hyprland.lua` either way.
 
@@ -124,16 +136,30 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | Keys | Action |
 |---|---|
 | SUPER + Enter | Terminal |
-| SUPER + B | Browser (Firefox; change `browser` in `hyprland.lua`) |
+| SUPER + B | Browser (Firefox) |
+| SUPER + E | Files (Thunar) |
 | SUPER + R | App launcher |
+| SUPER + A | Hypora menu |
 | SUPER + ALT + T | Theme picker |
+| SUPER + SHIFT + V | Clipboard history |
+| SUPER + SHIFT + S | Screenshot a region |
 | SUPER + L | Lock |
+| SUPER + M | Log out |
 | SUPER + Q | Close window |
 | SUPER + V | Toggle floating |
-| SUPER + M | Log out |
+| SUPER + F | Fullscreen |
+| SUPER + J | Toggle split |
+| SUPER + P | Pseudo-tile |
+| SUPER + S / SUPER + ALT + S | Show scratchpad / move window to it |
 | SUPER + arrows | Move focus |
 | SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace |
+| SUPER + scroll | Cycle workspaces |
 | SUPER + drag (left / right mouse) | Move / resize window |
+| Volume / brightness / media keys | As labelled on the keyboard |
+
+The programs behind these are set at the top of `config/hypr/hyprland.lua` (`terminal`, `browser`, `fileManager`). Every shortcut above can be rebound from **menu > Help > Keybindings**.
+
+These follow Hyprland's own defaults wherever Hypora doesn't need the key. One deliberate difference: Hyprland puts *move window to scratchpad* on SUPER + SHIFT + S, which Hypora gives to the screenshot, so that moves to **SUPER + ALT + S**.
 
 ## Usage and testing
 
@@ -160,6 +186,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   │                       # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
 │   │                       # Clock, CalendarPanel, ThemePicker, Wallpaper,
 │   │                       # SystemUsage, SysInfo, NetworkSettings, BluetoothSettings,
+│   │                       # KeybindHelp, Clipboard, SecuritySettings, Weather,
 │   │                       # Icon, Net, ShellState, Slider, PowerButton
 │   ├── kitty/kitty.conf    # terminal (colors come from the theme)
 │   ├── zsh/zshrc           # -> ~/.zshrc
@@ -169,7 +196,10 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 ├── bin/
 │   ├── hypora-theme        # applies a theme everywhere
 │   ├── hypora-wallgen      # draws each theme's pixel-art wallpapers
-│   └── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
+│   ├── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
+│   ├── hypora-screenshot   # region / window / screen, saved and copied
+│   ├── hypora-security     # security status as JSON, and the root actions behind it
+│   └── hypora-weather      # place search and forecast via Open-Meteo
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
 │   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
@@ -197,6 +227,8 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Bar contents:** `Bar.qml` (the right-hand `Row` holds the tray and the control center button)
 - **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
 - **Menu sections:** the `pages` list in `AppMenuPanel.qml`
+- **Security:** menu > Security; anything needing root asks through the polkit prompt
+- **Keybinds:** menu > Help > Keybindings, or the `keys` table at the top of the keybindings section in `config/hypr/hyprland.lua`
 - **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
 - **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
 - **System usage readings:** click the widget in the bar, or edit `~/.config/hypora/sysinfo.json`

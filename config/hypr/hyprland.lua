@@ -6,8 +6,9 @@
 -- After editing:  hyprctl reload && hyprctl configerrors
 
 ------------------ PROGRAMS ------------------
-local terminal = "kitty"
-local browser  = "firefox"
+local terminal    = "kitty"
+local browser     = "firefox"
+local fileManager = "thunar"
 local mainMod  = "SUPER"
 
 -- Run through uwsm when the session is uwsm-managed (the login screen picks that
@@ -45,6 +46,10 @@ hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")   -- Qt apps follow the theme (also set 
 -- Don't start any of those alongside it.
 hl.on("hyprland.start", function()
     hl.exec_cmd(app("qs"))
+    -- Clipboard history. Quickshell can't watch the clipboard itself (it doesn't speak
+    -- wlr-data-control), so wl-paste records into cliphist for the bar widget to read.
+    hl.exec_cmd("wl-paste --type text --watch cliphist store")
+    hl.exec_cmd("wl-paste --type image --watch cliphist store")
 end)
 
 ------------------ LOOK AND FEEL -------------
@@ -117,22 +122,72 @@ hl.config({
 })
 
 ------------------ KEYBINDINGS ---------------
-hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(terminal))
-hl.bind(mainMod .. " + B", hl.dsp.exec_cmd(app(browser)))
-hl.bind(mainMod .. " + R", hl.dsp.exec_cmd("qs ipc call launcher toggle"))       -- app launcher (Launcher.qml)
-hl.bind(mainMod .. " + ALT + T", hl.dsp.exec_cmd("qs ipc call themes toggle"))   -- theme picker (ThemePicker.qml)
-hl.bind(mainMod .. " + Q", hl.dsp.window.close())                                -- close the focused window
-hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
-hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
-hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))      -- dwindle only
-hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("hyprlock"))
-hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(logout))          -- log out
+-- Each action's key lives in one table so it can be rebound. Help > Keybindings in the
+-- Hypora menu writes your changes to ~/.config/hypr/keybinds.lua, which is merged over
+-- these defaults. Keep the action names here in step with KeybindHelp.qml.
+local keys = {
+    terminal    = mainMod .. " + Return",
+    browser     = mainMod .. " + B",
+    files       = mainMod .. " + E",
+    launcher    = mainMod .. " + R",
+    menu        = mainMod .. " + A",
+    themePicker = mainMod .. " + ALT + T",
+    clipboard   = mainMod .. " + SHIFT + V",
+    screenshot  = mainMod .. " + SHIFT + S",
+    closeWindow = mainMod .. " + Q",
+    toggleFloat = mainMod .. " + V",
+    pseudo      = mainMod .. " + P",
+    toggleSplit = mainMod .. " + J",
+    fullscreen  = mainMod .. " + F",
+    scratchpad  = mainMod .. " + S",
+    -- Hyprland's default for this is SUPER + SHIFT + S, which Hypora gives to the
+    -- screenshot above, so moving a window to the scratchpad lives here instead.
+    moveToScratchpad = mainMod .. " + ALT + S",
+    lock        = mainMod .. " + L",
+    logout      = mainMod .. " + M",
+    focusLeft   = mainMod .. " + left",
+    focusRight  = mainMod .. " + right",
+    focusUp     = mainMod .. " + up",
+    focusDown   = mainMod .. " + down",
+}
+
+do
+    local path = package.searchpath("keybinds", package.path)
+    if path then
+        local ok, saved = pcall(dofile, path)
+        if ok and type(saved) == "table" then
+            for action, key in pairs(saved) do
+                if type(key) == "string" and key ~= "" then keys[action] = key end
+            end
+        end
+    end
+end
+
+hl.bind(keys.terminal,    hl.dsp.exec_cmd(terminal))
+hl.bind(keys.browser,     hl.dsp.exec_cmd(app(browser)))
+hl.bind(keys.files,       hl.dsp.exec_cmd(app(fileManager)))
+hl.bind(keys.launcher,    hl.dsp.exec_cmd("qs ipc call launcher toggle"))   -- Launcher.qml
+hl.bind(keys.menu,        hl.dsp.exec_cmd("qs ipc call menu toggle"))       -- AppMenu.qml
+hl.bind(keys.themePicker, hl.dsp.exec_cmd("qs ipc call themes toggle"))     -- ThemePicker.qml
+hl.bind(keys.closeWindow, hl.dsp.window.close())
+hl.bind(keys.toggleFloat, hl.dsp.window.float({ action = "toggle" }))
+hl.bind(keys.pseudo,      hl.dsp.window.pseudo())
+hl.bind(keys.toggleSplit, hl.dsp.layout("togglesplit"))                     -- dwindle only
+hl.bind(keys.clipboard,   hl.dsp.exec_cmd("qs ipc call clipboard toggle"))    -- Clipboard.qml
+hl.bind(keys.screenshot,  hl.dsp.exec_cmd("hypora-screenshot region"))
+hl.bind(keys.fullscreen,  hl.dsp.window.fullscreen())
+hl.bind(keys.lock,        hl.dsp.exec_cmd("hyprlock"))
+hl.bind(keys.logout,      hl.dsp.exec_cmd(logout))
+
+-- Scratchpad (Hyprland's "magic" special workspace)
+hl.bind(keys.scratchpad,       hl.dsp.workspace.toggle_special("magic"))
+hl.bind(keys.moveToScratchpad, hl.dsp.window.move({ workspace = "special:magic" }))
 
 -- Move focus
-hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
-hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
-hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "up" }))
-hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "down" }))
+hl.bind(keys.focusLeft,  hl.dsp.focus({ direction = "left" }))
+hl.bind(keys.focusRight, hl.dsp.focus({ direction = "right" }))
+hl.bind(keys.focusUp,    hl.dsp.focus({ direction = "up" }))
+hl.bind(keys.focusDown,  hl.dsp.focus({ direction = "down" }))
 
 -- Workspaces: SUPER + [0-9] to switch, SUPER + SHIFT + [0-9] to move window
 for i = 1, 10 do
