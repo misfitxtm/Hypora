@@ -59,6 +59,11 @@ Network and Bluetooth have proper Quickshell windows (above); the `impala` and `
 - **Claude Code** from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update). Run `claude` to log in
 - **Hermes Agent** (Nous Research), installed per-user under `~/.hermes` with its official script. Run `hermes setup` to pick a model provider
 
+**Shell, editor and fetch**
+- **zsh** with **Oh My Zsh**, tab completion (menu select, case-insensitive), **autosuggestions** and **syntax highlighting**. Set as your login shell; put your own additions in `~/.zshrc.local`, which Hypora never overwrites
+- **Neovim** with the **LazyVim** starter. Its colorscheme follows the active Hypora theme (`~/.config/nvim/lua/plugins/hypora.lua` is the only file Hypora owns there)
+- **fastfetch** with a Hypora logo and a short readout: OS (shown as *Hypora Linux* with the running kernel), host, CPU, GPU, RAM, WM, terminal, the active theme and the color palette. It greets you in new shells; set `HYPORA_NO_FETCH=1` to turn that off
+
 **Virtualization and network tools**
 - `@virtualization` (libvirt, QEMU/KVM, virt-manager), with `libvirtd` enabled and your user added to the `libvirt` group
 - `nmap`, `aircrack-ng` and `wireshark`/`tshark`, with your user added to the `wireshark` group so captures work without root. Both group changes need a logout to take effect
@@ -94,13 +99,14 @@ The installer is safe to re-run. It:
 
 1. Checks you're on Fedora and not running as root
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
-3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), and downloads impala and bluetui into `/usr/local/bin`
-4. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
-5. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
-6. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
-7. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
-8. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
-9. Copies the scripts in `bin/` (such as `hypora-theme`) into `~/.local/bin/`
+3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), and downloads impala and bluetui into `/usr/local/bin`
+4. Installs Oh My Zsh and the LazyVim starter, and makes zsh your login shell (an existing `~/.config/nvim` is left alone)
+5. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
+6. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
+7. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
+8. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
+9. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
+10. Copies the scripts in `bin/` (such as `hypora-theme`) into `~/.local/bin/`
 
 Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
 
@@ -154,6 +160,9 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   │                       # Clock, CalendarPanel, ThemePicker, Wallpaper,
 │   │                       # Icon, Net, ShellState, Slider, PowerButton
 │   ├── kitty/kitty.conf    # terminal (colors come from the theme)
+│   ├── zsh/zshrc           # -> ~/.zshrc
+│   ├── fastfetch/          # config.jsonc and the hypora.txt ASCII logo
+│   ├── nvim/               # the one LazyVim plugin file Hypora owns
 │   └── uwsm/env            # session environment (Qt apps use qt6ct)
 ├── bin/
 │   ├── hypora-theme        # applies a theme everywhere
@@ -185,6 +194,8 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Bar contents:** `Bar.qml` (the right-hand `Row` holds the tray and the control center button)
 - **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
 - **Menu sections:** the `pages` list in `AppMenuPanel.qml`
+- **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
+- **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
 
 ## Status
 
