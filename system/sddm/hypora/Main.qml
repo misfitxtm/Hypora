@@ -11,14 +11,25 @@ Rectangle {
     // when a monitor's mode is applied after the greeter has already started.
     width: Screen.width
     height: Screen.height
-    color: config.bg || "#2e3440"
+    // theme.conf is root-owned, but the greeter runs before anyone logs in, so take
+    // nothing on trust: accept only a plain #rrggbb colour and a conservative font name,
+    // and fall back to the built-in value for anything else.
+    function colour(v, fallback) {
+        return /^#[0-9a-fA-F]{6}$/.test(String(v || "")) ? String(v) : fallback
+    }
+    function fontName(v, fallback) {
+        const t = String(v || "")
+        return /^[A-Za-z0-9 _.-]{1,64}$/.test(t) ? t : fallback
+    }
 
-    readonly property color surface: config.surface || "#3b4252"
-    readonly property color fg: config.fg || "#eceff4"
-    readonly property color dim: config.dim || "#7b88a1"
-    readonly property color accent: config.accent || "#88c0d0"
-    readonly property color error: config.error || "#bf616a"
-    readonly property string font: config.font || "JetBrainsMono Nerd Font"
+    color: colour(config.bg, "#2e3440")
+
+    readonly property color surface: colour(config.surface, "#3b4252")
+    readonly property color fg: colour(config.fg, "#eceff4")
+    readonly property color dim: colour(config.dim, "#7b88a1")
+    readonly property color accent: colour(config.accent, "#88c0d0")
+    readonly property color error: colour(config.error, "#bf616a")
+    readonly property string font: fontName(config.font, "JetBrainsMono Nerd Font")
 
     // UserModel roles: name = UserRole + 1, realName = UserRole + 2
     readonly property int userCount: userModel.rowCount()

@@ -99,6 +99,61 @@ def firmware_checks():
     }
 
 
+def encryption():
+    """Is / on an encrypted volume, and does any swap reach the disk unencrypted?
+
+    Walks lsblk's tree rather than asking about a device directly: a device only counts as
+    encrypted if a LUKS/crypt layer sits somewhere above it. zram swap lives in RAM, so it
+    never reaches the disk and isn't a leak.
+    """
+    rc, out = run(["lsblk", "-J", "-o", "NAME,TYPE,FSTYPE,MOUNTPOINTS"])
+    if rc != 0 or not out:
+        rc, out = run(["lsblk", "-J", "-o", "NAME,TYPE,FSTYPE,MOUNTPOINT"])
+    if rc != 0 or not out:
+        return {"available": False, "note": "lsblk did not report the disk layout."}
+    try:
+        tree = json.loads(out)["blockdevices"]
+    except (ValueError, KeyError):
+        return {"available": False, "note": "Could not read the disk layout."}
+
+    root = None
+    swaps = []
+
+    def mounts(node):
+        mp = node.get("mountpoints")
+        if mp is None:
+            mp = [node.get("mountpoint")]
+        return [m for m in mp if m]
+
+    def walk(nodes, chain):
+        nonlocal root
+        for n in nodes:
+            here = chain + [n]
+            kinds = {x.get("type") for x in here}
+            for m in mounts(n):
+                if m == "/" and root is None:
+                    root = {"device": n["name"], "encrypted": "crypt" in kinds}
+                elif m == "[SWAP]":
+                    zram = n["name"].startswith("zram")
+                    swaps.append({
+                        "name": n["name"],
+                        "kind": "zram" if zram else (n.get("type") or "device"),
+                        # zram is RAM-backed, so nothing is written to the disk
+                        "safe": zram or "crypt" in kinds,
+                    })
+            walk(n.get("children") or [], here)
+
+    walk(tree, [])
+    exposed = [s["name"] for s in swaps if not s["safe"]]
+    return {
+        "available": root is not None,
+        "rootEncrypted": bool(root and root["encrypted"]),
+        "rootDevice": root["device"] if root else "",
+        "swap": swaps,
+        "unencryptedSwap": exposed,
+    }
+
+
 def selinux():
     if not shutil.which("getenforce"):
         return {"available": False, "note": "SELinux tools are not installed."}
@@ -164,6 +219,7 @@ def file_history():
 def status():
     return {
         "secureBoot": secure_boot(),
+        "encryption": encryption(),
         "firmware": firmware_checks(),
         "selinux": selinux(),
         "camera": camera(),
