@@ -17,6 +17,7 @@ ShellRoot {
     Launcher {}
     DisplaySettings {}
     ThemePicker {}
+    IconPicker {}
     NetworkSettings {}
     BluetoothSettings {}
     KeybindHelp {}

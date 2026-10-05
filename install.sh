@@ -78,6 +78,9 @@ sudo dnf install -y dnf-plugins-core
 sudo dnf copr disable -y solopasha/hyprland >/dev/null 2>&1 || true
 log "Enabling COPR sdegler/hyprland"
 sudo dnf copr enable -y sdegler/hyprland
+# spotify-tui isn't packaged by Fedora
+log "Enabling COPR atim/spotify-tui"
+sudo dnf copr enable -y atim/spotify-tui || warn "Could not enable the spotify-tui COPR"
 available quickshell || die "quickshell not found in enabled repos (it ships in Fedora 42+)."
 
 # ---------- packages ----------
@@ -87,9 +90,10 @@ REQUIRED=(
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
-    polkit sddm qt6-qtsvg gnupg2 curl tar xz
+    polkit sddm qt6-qtsvg gnupg2 curl tar xz unzip
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
-    liberation-sans-fonts liberation-serif-fonts papirus-icon-theme adwaita-icon-theme
+    liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
+    papirus-icon-theme breeze-icon-theme
     adw-gtk3-theme qt6ct
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
     # Network: NetworkManager on the iwd Wi-Fi backend (impala, the Wi-Fi TUI, needs iwd)
@@ -102,6 +106,8 @@ REQUIRED=(
     upower
     # Read the machine's security state for the Security window
     fwupd mokutil policycoreutils
+    # Music, in the terminal
+    spotify-tui
     # Files, clipboard history and screenshots (SUPER+E, SUPER+SHIFT+V, SUPER+SHIFT+S)
     thunar thunar-volman tumbler
     cliphist wl-clipboard grim slurp
@@ -175,6 +181,24 @@ if ! ls "$NERD_FONT_DIR"/*.ttf >/dev/null 2>&1; then
     rm -rf "$tmp"
 fi
 sudo install -m644 "$REPO/system/fontconfig/50-hypora.conf" /etc/fonts/conf.d/50-hypora.conf
+
+# Gruvbox Plus icons (GPL-3.0). Not packaged for Fedora, so take the release zip.
+GRUVBOX_ICONS=/usr/share/icons/Gruvbox-Plus-Dark
+if [ -f "$GRUVBOX_ICONS/index.theme" ]; then
+    log "Gruvbox Plus icons already installed"
+else
+    log "Installing Gruvbox Plus icons"
+    tmp=$(mktemp -d)
+    if curl -fsSL -o "$tmp/icons.zip" \
+        "https://github.com/SylEleuth/gruvbox-plus-icon-pack/releases/latest/download/gruvbox-plus-icon-pack-6.6.0.zip" \
+        && unzip -q "$tmp/icons.zip" -d "$tmp"; then
+        sudo cp -r "$tmp/Gruvbox-Plus-Dark" "$tmp/Gruvbox-Plus-Light" /usr/share/icons/
+        sudo gtk-update-icon-cache -qf "$GRUVBOX_ICONS" 2>/dev/null || true
+    else
+        warn "Could not install the Gruvbox Plus icons; Papirus stays the fallback"
+    fi
+    rm -rf "$tmp"
+fi
 sudo fc-cache -f >/dev/null 2>&1 || true
 
 # ---------- AI tools (optional) ----------
@@ -231,7 +255,6 @@ FLATPAKS=(
     org.localsend.localsend_app
     com.valvesoftware.Steam
     net.lutris.Lutris
-    com.spotify.Client
 )
 if [ "${SKIP_FLATPAKS:-0}" = "1" ]; then
     log "Skipping Flatpak apps (SKIP_FLATPAKS=1)"

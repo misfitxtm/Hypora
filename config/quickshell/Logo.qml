@@ -1,13 +1,14 @@
 import QtQuick
 
-// The Hypora mark: a hexagon around an "H" whose crossbar is an aurora wave,
-// stroked with a gradient from the theme accent to a hue-shifted partner color.
+// The Hypora mark: a hexagon around an "H" whose crossbar is an aurora wave.
+// The gradient is fixed rather than themed, so the mark looks the same whichever theme
+// is active — a logo that changes colour isn't much of a logo.
 // The SDDM theme (system/sddm/hypora/Main.qml) draws the same SVG; keep them in sync.
 Image {
     id: root
     property real size: 18
-    property color from: Theme.accent
-    property color to: Qt.hsla((from.hslHue + 0.15) % 1, from.hslSaturation, from.hslLightness, 1)
+    property color from: "#7aa2f7"
+    property color to: "#c37af7"
 
     width: size
     height: size

@@ -24,6 +24,7 @@ Rectangle {
     readonly property var pages: ({
         "Style": [
             { icon: "image", label: "Theme", run: () => ShellState.themePickerOpen = true },
+            { icon: "grid", label: "Icons", run: () => ShellState.iconPickerOpen = true },
             // Stays open so you can keep clicking through the theme's wallpapers
             { icon: "reboot", label: "Next wallpaper", stayOpen: true, run: () => ShellState.nextWallpaper() }
         ],

@@ -34,5 +34,5 @@ bright_white = "#eceff4"
 # System
 font = "JetBrainsMono Nerd Font"
 gtk_theme = "adw-gtk3-dark"
-icon_theme = "Papirus-Dark"
+icon_theme = "Gruvbox-Plus-Dark"
 color_scheme = "prefer-dark"

@@ -34,6 +34,17 @@ fi
 
 value() { sed -nE "s/^$1[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\1/p" "$COLORS"; }
 
+# Icon theme: whatever you picked in the menu (Style > Icons) wins over the palette's
+# default, so switching colour theme doesn't quietly change your icons back.
+icon_theme() {
+    local chosen; chosen=$(cat "$DIR/icons" 2>/dev/null)
+    if [ -n "$chosen" ] && [ -d "/usr/share/icons/$chosen" -o -d "$HOME/.local/share/icons/$chosen" ]; then
+        echo "$chosen"
+    else
+        value icon_theme
+    fi
+}
+
 # ---------- render ----------
 # Every `key = "value"` becomes {{ key }}; colors also get {{ key_hex }} without the '#'.
 subs=$(mktemp)
@@ -41,6 +52,7 @@ trap 'rm -f "$subs"' EXIT
 {
     printf 's|{{ home }}|%s|g\n' "$HOME"
     printf 's|{{ prefer_dark }}|%s|g\n' "$([ "$(value mode)" = dark ] && echo 1 || echo 0)"
+    printf 's|{{ icon_theme }}|%s|g\n' "$(icon_theme)"
     sed -nE 's/^([a-z_]+)[[:space:]]*=[[:space:]]*"([^"]*)".*/\1 \2/p' "$COLORS" | while read -r key val; do
         printf 's|{{ %s }}|%s|g\n' "$key" "$val"
         if [[ $val == \#* ]]; then printf 's|{{ %s_hex }}|%s|g\n' "$key" "${val#\#}"; fi
@@ -82,7 +94,7 @@ link "$OUT/qt6ct.conf"        "$HOME/.config/qt6ct/qt6ct.conf"
 if command -v gsettings >/dev/null 2>&1; then
     gs() { gsettings set org.gnome.desktop.interface "$1" "$2" 2>/dev/null || true; }
     gs gtk-theme "$(value gtk_theme)"
-    gs icon-theme "$(value icon_theme)"
+    gs icon-theme "$(icon_theme)"
     gs color-scheme "$(value color_scheme)"
     gs monospace-font-name "$(value font) 11"
     gs font-name "Liberation Sans 11"
