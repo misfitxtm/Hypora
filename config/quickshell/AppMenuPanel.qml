@@ -21,10 +21,13 @@ Rectangle {
 
     readonly property var pages: ({
         "Settings": [
+            { icon: "image", label: "Theme", run: () => ShellState.themePickerOpen = true },
             { icon: "monitor", label: "Display", run: () => ShellState.displaySettingsOpen = true },
             { icon: "wifi", label: "Network", run: () => Apps.inTerminal(Theme.network) },
             { icon: "bluetooth", label: "Bluetooth", run: () => Apps.inTerminal(Theme.bluetooth) },
-            { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) }
+            { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) },
+            // Stays open so you can keep clicking through the theme's wallpapers
+            { icon: "reboot", label: "Next wallpaper", stayOpen: true, run: () => ShellState.nextWallpaper() }
         ],
         "Files": [
             { icon: "home", label: "Home", run: () => openFolder("HOME") },
@@ -72,6 +75,7 @@ Rectangle {
     function activate(item) {
         if (!item) return
         if (item.page) { open(item.page); return }
+        if (item.stayOpen) { item.run(); return }
         closeRequested()
         if (item.app) Apps.launch(item.app)
         else item.run()
