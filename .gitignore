@@ -1,3 +1,6 @@
 # Claude Code sandbox placeholders
 .claude/
 .mcp.json
+
+# Python bytecode
+__pycache__/

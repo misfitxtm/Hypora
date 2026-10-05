@@ -1,6 +1,0 @@
-# Wallpapers for Tokyo Night, downloaded by install.sh into ~/.config/hypora/themes/TokyoNight/backgrounds/.
-# All from Unsplash, free to use under the Unsplash License (https://unsplash.com/license).
-# <file>  <image URL>  <credit>
-1-neon-city.jpg    https://images.unsplash.com/photo-1608501078713-8e445a709b39  Jezael Melgoza, https://unsplash.com/photos/2FiXtdnVhjQ
-2-tokyo-tower.jpg  https://images.unsplash.com/photo-1759970752518-b0ffa38c130b  T Y, https://unsplash.com/photos/t1JoTScJs-c
-3-shibuya.jpg      https://images.unsplash.com/photo-1752070485313-71ac5e594ad0  ayumi kubo, https://unsplash.com/photos/cbwlHckGxAk

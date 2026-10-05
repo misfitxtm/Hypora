@@ -10,6 +10,10 @@ Singleton {
     // Display Settings window (DisplaySettings.qml)
     property bool displaySettingsOpen: false
 
+    // Network and Bluetooth windows
+    property bool networkSettingsOpen: false
+    property bool bluetoothSettingsOpen: false
+
     // Theme picker (ThemePicker.qml)
     property bool themePickerOpen: false
 

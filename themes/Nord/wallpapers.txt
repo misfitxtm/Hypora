@@ -1,6 +1,0 @@
-# Wallpapers for Nord, downloaded by install.sh into ~/.config/hypora/themes/Nord/backgrounds/.
-# All from Unsplash, free to use under the Unsplash License (https://unsplash.com/license).
-# <file>  <image URL>  <credit>
-1-segla.jpg        https://images.unsplash.com/photo-1743376272672-c130603a3af2  Lukas Seitz, https://unsplash.com/photos/iwYm_23zLI0
-2-blue-peak.jpg    https://images.unsplash.com/photo-1696388790726-68161096266e  Slava Auchynnikau, https://unsplash.com/photos/2CNVPonHhVA
-3-vestrahorn.jpg   https://images.unsplash.com/photo-1759675739458-6e5a4a60a117  Jonny Gios, https://unsplash.com/photos/2vVhfhbj5-s

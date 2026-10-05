@@ -74,39 +74,40 @@ Rectangle {
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
         spacing: 16
 
-        // Header: battery on the left, session buttons on the right
+        // Session buttons, spread across the full width
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
 
-            Battery { Layout.alignment: Qt.AlignVCenter }
-            Item { Layout.fillWidth: true }
-
             PowerButton {
                 id: lock
+                Layout.fillWidth: true
                 icon: "lock"
                 onActivated: { root.closeRequested(); Quickshell.execDetached(["hyprlock"]) }
             }
             PowerButton {
                 id: logout
+                Layout.fillWidth: true
                 icon: "logout"; confirm: true
                 onActivated: Quickshell.execDetached(["sh", "-c",
                     "uwsm check is-active >/dev/null 2>&1 && uwsm stop || hyprctl dispatch 'hl.dsp.exit()'"])
             }
             PowerButton {
                 id: reboot
+                Layout.fillWidth: true
                 icon: "reboot"; confirm: true
                 onActivated: Quickshell.execDetached(["systemctl", "reboot"])
             }
             PowerButton {
                 id: off
+                Layout.fillWidth: true
                 icon: "power"; confirm: true
                 onActivated: Quickshell.execDetached(["systemctl", "poweroff"])
             }
         }
 
         Text {
-            Layout.alignment: Qt.AlignRight
+            Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: -8
             visible: root.armedHint !== ""
             text: root.armedHint
@@ -232,7 +233,7 @@ Rectangle {
                     if (Net.hasWifi) Net.setWifiEnabled(!Net.wifiEnabled)
                     else menu()
                 }
-                onMenu: { root.closeRequested(); Apps.inTerminal(Theme.network) }
+                onMenu: { root.closeRequested(); ShellState.networkSettingsOpen = true }
             }
             Tile {
                 Layout.fillWidth: true
@@ -244,7 +245,7 @@ Rectangle {
                 subtitle: !root.adapter ? "Unavailable" : root.adapter.enabled ? "On" : "Off"
                 hasMenu: root.adapter !== null
                 onToggled: root.adapter.enabled = !root.adapter.enabled
-                onMenu: { root.closeRequested(); Apps.inTerminal(Theme.bluetooth) }
+                onMenu: { root.closeRequested(); ShellState.bluetoothSettingsOpen = true }
             }
             Tile {
                 Layout.fillWidth: true

@@ -83,6 +83,7 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 # ---------- packages ----------
 REQUIRED=(
     hyprland hyprland-guiutils uwsm quickshell kitty firefox git
+    python3-pillow
     polkit sddm qt6-qtsvg gnupg2 curl tar xz
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts papirus-icon-theme adwaita-icon-theme
@@ -102,10 +103,15 @@ OPTIONAL=(
     hyprlock hypridle hyprsunset brightnessctl
     pamixer playerctl pavucontrol nautilus
     wl-clipboard grim slurp google-noto-emoji-fonts
+    # Network and security tools
+    nmap aircrack-ng wireshark wireshark-cli
 )
 
 log "Installing required packages"
 sudo dnf install -y "${REQUIRED[@]}"
+
+log "Installing virtualization (@virtualization group)"
+sudo dnf group install -y virtualization || warn "Could not install the virtualization group"
 
 log "Installing optional packages"
 for p in "${OPTIONAL[@]}"; do
@@ -205,6 +211,15 @@ else
     sudo systemctl enable --now power-profiles-daemon || warn "Could not enable power-profiles-daemon"
 fi
 
+if rpm -q libvirt-daemon >/dev/null 2>&1; then
+    sudo systemctl enable --now libvirtd || warn "Could not enable libvirtd"
+    sudo usermod -aG libvirt "$USER" || true
+fi
+# Capturing with wireshark/tshark as a normal user needs the wireshark group
+if getent group wireshark >/dev/null; then
+    sudo usermod -aG wireshark "$USER" || true
+fi
+
 # Wi-Fi through iwd so impala works. NetworkManager keeps managing connections (the bar
 # and nmcli still work); this takes effect after a reboot so the install isn't cut off.
 sudo install -d /etc/NetworkManager/conf.d
@@ -223,19 +238,6 @@ for f in "$REPO"/themes/templates/*.tpl; do
     put "$f" "$CONF/hypora/templates/$(basename "$f")"
 done
 
-# Wallpapers (Unsplash; see themes/<Name>/wallpapers.txt for credits). Downloaded once;
-# your own images in the backgrounds folder are left alone.
-log "Downloading wallpapers"
-for list in "$REPO"/themes/*/wallpapers.txt; do
-    dest="$CONF/hypora/themes/$(basename "$(dirname "$list")")/backgrounds"
-    mkdir -p "$dest"
-    sed '/^[[:space:]]*#/d' "$list" | while read -r file url _; do
-        [ -n "$file" ] && [ ! -s "$dest/$file" ] || continue
-        curl -fsSL "$url?w=3840&q=85&fm=jpg&fit=max" -o "$dest/$file.part" \
-            && mv "$dest/$file.part" "$dest/$file" \
-            || { rm -f "$dest/$file.part"; warn "Could not download wallpaper $file"; }
-    done
-done
 # Older installs kept a 'current' symlink here; the rendered theme now lives in hypora/current/
 if [ -L "$CONF/hypora/themes/current" ]; then rm "$CONF/hypora/themes/current"; fi
 
@@ -307,6 +309,12 @@ if [ ${#bin_files[@]} -gt 0 ]; then
     done
 fi
 
+# ---------- wallpapers ----------
+# Pixel art drawn from each theme's own palette (bin/hypora-wallgen). Only the files it
+# generates are replaced, so your own images in those folders are left alone.
+log "Drawing wallpapers"
+"$HOME/.local/bin/hypora-wallgen" || warn "Could not draw wallpapers (is python3-pillow installed?)"
+
 # ---------- apply the theme ----------
 # Renders the palette into Quickshell, kitty, Hyprland, hyprlock, GTK, Qt and the login screen
 log "Applying theme: $THEME"
@@ -323,7 +331,8 @@ cat <<EOF
 
 Next steps:
   1. Reboot (this also switches Wi-Fi to iwd). The Hypora login screen (SDDM) starts the
-     uwsm-managed Hyprland session.
+     uwsm-managed Hyprland session. Log out and back in for the libvirt and wireshark
+     group memberships to take effect.
      If it doesn't come up: Ctrl+Alt+F2, log in, and check 'journalctl -b -u sddm'.
   2. If the bar doesn't appear, run 'qs' in a terminal to see QML errors.
      If keybinds don't work, run 'hyprctl configerrors'.
