@@ -10,6 +10,12 @@ Singleton {
     // Display Settings window (DisplaySettings.qml)
     property bool displaySettingsOpen: false
 
+    // Security window (SecuritySettings.qml)
+    property bool securitySettingsOpen: false
+
+    // Keyboard shortcuts window (KeybindHelp.qml)
+    property bool keybindHelpOpen: false
+
     // Network and Bluetooth windows
     property bool networkSettingsOpen: false
     property bool bluetoothSettingsOpen: false

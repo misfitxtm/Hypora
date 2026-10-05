@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""hypora-security: report and change the system's security settings.
+
+    hypora-security status                      print everything as JSON (no root needed)
+    hypora-security selinux <enforcing|permissive>   change the running mode
+    hypora-security selinux-boot <enforcing|permissive|disabled>   change it for next boot
+    hypora-security camera <on|off>             load or unload the webcam driver
+    hypora-security location <on|off>           unmask or mask geoclue
+
+Only `status` runs unprivileged; the rest need root and are meant to be run with pkexec,
+which puts the request through Hypora's polkit prompt. Run `status` yourself to see exactly
+what the Security window is reading.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+SB_GUID = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
+EFIVARS = Path("/sys/firmware/efi/efivars")
+SELINUX_CONFIG = Path("/etc/selinux/config")
+
+
+def run(cmd, timeout=10):
+    """(returncode, stdout) — never raises."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+
+
+def efivar_bool(name):
+    """Last byte of an efivar, past the 4-byte attribute header."""
+    try:
+        data = (EFIVARS / f"{name}-{SB_GUID}").read_bytes()
+    except OSError:
+        return None
+    return bool(data[4]) if len(data) >= 5 else None
+
+
+# ---------- status ----------
+
+def secure_boot():
+    if not Path("/sys/firmware/efi").is_dir():
+        return {"firmware": "bios", "supported": False, "enabled": False,
+                "note": "This machine booted in legacy BIOS mode, where Secure Boot does not apply."}
+    out = {"firmware": "uefi", "supported": True}
+    # mokutil is the authoritative answer; the efivar is the fallback
+    if shutil.which("mokutil"):
+        rc, text = run(["mokutil", "--sb-state"])
+        if rc == 0 and text:
+            out["enabled"] = "enabled" in text.lower()
+            out["source"] = "mokutil"
+            return out
+    val = efivar_bool("SecureBoot")
+    if val is None:
+        out["supported"] = False
+        out["enabled"] = False
+        out["note"] = "No SecureBoot EFI variable; the firmware does not report a state."
+    else:
+        out["enabled"] = val
+        out["setupMode"] = efivar_bool("SetupMode")
+        out["source"] = "efivars"
+    return out
+
+
+def firmware_checks():
+    """fwupd's Host Security ID — the same checks GNOME's Device Security shows."""
+    if not shutil.which("fwupdmgr"):
+        return {"available": False, "note": "fwupd is not installed, so firmware checks can't be read."}
+    rc, text = run(["fwupdmgr", "security", "--json"], timeout=30)
+    if not text:
+        return {"available": False, "note": "fwupd did not respond."}
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {"available": False, "note": "fwupd returned something unreadable."}
+    if "Error" in data:
+        return {"available": False, "note": data["Error"].get("Message", "fwupd reported an error.")}
+
+    attrs, passed, failed = data.get("SecurityAttributes", []), 0, []
+    for a in attrs:
+        flags = a.get("Flags", [])
+        if "success" in flags:
+            passed += 1
+        else:
+            name = a.get("Name") or a.get("AppstreamId", "").replace("org.fwupd.hsi.", "")
+            failed.append({"name": name, "result": a.get("HsiResult", "")})
+    return {
+        "available": True,
+        "hsi": data.get("HostSecurityId", ""),
+        "passed": passed,
+        "total": len(attrs),
+        "failed": failed[:8],
+    }
+
+
+def selinux():
+    if not shutil.which("getenforce"):
+        return {"available": False, "note": "SELinux tools are not installed."}
+    _, mode = run(["getenforce"])
+    out = {"available": True, "mode": mode.lower() or "unknown"}
+    try:
+        text = SELINUX_CONFIG.read_text()
+        m = re.search(r"^\s*SELINUX\s*=\s*(\w+)", text, re.M)
+        if m:
+            out["boot"] = m.group(1).lower()
+        m = re.search(r"^\s*SELINUXTYPE\s*=\s*(\w+)", text, re.M)
+        if m:
+            out["policy"] = m.group(1)
+    except OSError:
+        pass
+    # Going from disabled to enforcing needs a full filesystem relabel on the next boot
+    out["needsRelabel"] = out["mode"] == "disabled"
+    return out
+
+
+def camera():
+    devices = sorted(str(p) for p in Path("/dev").glob("video*"))
+    try:
+        mods = Path("/proc/modules").read_text()
+    except OSError:
+        mods = ""
+    driver_loaded = bool(re.search(r"^uvcvideo ", mods, re.M))
+    return {
+        "devices": devices,
+        "present": bool(devices) or driver_loaded,
+        "enabled": bool(devices),
+        "driver": "uvcvideo" if driver_loaded else "",
+    }
+
+
+def location():
+    rc, state = run(["systemctl", "is-enabled", "geoclue.service"])
+    if state == "" and rc != 0:
+        return {"available": False, "note": "GeoClue is not installed, so nothing requests your location."}
+    return {"available": True, "enabled": state != "masked", "state": state}
+
+
+def file_history():
+    out = {}
+    if shutil.which("gsettings"):
+        rc, v = run(["gsettings", "get", "org.gnome.desktop.privacy", "remember-recent-files"])
+        if rc == 0:
+            out["remember"] = v.strip() == "true"
+        rc, v = run(["gsettings", "get", "org.gnome.desktop.privacy", "recent-files-max-age"])
+        if rc == 0:
+            try:
+                out["maxAge"] = int(v.strip())
+            except ValueError:
+                pass
+    recent = Path.home() / ".local/share/recently-used.xbel"
+    out["entries"] = len(re.findall(r"<bookmark ", recent.read_text(errors="replace"))) if recent.is_file() else 0
+    out["available"] = "remember" in out
+    if not out["available"]:
+        out["note"] = "The GNOME privacy settings schema isn't installed."
+    return out
+
+
+def status():
+    return {
+        "secureBoot": secure_boot(),
+        "firmware": firmware_checks(),
+        "selinux": selinux(),
+        "camera": camera(),
+        "location": location(),
+        "fileHistory": file_history(),
+    }
+
+
+# ---------- actions (root) ----------
+
+def need_root():
+    if os.geteuid() != 0:
+        print("This needs root; run it with pkexec.", file=sys.stderr)
+        sys.exit(1)
+
+
+def set_selinux(mode):
+    need_root()
+    if mode not in ("enforcing", "permissive"):
+        sys.exit("mode must be enforcing or permissive")
+    rc, _ = run(["setenforce", "1" if mode == "enforcing" else "0"])
+    sys.exit(rc)
+
+
+def set_selinux_boot(mode):
+    need_root()
+    if mode not in ("enforcing", "permissive", "disabled"):
+        sys.exit("mode must be enforcing, permissive or disabled")
+    try:
+        text = SELINUX_CONFIG.read_text()
+    except OSError as e:
+        sys.exit(f"cannot read {SELINUX_CONFIG}: {e}")
+    new, n = re.subn(r"^\s*SELINUX\s*=\s*\w+", f"SELINUX={mode}", text, count=1, flags=re.M)
+    if n == 0:
+        new = text.rstrip("\n") + f"\nSELINUX={mode}\n"
+    SELINUX_CONFIG.write_text(new)
+    # Ask for a relabel so the next boot can actually enforce
+    if mode in ("enforcing", "permissive"):
+        Path("/.autorelabel").touch()
+    print(f"SELINUX={mode} set for the next boot")
+
+
+def set_camera(state):
+    need_root()
+    if state == "off":
+        rc, _ = run(["modprobe", "-r", "uvcvideo"])
+        if rc != 0:
+            sys.exit("Could not unload uvcvideo — something is probably using the camera.")
+    elif state == "on":
+        rc, _ = run(["modprobe", "uvcvideo"])
+        if rc != 0:
+            sys.exit("Could not load uvcvideo.")
+    else:
+        sys.exit("state must be on or off")
+
+
+def set_location(state):
+    need_root()
+    if state == "off":
+        run(["systemctl", "stop", "geoclue.service"])
+        rc, _ = run(["systemctl", "mask", "geoclue.service"])
+    elif state == "on":
+        rc, _ = run(["systemctl", "unmask", "geoclue.service"])
+    else:
+        sys.exit("state must be on or off")
+    sys.exit(rc)
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] == "status":
+        print(json.dumps(status(), indent=2))
+        return 0
+    cmd, arg = argv[1], (argv[2] if len(argv) > 2 else "")
+    actions = {
+        "selinux": set_selinux,
+        "selinux-boot": set_selinux_boot,
+        "camera": set_camera,
+        "location": set_location,
+    }
+    if cmd not in actions:
+        print(__doc__, file=sys.stderr)
+        return 2
+    actions[cmd](arg)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

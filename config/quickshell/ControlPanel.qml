@@ -6,7 +6,7 @@ import Quickshell.Services.UPower
 import QtQuick
 import QtQuick.Layouts
 
-// Contents of the control center dropdown (GNOME / macOS style quick settings).
+// Contents of the control center dropdown: quick settings.
 Rectangle {
     id: root
     signal closeRequested()

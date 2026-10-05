@@ -49,10 +49,14 @@ Variants {
             }
         }
 
-        // Center: clock (click for the calendar)
-        Clock {
+        // Center: clipboard history, weather, then the clock (click for the calendar)
+        Row {
             anchors.centerIn: parent
-            window: bar
+            spacing: 6
+
+            Clipboard { window: bar; anchors.verticalCenter: parent.verticalCenter }
+            Weather { window: bar; anchors.verticalCenter: parent.verticalCenter }
+            Clock { window: bar; anchors.verticalCenter: parent.verticalCenter }
         }
 
         // Right: tray, then the status icons that open the control center

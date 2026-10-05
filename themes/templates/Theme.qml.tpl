@@ -13,11 +13,12 @@ Singleton {
     readonly property color dim: "{{ dim }}"
     readonly property color accent: "{{ accent }}"
     readonly property color error: "{{ error }}"
+    readonly property color warn: "{{ yellow }}"
     readonly property string font: "{{ font }}"
     readonly property int fontSize: 13
 
-    // Apps launched from widget clicks. The last three are commands run in the terminal
-    // (the same TUIs Omarchy uses); impala falls back to nmtui when iwd isn't running.
+    // Apps launched from widget clicks. The last three are commands run in the terminal;
+    // impala falls back to nmtui when iwd isn't running.
     readonly property string terminal: "kitty"
     readonly property string mixer: "wiremix"
     readonly property string network: "impala || nmtui"

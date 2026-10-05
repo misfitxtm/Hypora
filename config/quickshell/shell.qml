@@ -19,4 +19,6 @@ ShellRoot {
     ThemePicker {}
     NetworkSettings {}
     BluetoothSettings {}
+    KeybindHelp {}
+    SecuritySettings {}
 }

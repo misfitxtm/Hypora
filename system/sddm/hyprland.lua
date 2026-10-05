@@ -1,4 +1,4 @@
--- Minimal Hyprland session that hosts the SDDM greeter (same approach as Omarchy).
+-- Minimal Hyprland session that hosts the SDDM greeter.
 -- Installed to /usr/share/sddm/themes/hypora/hyprland.lua; SDDM starts the greeter itself.
 
 hl.monitor({

@@ -24,9 +24,21 @@ Singleton {
         { id: "Settings", label: "Settings" }
     ]
 
-    readonly property var all: DesktopEntries.applications.values
+    // Control panels belong in the menu's Settings section, not among the apps. The
+    // freedesktop spec reserves the Settings category for exactly that, and it's the only
+    // signal available here: Quickshell doesn't expose OnlyShowIn, so GNOME's panels would
+    // otherwise fill the launcher on a Hyprland session they were never meant to show in.
+    function isSettings(entry) { return entry.categories.includes("Settings") }
+
+    readonly property var byName: DesktopEntries.applications.values
         .filter(e => !e.noDisplay)
         .sort((a, b) => a.name.localeCompare(b.name))
+
+    // Everyday apps: what the launcher and the menu's Apps section show
+    readonly property var all: byName.filter(e => !isSettings(e))
+
+    // Control panels the system provides, for the menu's Settings section
+    readonly property var settingsApps: byName.filter(isSettings)
 
     // Categories that at least one installed app belongs to
     readonly property var categories: allCategories.filter(c => all.some(e => e.categories.includes(c.id)))

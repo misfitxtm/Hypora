@@ -1,12 +1,16 @@
 import QtQuick
+import QtQuick.Window
 
 // Hypora login screen (SDDM): the time, the date and a password field. The user name
 // only appears when there is more than one user.
 // Colors come from theme.conf, which hypora-theme generates from the active theme.
 Rectangle {
     id: root
-    width: 1280
-    height: 800
+    // Fill whatever monitor SDDM puts this on, at its own resolution. SDDM sizes the
+    // root item itself, but binding to Screen keeps it right on mixed-DPI setups and
+    // when a monitor's mode is applied after the greeter has already started.
+    width: Screen.width
+    height: Screen.height
     color: config.bg || "#2e3440"
 
     readonly property color surface: config.surface || "#3b4252"
@@ -22,7 +26,7 @@ Rectangle {
     readonly property string userName: userModel.data(userModel.index(userIndex, 0), Qt.UserRole + 1) || ""
     readonly property string realName: userModel.data(userModel.index(userIndex, 0), Qt.UserRole + 2) || ""
 
-    // Prefer the uwsm-managed Hyprland session, like Omarchy does
+    // Prefer the uwsm-managed Hyprland session
     readonly property int sessionIndex: {
         let fallback = sessionModel.lastIndex
         for (let i = 0; i < sessionModel.rowCount(); i++) {

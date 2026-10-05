@@ -100,12 +100,17 @@ REQUIRED=(
     bluez
     # Battery and power modes
     upower
+    # Read the machine's security state for the Security window
+    fwupd mokutil policycoreutils
+    # Files, clipboard history and screenshots (SUPER+E, SUPER+SHIFT+V, SUPER+SHIFT+S)
+    thunar thunar-volman tumbler
+    cliphist wl-clipboard grim slurp
 )
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
     hyprlock hypridle hyprsunset brightnessctl
-    pamixer playerctl pavucontrol nautilus
-    wl-clipboard grim slurp google-noto-emoji-fonts
+    pamixer playerctl pavucontrol
+    google-noto-emoji-fonts
     # Network and security tools
     nmap aircrack-ng wireshark wireshark-cli
 )
@@ -153,8 +158,8 @@ if [ -n "$hypr_ver" ] && [ "$(printf '%s\n' 0.55.0 "$hypr_ver" | sort -V | head 
 fi
 
 # ---------- fonts ----------
-# Same as Omarchy: JetBrainsMono Nerd Font for monospace and the shell UI, Liberation for
-# sans-serif and serif. The Nerd Font isn't packaged for Fedora; install the official
+# JetBrainsMono Nerd Font for monospace and the shell UI, Liberation for sans-serif
+# and serif. The Nerd Font isn't packaged for Fedora; install the official
 # release system-wide so the login screen (which runs as the sddm user) can use it too.
 NERD_FONT_DIR=/usr/local/share/fonts/JetBrainsMonoNerdFont
 if ! ls "$NERD_FONT_DIR"/*.ttf >/dev/null 2>&1; then
@@ -172,35 +177,74 @@ fi
 sudo install -m644 "$REPO/system/fontconfig/50-hypora.conf" /etc/fonts/conf.d/50-hypora.conf
 sudo fc-cache -f >/dev/null 2>&1 || true
 
-# ---------- AI tools ----------
-# Claude Code from Anthropic's signed dnf repository (stable channel). The signing key is
-# checked against the fingerprint Anthropic publishes before rpm trusts it.
+# ---------- AI tools (optional) ----------
+# Claude Code is not installed unless you say so. Set INSTALL_CLAUDE=yes or =no to answer
+# ahead of time; without an answer on a non-interactive run it is skipped.
 CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
-log "Installing Claude Code"
-key=$(mktemp)
-if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
-    && [ "$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$CLAUDE_KEY_FPR" ]; then
-    sudo rpm --import "$key"
-    sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
-    sudo dnf install -y claude-code || warn "Could not install claude-code"
-else
-    warn "Claude Code signing key missing or fingerprint mismatch; skipped Claude Code"
-fi
-rm -f "$key"
 
-# Hermes Agent (Nous Research) has no dnf repository; it installs per-user under ~/.hermes
-# with its official script, which must not run as root. Run 'hermes setup' afterwards.
-if command -v hermes >/dev/null 2>&1 || [ -x "$HOME/.local/bin/hermes" ]; then
-    log "Hermes Agent already installed (update it with: hermes update)"
-else
-    log "Installing Hermes Agent"
-    script=$(mktemp)
-    if curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o "$script"; then
-        bash "$script" --non-interactive || warn "Hermes Agent install failed; retry with: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
-    else
-        warn "Could not download the Hermes Agent installer"
+want_claude() {
+    case "${INSTALL_CLAUDE:-}" in
+        yes|y|1) return 0 ;;
+        no|n|0)  return 1 ;;
+    esac
+    if [ ! -t 0 ]; then
+        log "Skipping Claude Code (no terminal to ask; set INSTALL_CLAUDE=yes to install it)"
+        return 1
     fi
-    rm -f "$script"
+    printf '\n%s\n%s\n' \
+        "Claude Code is an AI coding assistant from Anthropic. It needs a paid Claude plan." \
+        "It installs from Anthropic's signed dnf repository and can be removed later with:" >&2
+    printf '  sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo\n' >&2
+    read -r -p "Install Claude Code? [y/N] " answer
+    case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+if want_claude; then
+    log "Installing Claude Code"
+    # Check the signing key against the fingerprint Anthropic publishes before rpm trusts it
+    key=$(mktemp)
+    if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
+        && [ "$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$CLAUDE_KEY_FPR" ]; then
+        sudo rpm --import "$key"
+        sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
+        sudo dnf install -y claude-code || warn "Could not install claude-code"
+    else
+        warn "Claude Code signing key missing or fingerprint mismatch; skipped Claude Code"
+    fi
+    rm -f "$key"
+else
+    log "Skipping Claude Code"
+fi
+
+# ---------- Flatpak ----------
+# Flathub as a system remote, then the apps. Each install is skipped if it's already
+# there, so re-running costs nothing. Set SKIP_FLATPAKS=1 to install none of them.
+log "Setting up Flatpak"
+sudo dnf install -y flatpak
+sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo \
+    || warn "Could not add the Flathub remote"
+
+FLATPAKS=(
+    io.github.flattool.Warehouse     # manage installed flatpaks and their leftover data
+    com.github.tchx84.Flatseal       # review and change each flatpak's permissions
+    com.bitwarden.desktop
+    org.localsend.localsend_app
+    com.valvesoftware.Steam
+    net.lutris.Lutris
+    com.spotify.Client
+)
+if [ "${SKIP_FLATPAKS:-0}" = "1" ]; then
+    log "Skipping Flatpak apps (SKIP_FLATPAKS=1)"
+else
+    log "Installing Flatpak apps (this pulls a few GB the first time)"
+    for app in "${FLATPAKS[@]}"; do
+        if flatpak info "$app" >/dev/null 2>&1; then
+            log "  $app is already installed"
+        else
+            sudo flatpak install -y --noninteractive flathub "$app" \
+                || warn "Could not install $app"
+        fi
+    done
 fi
 
 # ---------- shell and editor ----------
@@ -314,7 +358,7 @@ done
 # (Theme.qml is linked in by hypora-theme)
 
 # ---------- login screen (SDDM) ----------
-# Same setup as Omarchy: SDDM on a minimal Hyprland session with a small QML theme.
+# SDDM on a minimal Hyprland session with a small QML theme.
 # The theme's colors are generated from the active Hypora theme.
 log "Installing SDDM login screen"
 SDDM_THEME=/usr/share/sddm/themes/hypora
