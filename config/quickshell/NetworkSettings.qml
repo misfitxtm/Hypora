@@ -5,7 +5,7 @@ import QtQuick
 import QtQuick.Layouts
 
 // Network settings: Wi-Fi on/off, nearby networks, connect, disconnect and forget.
-// Replaces dropping into nmtui/impala for everyday use.
+// Covers everyday use; nmtui is still one click away under "Advanced".
 // Open from the menu (Settings > Network), the Wi-Fi tile's arrow, or:
 //     qs ipc call network open
 Scope {

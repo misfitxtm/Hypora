@@ -126,11 +126,11 @@ REQUIRED=(
     papirus-icon-theme breeze-icon-theme
     adw-gtk3-theme qt6ct
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
-    # Network: NetworkManager on the iwd Wi-Fi backend (impala, the Wi-Fi TUI, needs iwd)
-    NetworkManager NetworkManager-tui NetworkManager-wifi iwd
+    # Network. nmtui is the fallback behind the Network window's "Advanced"
+    NetworkManager NetworkManager-tui NetworkManager-wifi
     # Sound: PipeWire + WirePlumber, wiremix (sound TUI), pulseaudio compatibility
     pipewire wireplumber pipewire-pulseaudio wiremix
-    # Bluetooth (bluetui, the Bluetooth TUI, is downloaded below)
+    # Bluetooth. bluez also provides bluetoothctl, the fallback behind "Advanced"
     bluez
     # Battery and power modes
     upower
@@ -171,41 +171,11 @@ if ! rpm -q power-profiles-daemon >/dev/null 2>&1; then
     sudo dnf install -y tuned-ppd || warn "Could not install tuned-ppd (power modes unavailable)"
 fi
 
-# impala (Wi-Fi) and bluetui (Bluetooth) aren't packaged for Fedora, so their static
-# release builds go into /usr/local/bin. Neither project publishes checksums, so the
-# versions are pinned and the hashes below were taken from the reviewed release.
-IMPALA_VERSION=v0.9.0
-IMPALA_SHA_x86_64=8dd39cec5137277717821c48d04cfd49d95b1393c8ff342bd77e538d87684acd
-IMPALA_SHA_aarch64=7010a1b854c18e89c696d2d870c0d3e06f6dd8ce62aad6da5fd7b1d75b7f0786
-BLUETUI_VERSION=v0.8.1
-BLUETUI_SHA_x86_64=c6d133930af3ef85d5fb6492c98982958619284d1f583c2c8ecf46992460d60e
-BLUETUI_SHA_aarch64=66a5b1dbf5ab5274a05f6926c62bb4bd27601e15a67606c41df625a0a1f1284f
-
-install_release() {   # install_release <name> <url> <sha256>
-    local tmp; tmp=$(mktemp)
-    if fetch_verified "$2" "$tmp" "$3"; then
-        sudo install -m755 -o root -g root "$tmp" "/usr/local/bin/$1"
-    else
-        warn "Skipped $1"
-    fi
-    rm -f "$tmp"
-}
-
-arch=$(uname -m)
-case "$arch" in
-    x86_64|aarch64) ;;
-    *) warn "No pinned impala/bluetui build for $arch; skipping both"; arch="" ;;
-esac
-if [ -n "$arch" ]; then
-    log "Installing impala and bluetui"
-    eval "impala_sha=\$IMPALA_SHA_$arch; bluetui_sha=\$BLUETUI_SHA_$arch"
-    install_release impala \
-        "https://github.com/pythops/impala/releases/download/$IMPALA_VERSION/impala-$arch-unknown-linux-musl" \
-        "$impala_sha"
-    install_release bluetui \
-        "https://github.com/pythops/bluetui/releases/download/$BLUETUI_VERSION/bluetui-$arch-linux-musl" \
-        "$bluetui_sha"
-fi
+# impala and bluetui used to be downloaded here. The Network and Bluetooth windows now
+# cover what they were for, and nmtui and bluetoothctl — both already installed — are the
+# fallback behind each window's "Advanced". Remove the old binaries if an earlier install
+# left them behind.
+sudo rm -f /usr/local/bin/impala /usr/local/bin/bluetui
 
 # Hyprland reads hyprland.lua only from 0.55 on; older versions ignore it entirely
 # (no autostart, no keybinds) and generate a default hyprland.conf instead.
@@ -377,30 +347,15 @@ if getent group wireshark >/dev/null; then
     sudo usermod -aG wireshark "$USER" || true
 fi
 
-# Wi-Fi through iwd so impala works. NetworkManager keeps managing connections (the bar
-# and nmcli still work); this takes effect after a reboot so the install isn't cut off.
-# Machines with no Wi-Fi radio (most VMs) are left on the stock backend: the kernel is
-# asked directly, so this doesn't depend on NetworkManager already being up.
-has_wifi() {
-    local d
-    for d in /sys/class/net/*/wireless /sys/class/net/*/phy80211; do
-        [ -e "$d" ] && return 0
-    done
-    return 1
-}
-
+# NetworkManager keeps its own default Wi-Fi backend. An earlier version switched it to
+# iwd purely so impala would work; with impala gone there is no reason to touch it, so put
+# a machine that took that switch back on the stock configuration.
 IWD_CONF=/etc/NetworkManager/conf.d/hypora-iwd.conf
-if has_wifi; then
-    log "Wi-Fi found; switching NetworkManager to the iwd backend"
-    sudo install -d /etc/NetworkManager/conf.d
-    printf '[device]\nwifi.backend=iwd\n' | sudo tee "$IWD_CONF" >/dev/null
-    sudo systemctl enable iwd || warn "Could not enable iwd"
-    sudo systemctl disable wpa_supplicant 2>/dev/null || true
-else
-    log "No Wi-Fi device; leaving the NetworkManager backend alone"
-    # Undo the switch if an earlier run made it on this machine
-    [ -e "$IWD_CONF" ] && { sudo rm -f "$IWD_CONF"; warn "Removed $IWD_CONF (no Wi-Fi device)"; }
+if [ -e "$IWD_CONF" ]; then
+    log "Restoring NetworkManager's default Wi-Fi backend"
+    sudo rm -f "$IWD_CONF"
     sudo systemctl disable iwd 2>/dev/null || true
+    sudo systemctl enable wpa_supplicant 2>/dev/null || true
 fi
 sudo systemctl set-default graphical.target
 
@@ -538,7 +493,7 @@ log "Done."
 cat <<EOF
 
 Next steps:
-  1. Reboot (this also switches Wi-Fi to iwd). The Hypora login screen (SDDM) starts the
+  1. Reboot. The Hypora login screen (SDDM) starts the
      uwsm-managed Hyprland session. Log out and back in for the libvirt and wireshark
      group memberships, and your new zsh login shell, to take effect.
   2. Neovim opens with LazyVim; the first start downloads its plugins.

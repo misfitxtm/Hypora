@@ -69,8 +69,8 @@ Singleton {
     }
 
     // Run a shell command line in the theme's terminal. If it exits non-zero, hold the
-    // window open: terminal tools like impala and bluetui print why they can't start and
-    // quit straight away, and without this the window vanishes before you can read it.
+    // window open: a terminal tool that can't start prints why and quits straight away,
+    // and without this the window vanishes before you can read it.
     readonly property string holdOnError:
         '; rc=$?; if [ $rc -ne 0 ]; then printf "\\n[exited with status %s]\\nPress Enter to close. " "$rc"; read _; fi'
 

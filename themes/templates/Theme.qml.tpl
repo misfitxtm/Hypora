@@ -17,10 +17,10 @@ Singleton {
     readonly property string font: "{{ font }}"
     readonly property int fontSize: 13
 
-    // Apps launched from widget clicks. The last three are commands run in the terminal;
-    // impala falls back to nmtui when iwd isn't running.
+    // Apps launched from widget clicks. The last three are commands run in the terminal,
+    // reached from the Network and Bluetooth windows under "Advanced".
     readonly property string terminal: "kitty"
     readonly property string mixer: "wiremix"
-    readonly property string network: "impala || nmtui"
-    readonly property string bluetooth: "bluetui"
+    readonly property string network: "nmtui"
+    readonly property string bluetooth: "bluetoothctl"
 }

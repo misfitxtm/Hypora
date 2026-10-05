@@ -49,7 +49,7 @@ Privacy here means specific things, not a slogan:
 | Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
 | Workspaces | Click to switch; highlights the focused workspace and dims empty ones |
 | Volume (`Volume.qml`) | PipeWire volume icon in the bar. Scroll over it to change the volume |
-| Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens `impala` |
+| Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens the Network window |
 | Tray (`Tray.qml`) | System tray: left click activates, middle click secondary action, right click menu |
 | Battery (`Battery.qml`) | Icon and percentage, laptops only; turns red when low |
 | Icons (`Icon.qml`, `Logo.qml`) | Line icons and the Hypora logo, drawn from inline SVG in the theme colors, so no icon font is needed |
@@ -61,11 +61,11 @@ Privacy here means specific things, not a slogan:
 
 | Tool | For | Opened from |
 |---|---|---|
-| `impala` | Wi-Fi, advanced (needs iwd; falls back to `nmtui`) | Network window > Advanced |
-| `bluetui` | Bluetooth, advanced | Bluetooth window > Advanced |
+| `nmtui` | Wi-Fi, advanced | Network window > Advanced |
+| `bluetoothctl` | Bluetooth, advanced | Bluetooth window > Advanced |
 | `wiremix` | Sound outputs, inputs and per-app volume | Mixer button in the control center, menu > Sound |
 
-Network and Bluetooth have proper Quickshell windows (above); the `impala` and `bluetui` TUIs are still one click away under "Advanced..." in each.
+Network and Bluetooth have proper Quickshell windows (above). Both ship with Fedora, so nothing extra is downloaded for them.
 
 **Fonts and icons**
 - **JetBrainsMono Nerd Font** for monospace and the shell UI, with **Liberation Sans / Serif** for the rest. Set system-wide in `/etc/fonts/conf.d/50-hypora.conf`
@@ -137,7 +137,7 @@ The installer is safe to re-run. It:
 
 1. Checks you're on Fedora and not running as root
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
-3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), and downloads impala and bluetui into `/usr/local/bin`
+3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), with nmtui and bluetoothctl as the advanced fallbacks
 4. Installs Oh My Zsh and the LazyVim starter, and makes zsh your login shell (an existing `~/.config/nvim` is left alone)
 5. Installs JetBrainsMono Nerd Font and sets the system font defaults, then **asks** whether to install Claude Code (default no)
 6. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd on machines that have a Wi-Fi radio (taking effect at the next reboot), and sets the default boot target to graphical
@@ -275,8 +275,8 @@ In progress / planned:
 - Developed and tested in a VM so far; real hardware (GPU, laptop battery and backlight) is less tested
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
 - Hyprland comes from the third-party `sdegler/hyprland` COPR, so builds may lag behind or break after Fedora updates
-- impala needs iwd, so the installer switches NetworkManager's Wi-Fi backend to iwd — but only when the machine actually has a Wi-Fi radio, so VMs are left alone. If Wi-Fi misbehaves, delete `/etc/NetworkManager/conf.d/hypora-iwd.conf`, run `sudo systemctl enable wpa_supplicant`, and reboot (`nmtui` then works as before)
-- In a VM with no Wi-Fi or Bluetooth adapter, impala and bluetui exit straight away with "no device" — expected, not a fault. The Network and Bluetooth windows say so plainly too
+- In a VM with no Wi-Fi or Bluetooth adapter, the Network and Bluetooth windows say so plainly rather than looking broken
+- NetworkManager keeps Fedora's own Wi-Fi backend. An earlier version switched it to iwd so that `impala` would work; both are gone, and re-running the installer puts a machine that took that switch back on the stock configuration
 - Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
 - `~/.config/quickshell/Theme.qml`, `~/.config/kitty/current-theme.conf`, `~/.config/hypr/theme.lua`, `hyprlock.conf`, the GTK `gtk.css`/`settings.ini` and `qt6ct.conf` are links to files `hypora-theme` generates; edit the palette or templates instead, or your changes are lost on the next theme switch
 - Fedora versions tested: Fedora 44
