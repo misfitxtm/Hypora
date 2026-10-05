@@ -80,9 +80,26 @@ Network and Bluetooth have proper Quickshell windows (above); the `impala` and `
 - **Neovim** with the **LazyVim** starter. Its colorscheme follows the active Hypora theme (`~/.config/nvim/lua/plugins/hypora.lua` is the only file Hypora owns there)
 - **fastfetch** with a Hypora logo and a short readout: OS (shown as *Hypora Linux* with the running kernel), host, CPU, GPU, RAM, WM, terminal, the active theme and the color palette. It greets you in new shells; set `HYPORA_NO_FETCH=1` to turn that off
 
+**Desktop applications**
+
+A handful of GNOME's apps, without the GNOME session — none of them pull `gnome-shell`, `mutter`, `gnome-session` or `gdm`:
+
+| App | Package |
+|---|---|
+| Files | `nautilus` (with `gvfs` for trash, mounts and network shares) |
+| Calculator | `gnome-calculator` |
+| Disks | `gnome-disk-utility` |
+| Software | `gnome-software` — manages flatpaks; use `dnf` for system packages |
+
+One thing to know: **Nautilus hard-requires `localsearch`**, a background indexer that reads your home directory to make search work. It stays on the machine and talks to nothing over the network, but it is a daemon that reads your files. If you'd rather it didn't run, see what it installed and mask it:
+
+```bash
+systemctl --user list-units '*localsearch*'
+```
+
 **Why most packages stay native**
 
-Flatpak sandboxing earns its keep for software that handles hostile input, which is why Firefox and Spotify are flatpaks. It does nothing for the rest of this list: the compositor, shell, terminal and portals *are* the session and cannot sandbox themselves; `thunar`, `kitty` and `fastfetch` have no maintained Flathub build at all; and tools like `nmap`, `aircrack-ng`, `wireshark` and `virt-manager` need raw sockets, capture privileges or host libvirt, so a sandboxed build would have to be handed the host anyway — paying the integration cost for none of the benefit.
+Flatpak sandboxing earns its keep for software that handles hostile input, which is why Firefox and Spotify are flatpaks. It does nothing for the rest of this list: the compositor, shell, terminal and portals *are* the session and cannot sandbox themselves; `kitty` and `fastfetch` have no maintained Flathub build at all; the file manager and Disks need the host filesystem and `udisks` to be any use; and tools like `nmap`, `aircrack-ng`, `wireshark` and `virt-manager` need raw sockets, capture privileges or host libvirt, so a sandboxed build would have to be handed the host anyway — paying the integration cost for none of the benefit.
 
 **Virtualization and network tools**
 - `@virtualization` (libvirt, QEMU/KVM, virt-manager), with `libvirtd` enabled and your user added to the `libvirt` group
@@ -145,7 +162,7 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 |---|---|
 | SUPER + Enter | Terminal |
 | SUPER + B | Browser (Firefox, sandboxed as a flatpak) |
-| SUPER + E | Files (Thunar) |
+| SUPER + E | Files (Nautilus) |
 | SUPER + R | App launcher |
 | SUPER + A | Hypora menu |
 | SUPER + ALT + T | Theme picker |
