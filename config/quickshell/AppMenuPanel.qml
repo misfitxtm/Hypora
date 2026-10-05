@@ -1,307 +1,244 @@
 import Quickshell
-import Quickshell.Io
 import Quickshell.Widgets
 import QtQuick
 import QtQuick.Layouts
 
-// Contents of the app menu (ArcMenu style): search, categories and apps on the left;
-// places, settings and session buttons in the sidebar on the right.
+// The Hypora menu (Omarchy style): four sections (Apps, Settings, Files, Tools).
+// Pick one to see its items; Esc, Left or the back arrow goes up a level.
+// Typing searches installed apps from anywhere. Power actions live in the control center.
 Rectangle {
     id: root
     signal closeRequested()
 
-    property string category: ""     // "" = all apps
-    readonly property var results: Apps.query(search.text, category)
+    property string page: ""    // "" = the section list
+
+    readonly property var sections: [
+        { icon: "grid", label: "Apps", page: "Apps" },
+        { icon: "sliders", label: "Settings", page: "Settings" },
+        { icon: "folder", label: "Files", page: "Files" },
+        { icon: "tool", label: "Tools", page: "Tools" }
+    ]
+
+    readonly property var pages: ({
+        "Settings": [
+            { icon: "monitor", label: "Display", run: () => ShellState.displaySettingsOpen = true },
+            { icon: "wifi", label: "Network", run: () => Apps.inTerminal(Theme.network) },
+            { icon: "bluetooth", label: "Bluetooth", run: () => Apps.inTerminal(Theme.bluetooth) },
+            { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) }
+        ],
+        "Files": [
+            { icon: "home", label: "Home", run: () => openFolder("HOME") },
+            { icon: "folder", label: "Documents", run: () => openFolder("DOCUMENTS") },
+            { icon: "download", label: "Downloads", run: () => openFolder("DOWNLOAD") },
+            { icon: "image", label: "Pictures", run: () => openFolder("PICTURES") },
+            { icon: "music", label: "Music", run: () => openFolder("MUSIC") },
+            { icon: "film", label: "Videos", run: () => openFolder("VIDEOS") }
+        ],
+        "Tools": [
+            { icon: "terminal", label: "Terminal", run: () => Apps.run([Theme.terminal]) },
+            { icon: "message", label: "Claude Code", run: () => Apps.inTerminal("claude") },
+            { icon: "message", label: "Hermes Agent", run: () => Apps.inTerminal("hermes") },
+            { icon: "camera", label: "Screenshot (region)", run: () => screenshot() }
+        ]
+    })
+
+    // What the list shows: app search results, all apps, a section's items, or the sections
+    readonly property var items: search.text !== "" ? Apps.query(search.text, "").map(e => ({ app: e }))
+                               : page === "Apps" ? Apps.all.map(e => ({ app: e }))
+                               : page !== "" ? pages[page]
+                               : sections
 
     // Called each time the menu opens
     function reset() {
         search.text = ""
-        category = ""
+        page = ""
         list.currentIndex = 0
-        list.positionViewAtBeginning()
         search.forceActiveFocus()
     }
 
-    function launch(entry) {
-        closeRequested()
-        Apps.launch(entry)
-    }
-    function openFolder(xdgName) {
-        closeRequested()
-        Quickshell.execDetached(["sh", "-c", `xdg-open "$(xdg-user-dir ${xdgName} 2>/dev/null || echo "$HOME")"`])
-    }
-    function openTui(cmd) {
-        closeRequested()
-        Apps.inTerminal(cmd)
+    function open(page_) {
+        page = page_
+        search.text = ""
+        list.currentIndex = 0
     }
 
-    implicitWidth: 660
-    implicitHeight: 500
-    radius: 18
+    function back() {
+        if (search.text !== "") search.text = ""
+        else if (page !== "") open("")
+        else return false
+        return true
+    }
+
+    function activate(item) {
+        if (!item) return
+        if (item.page) { open(item.page); return }
+        closeRequested()
+        if (item.app) Apps.launch(item.app)
+        else item.run()
+    }
+
+    function openFolder(xdgName) {
+        Quickshell.execDetached(["sh", "-c", `xdg-open "$(xdg-user-dir ${xdgName} 2>/dev/null || echo "$HOME")"`])
+    }
+
+    // Select a region, save it to ~/Pictures/Screenshots and copy it to the clipboard
+    function screenshot() {
+        Quickshell.execDetached(["sh", "-c",
+            'sleep 0.3; d="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Screenshots"; mkdir -p "$d"; '
+            + 'f="$d/$(date +%Y-%m-%d_%H-%M-%S).png"; grim -g "$(slurp)" "$f" && wl-copy < "$f"'])
+    }
+
+    implicitWidth: 320
+    implicitHeight: column.implicitHeight + 24
+    radius: 16
     color: Theme.bg
     border.width: 1
     border.color: Theme.surface
-    clip: true
 
-    FileView { id: hostname; path: "/etc/hostname"; blockLoading: true }
+    ColumnLayout {
+        id: column
+        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+        spacing: 8
 
-    RowLayout {
-        anchors.fill: parent
-        spacing: 0
-
-        // ---------------- Left: search, categories, apps ----------------
-        ColumnLayout {
+        // Search
+        Rectangle {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.margins: 16
-            spacing: 12
+            height: 38
+            radius: 19
+            color: Theme.surface
+            border.width: 1
+            border.color: search.activeFocus ? Theme.accent : "transparent"
 
-            Rectangle {
-                Layout.fillWidth: true
-                height: 40
-                radius: 20
-                color: Theme.surface
-                border.width: 1
-                border.color: search.activeFocus ? Theme.accent : "transparent"
+            Icon {
+                id: searchIcon
+                anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
+                name: "search"
+                size: 14
+                color: Theme.dim
+            }
+            TextInput {
+                id: search
+                anchors { left: searchIcon.right; right: parent.right; leftMargin: 10; rightMargin: 14; verticalCenter: parent.verticalCenter }
+                font.family: Theme.font; font.pixelSize: Theme.fontSize
+                color: Theme.fg
+                selectionColor: Theme.accent
+                clip: true
+                onTextChanged: list.currentIndex = 0
+                onAccepted: root.activate(root.items[list.currentIndex])
+                Keys.onUpPressed: list.decrementCurrentIndex()
+                Keys.onDownPressed: list.incrementCurrentIndex()
+                Keys.onTabPressed: list.incrementCurrentIndex()
+                Keys.onRightPressed: event => {
+                    const item = root.items[list.currentIndex]
+                    if (text === "" && item?.page) root.open(item.page)
+                    else event.accepted = false
+                }
+                Keys.onLeftPressed: event => { event.accepted = text === "" && root.back() }
+                Keys.onEscapePressed: event => { event.accepted = root.back() }   // at the top, Esc closes
 
-                Icon {
-                    id: searchIcon
-                    anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
-                    name: "search"
-                    size: 15
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: search.text === ""
+                    text: "Search apps"
+                    font: search.font
                     color: Theme.dim
                 }
-                TextInput {
-                    id: search
-                    anchors { left: searchIcon.right; right: parent.right; leftMargin: 10; rightMargin: 14; verticalCenter: parent.verticalCenter }
-                    font.family: Theme.font; font.pixelSize: Theme.fontSize + 1
-                    color: Theme.fg
-                    selectionColor: Theme.accent
-                    clip: true
-                    onTextChanged: list.currentIndex = 0
-                    onAccepted: if (list.count > 0) root.launch(root.results[list.currentIndex])
-                    Keys.onUpPressed: list.decrementCurrentIndex()
-                    Keys.onDownPressed: list.incrementCurrentIndex()
-                    Keys.onTabPressed: list.incrementCurrentIndex()
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: search.text === ""
-                        text: "Search apps"
-                        font: search.font
-                        color: Theme.dim
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 10
-
-                // Categories (hidden while searching)
-                ListView {
-                    id: cats
-                    Layout.preferredWidth: 140
-                    Layout.fillHeight: true
-                    visible: search.text === ""
-                    clip: true
-                    spacing: 0
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: [{ id: "", label: "All Apps" }, ...Apps.categories]
-
-                    delegate: Rectangle {
-                        id: cat
-                        required property var modelData
-                        readonly property bool selected: root.category === modelData.id
-                        width: ListView.view.width
-                        height: 32
-                        radius: 8
-                        color: selected ? Theme.surface : (catArea.containsMouse ? Qt.rgba(1, 1, 1, 0.04) : "transparent")
-
-                        Text {
-                            anchors { left: parent.left; leftMargin: 12; verticalCenter: parent.verticalCenter }
-                            text: cat.modelData.label
-                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 1; font.bold: cat.selected
-                            color: cat.selected ? Theme.accent : Theme.fg
-                        }
-                        MouseArea {
-                            id: catArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: { root.category = cat.modelData.id; list.currentIndex = 0; search.forceActiveFocus() }
-                        }
-                    }
-                }
-
-                ListView {
-                    id: list
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: root.results
-                    currentIndex: 0
-                    highlightMoveDuration: 0
-                    boundsBehavior: Flickable.StopAtBounds
-                    highlight: Rectangle { radius: 8; color: Theme.surface }
-
-                    delegate: Item {
-                        id: row
-                        required property var modelData
-                        required property int index
-                        width: ListView.view.width
-                        height: 40
-
-                        IconImage {
-                            id: appIcon
-                            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-                            implicitSize: 24
-                            source: Quickshell.iconPath(row.modelData.icon, "application-x-executable")
-                        }
-                        Text {
-                            anchors { left: appIcon.right; right: parent.right; leftMargin: 12; rightMargin: 8; verticalCenter: parent.verticalCenter }
-                            text: row.modelData.name
-                            elide: Text.ElideRight
-                            font.family: Theme.font; font.pixelSize: Theme.fontSize
-                            color: row.ListView.isCurrentItem ? Theme.accent : Theme.fg
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onEntered: list.currentIndex = row.index
-                            onClicked: root.launch(row.modelData)
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        visible: list.count === 0
-                        text: "No apps found"
-                        font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
-                        color: Theme.dim
-                    }
-                }
             }
         }
 
-        // ---------------- Right: sidebar ----------------
+        // Back row inside a section
         Rectangle {
-            Layout.preferredWidth: 210
-            Layout.fillHeight: true
-            color: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.45)
-
-            ColumnLayout {
-                anchors { fill: parent; margins: 14 }
-                spacing: 2
-
-                // User
-                RowLayout {
-                    Layout.bottomMargin: 10
-                    spacing: 10
-                    Rectangle {
-                        width: 36; height: 36; radius: 18
-                        color: Theme.accent
-                        Text {
-                            anchors.centerIn: parent
-                            text: (Quickshell.env("USER") ?? "?").charAt(0).toUpperCase()
-                            font.family: Theme.font; font.pixelSize: 16; font.bold: true
-                            color: Theme.bg
-                        }
-                    }
-                    Column {
-                        Text {
-                            text: Quickshell.env("USER") ?? ""
-                            font.family: Theme.font; font.pixelSize: Theme.fontSize; font.bold: true
-                            color: Theme.fg
-                        }
-                        Text {
-                            text: hostname.text().trim()
-                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
-                            color: Theme.dim
-                        }
-                    }
-                }
-
-                SidebarHeading { text: "Places" }
-                SidebarItem { icon: "home"; label: "Home"; onClicked: root.openFolder("HOME") }
-                SidebarItem { icon: "folder"; label: "Documents"; onClicked: root.openFolder("DOCUMENTS") }
-                SidebarItem { icon: "download"; label: "Downloads"; onClicked: root.openFolder("DOWNLOAD") }
-                SidebarItem { icon: "image"; label: "Pictures"; onClicked: root.openFolder("PICTURES") }
-
-                SidebarHeading { text: "Settings"; Layout.topMargin: 8 }
-                SidebarItem { icon: "monitor"; label: "Display"; onClicked: { root.closeRequested(); ShellState.displaySettingsOpen = true } }
-                SidebarItem { icon: "wifi"; label: "Network"; onClicked: root.openTui(Theme.network) }
-                SidebarItem { icon: "bluetooth"; label: "Bluetooth"; onClicked: root.openTui(Theme.bluetooth) }
-                SidebarItem { icon: "volume"; label: "Sound"; onClicked: root.openTui(Theme.mixer) }
-                SidebarItem { icon: "terminal"; label: "Terminal"; onClicked: { root.closeRequested(); Apps.run([Theme.terminal]) } }
-
-                Item { Layout.fillHeight: true }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: 8
-                    PowerButton {
-                        icon: "lock"
-                        onActivated: { root.closeRequested(); Quickshell.execDetached(["hyprlock"]) }
-                    }
-                    PowerButton {
-                        icon: "logout"; confirm: true
-                        onActivated: Quickshell.execDetached(["sh", "-c",
-                            "uwsm check is-active >/dev/null 2>&1 && uwsm stop || hyprctl dispatch 'hl.dsp.exit()'"])
-                    }
-                    PowerButton {
-                        icon: "reboot"; confirm: true
-                        onActivated: Quickshell.execDetached(["systemctl", "reboot"])
-                    }
-                    PowerButton {
-                        icon: "power"; confirm: true
-                        onActivated: Quickshell.execDetached(["systemctl", "poweroff"])
-                    }
-                }
+            Layout.fillWidth: true
+            visible: root.page !== "" && search.text === ""
+            height: 32
+            radius: 8
+            color: backArea.containsMouse ? Theme.surface : "transparent"
+            Icon {
+                id: backIcon
+                anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
+                name: "chevron-left"
+                size: 16
+                color: Theme.accent
+            }
+            Text {
+                anchors { left: backIcon.right; leftMargin: 8; verticalCenter: parent.verticalCenter }
+                text: root.page
+                font.family: Theme.font; font.pixelSize: Theme.fontSize; font.bold: true
+                color: Theme.accent
+            }
+            MouseArea {
+                id: backArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { root.back(); search.forceActiveFocus() }
             }
         }
-    }
 
-    component SidebarHeading: Text {
-        Layout.leftMargin: 10
-        Layout.bottomMargin: 2
-        font.family: Theme.font; font.pixelSize: Theme.fontSize - 3; font.bold: true
-        font.capitalization: Font.AllUppercase; font.letterSpacing: 1
-        color: Theme.dim
-    }
+        ListView {
+            id: list
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(1, Math.min(count, 10)) * 40
+            clip: true
+            model: root.items
+            currentIndex: 0
+            highlightMoveDuration: 0
+            boundsBehavior: Flickable.StopAtBounds
+            highlight: Rectangle { radius: 8; color: Theme.surface }
 
-    component SidebarItem: Rectangle {
-        id: item
-        property string icon
-        property string label
-        signal clicked()
+            delegate: Item {
+                id: row
+                required property var modelData
+                required property int index
+                readonly property bool current: ListView.isCurrentItem
+                width: ListView.view.width
+                height: 40
 
-        Layout.fillWidth: true
-        height: 32
-        radius: 8
-        color: itemArea.containsMouse ? Theme.surface : "transparent"
+                IconImage {
+                    id: appIcon
+                    visible: !!row.modelData.app
+                    anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+                    implicitSize: 22
+                    source: row.modelData.app ? Quickshell.iconPath(row.modelData.app.icon, "application-x-executable") : ""
+                }
+                Icon {
+                    visible: !row.modelData.app
+                    anchors { left: parent.left; leftMargin: 13; verticalCenter: parent.verticalCenter }
+                    name: row.modelData.icon ?? ""
+                    size: 16
+                    color: row.current ? Theme.accent : Theme.fg
+                }
+                Text {
+                    anchors { left: parent.left; leftMargin: 44; right: chevron.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
+                    text: row.modelData.app ? row.modelData.app.name : row.modelData.label
+                    elide: Text.ElideRight
+                    font.family: Theme.font; font.pixelSize: Theme.fontSize
+                    color: row.current ? Theme.accent : Theme.fg
+                }
+                Icon {
+                    id: chevron
+                    visible: !!row.modelData.page
+                    anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                    name: "chevron"
+                    size: 14
+                    color: Theme.dim
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: list.currentIndex = row.index
+                    onClicked: { root.activate(row.modelData); search.forceActiveFocus() }
+                }
+            }
 
-        Icon {
-            id: itemIcon
-            anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-            name: item.icon
-            size: 15
-            color: itemArea.containsMouse ? Theme.accent : Theme.fg
-        }
-        Text {
-            anchors { left: itemIcon.right; leftMargin: 12; verticalCenter: parent.verticalCenter }
-            text: item.label
-            font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
-            color: Theme.fg
-        }
-        MouseArea {
-            id: itemArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: item.clicked()
+            Text {
+                anchors.centerIn: parent
+                visible: list.count === 0
+                text: "No apps found"
+                font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
+                color: Theme.dim
+            }
         }
     }
 }

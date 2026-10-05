@@ -1,0 +1,39 @@
+# Tokyo Night (github.com/folke/tokyonight.nvim, "night" style).
+# One palette drives every app; see themes/templates/.
+name = "TokyoNight"
+mode = "dark"
+
+# UI
+background = "#1a1b26"
+surface = "#24283b"
+foreground = "#c0caf5"
+dim = "#565f89"
+accent = "#7aa2f7"
+error = "#f7768e"
+selection = "#283457"
+muted = "#414868"
+
+# Terminal (ANSI)
+term_foreground = "#c0caf5"
+black = "#15161e"
+red = "#f7768e"
+green = "#9ece6a"
+yellow = "#e0af68"
+blue = "#7aa2f7"
+magenta = "#bb9af7"
+cyan = "#7dcfff"
+white = "#a9b1d6"
+bright_black = "#414868"
+bright_red = "#f7768e"
+bright_green = "#9ece6a"
+bright_yellow = "#e0af68"
+bright_blue = "#7aa2f7"
+bright_magenta = "#bb9af7"
+bright_cyan = "#7dcfff"
+bright_white = "#c0caf5"
+
+# System
+font = "JetBrainsMono Nerd Font"
+gtk_theme = "adw-gtk3-dark"
+icon_theme = "Papirus-Dark"
+color_scheme = "prefer-dark"

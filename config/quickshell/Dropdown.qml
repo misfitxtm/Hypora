@@ -8,6 +8,7 @@ PanelWindow {
     id: root
     property bool open: false
     property bool alignRight: false
+    property bool alignCenter: false
     property int barHeight: 30
     default property alias content: holder.data
 
@@ -32,7 +33,7 @@ PanelWindow {
 
     FocusScope {
         id: holder
-        x: root.alignRight ? root.width - width - 8 : 8
+        x: root.alignCenter ? (root.width - width) / 2 : root.alignRight ? root.width - width - 8 : 8
         y: root.barHeight + 6
         width: childrenRect.width
         height: childrenRect.height

@@ -8,8 +8,9 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-THEME="${THEME:-Nord}"
 CONF="$HOME/.config"
+# Keep the theme picked last time (hypora-theme) unless THEME is given
+THEME="${THEME:-$(cat "$CONF/hypora/current/name" 2>/dev/null || echo Nord)}"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
@@ -19,7 +20,7 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -ne 0 ] || die "Run as your normal user, not root (sudo is used where needed)."
 . /etc/os-release
 [ "${ID:-}" = "fedora" ] || die "This script targets Fedora (found: ${ID:-unknown})."
-[ -f "$REPO/themes/$THEME/Theme.qml" ] || die "Theme '$THEME' not found in $REPO/themes/"
+[ -f "$REPO/themes/$THEME/colors.toml" ] || die "Theme '$THEME' not found in $REPO/themes/"
 [ -d "$REPO/config/quickshell" ] || die "Missing $REPO/config/quickshell"
 
 # ---------- helpers ----------
@@ -83,8 +84,9 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 REQUIRED=(
     hyprland hyprland-guiutils uwsm quickshell kitty git
     polkit sddm qt6-qtsvg gnupg2 curl tar xz
-    # Fonts and icons (JetBrainsMono Nerd Font is downloaded below)
+    # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts papirus-icon-theme adwaita-icon-theme
+    adw-gtk3-theme qt6ct
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
     # Network: NetworkManager on the iwd Wi-Fi backend (impala, the Wi-Fi TUI, needs iwd)
     NetworkManager NetworkManager-tui NetworkManager-wifi iwd
@@ -211,12 +213,17 @@ sudo systemctl enable iwd || warn "Could not enable iwd"
 sudo systemctl disable wpa_supplicant 2>/dev/null || true
 sudo systemctl set-default graphical.target
 
-# ---------- theme ----------
-log "Installing themes (current: $THEME)"
-for f in "$REPO"/themes/*/*; do
-    [ -f "$f" ] && put "$f" "$CONF/hypora/themes/${f#"$REPO"/themes/}"
+# ---------- themes ----------
+# Palettes and templates; bin/hypora-theme renders them (applied at the end)
+log "Installing themes"
+for f in "$REPO"/themes/*/colors.toml; do
+    put "$f" "$CONF/hypora/themes/$(basename "$(dirname "$f")")/colors.toml"
 done
-ln -sfn "$CONF/hypora/themes/$THEME" "$CONF/hypora/themes/current"
+for f in "$REPO"/themes/templates/*.tpl; do
+    put "$f" "$CONF/hypora/templates/$(basename "$f")"
+done
+# Older installs kept a 'current' symlink here; the rendered theme now lives in hypora/current/
+if [ -L "$CONF/hypora/themes/current" ]; then rm "$CONF/hypora/themes/current"; fi
 
 # ---------- Hyprland ----------
 # Hyprland 0.55+ uses a Lua config (hyprland.lua); the old hyprland.conf format is deprecated.
@@ -240,10 +247,7 @@ find "$CONF/quickshell" -maxdepth 1 -type l ! -exec test -e {} \; -delete
 for f in "$REPO"/config/quickshell/*; do
     [ -f "$f" ] && put "$f" "$CONF/quickshell/$(basename "$f")"
 done
-if [ -e "$CONF/quickshell/Theme.qml" ] && [ ! -L "$CONF/quickshell/Theme.qml" ]; then
-    mv "$CONF/quickshell/Theme.qml" "$CONF/quickshell/Theme.qml.bak.$(date +%s)"
-fi
-ln -sfn "$CONF/hypora/themes/current/Theme.qml" "$CONF/quickshell/Theme.qml"
+# (Theme.qml is linked in by hypora-theme)
 
 # ---------- login screen (SDDM) ----------
 # Same setup as Omarchy: SDDM on a minimal Hyprland session with a small QML theme.
@@ -253,11 +257,7 @@ SDDM_THEME=/usr/share/sddm/themes/hypora
 sudo install -d "$SDDM_THEME" /etc/sddm.conf.d
 sudo install -m644 "$REPO"/system/sddm/hypora/{Main.qml,metadata.desktop} "$SDDM_THEME/"
 sudo install -m644 "$REPO/system/sddm/hyprland.lua" "$SDDM_THEME/hyprland.lua"
-{
-    echo "[General]"
-    sed -nE 's/.*property (color|string) (bg|surface|fg|dim|accent|error|font): *("[^"]*").*/\2=\3/p' \
-        "$REPO/themes/$THEME/Theme.qml"
-} | sudo tee "$SDDM_THEME/theme.conf" >/dev/null
+# (its colors, theme.conf, are written by hypora-theme)
 sudo install -m644 "$REPO/system/sddm/10-hypora.conf" /etc/sddm.conf.d/10-hypora.conf
 
 for dm in gdm lightdm greetd; do
@@ -268,17 +268,10 @@ for dm in gdm lightdm greetd; do
 done
 sudo systemctl enable sddm
 
-# ---------- GTK (icons, dark preference) ----------
-log "Installing GTK settings (Papirus icons)"
-for v in 3.0 4.0; do
-    put "$REPO/config/gtk-$v/settings.ini" "$CONF/gtk-$v/settings.ini"
-done
-# GTK 4 / libadwaita apps read these from gsettings rather than settings.ini
-if command -v gsettings >/dev/null 2>&1; then
-    gsettings set org.gnome.desktop.interface icon-theme 'Papirus-Dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrainsMono Nerd Font 11' 2>/dev/null || true
-fi
+# ---------- terminal and session environment ----------
+log "Installing kitty and uwsm settings"
+put "$REPO/config/kitty/kitty.conf" "$CONF/kitty/kitty.conf"
+put "$REPO/config/uwsm/env" "$CONF/uwsm/env"
 
 # ---------- app entries ----------
 # e.g. "Display Settings", so it shows up in the launcher and app menu
@@ -296,6 +289,11 @@ if [ ${#bin_files[@]} -gt 0 ]; then
         put "$f" "$HOME/.local/bin/$(basename "$f")" 755
     done
 fi
+
+# ---------- apply the theme ----------
+# Renders the palette into Quickshell, kitty, Hyprland, hyprlock, GTK, Qt and the login screen
+log "Applying theme: $THEME"
+"$HOME/.local/bin/hypora-theme" "$THEME"
 
 # ---------- bookkeeping ----------
 prune

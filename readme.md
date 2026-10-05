@@ -23,7 +23,8 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 | Component | What it does |
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
-| App menu (`AppMenu.qml`, `AppMenuPanel.qml`) | ArcMenu-style menu from the Hypora logo at the top left: app search, categories and all installed apps, plus a sidebar with places (Home, Documents, ...), settings (Display, Network, Bluetooth, Sound, Terminal) and session buttons |
+| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Omarchy-style menu from the Hypora logo at the top left. Four sections: **Apps** (everything installed), **Settings** (Display, Network, Bluetooth, Sound), **Files** (Home, Documents, Downloads, ...) and **Tools** (Terminal, Claude Code, Hermes Agent, region screenshot). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | GNOME/macOS-style quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
 | Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
 | Workspaces | Click to switch; highlights the focused workspace and dims empty ones |
@@ -52,9 +53,10 @@ An [Omarchy](https://omarchy.org)-inspired Hyprland desktop for **Fedora**, inst
 - **Claude Code** from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update). Run `claude` to log in
 - **Hermes Agent** (Nous Research), installed per-user under `~/.hermes` with its official script. Run `hermes setup` to pick a model provider
 
-**Theming**
-- `themes/<Name>/Theme.qml` holds the palette, font and a few app defaults (terminal and the TUIs above)
-- Included themes: **Nord**, **TokyoNight**
+**Themes**
+- Included: **Nord** (default) and **Tokyo Night**
+- A theme is one palette, `themes/<Name>/colors.toml`, applied everywhere: the Quickshell shell, kitty, Hyprland window borders, the hyprlock lock screen, GTK 3/4 apps (adw-gtk3 + libadwaita colors), Qt apps (qt6ct) and the SDDM login screen
+- Switch any time with `hypora-theme TokyoNight` (or `hypora-theme` to list themes). The shell, borders and terminals change immediately; other open apps pick it up when restarted
 
 ## Requirements
 
@@ -71,10 +73,10 @@ cd ~/.local/share/hypora
 ./install.sh
 ```
 
-Pick a different theme with the `THEME` variable (it must exist under `themes/`):
+Pick a theme with the `THEME` variable (it must exist under `themes/`). Re-runs keep the theme you last chose with `hypora-theme`:
 
 ```bash
-THEME=Nord ./install.sh
+THEME=TokyoNight ./install.sh
 ```
 
 The installer is safe to re-run. It:
@@ -84,10 +86,10 @@ The installer is safe to re-run. It:
 3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, iwd, tuned-ppd for power modes, and downloads impala and bluetui into `/usr/local/bin`
 4. Installs JetBrainsMono Nerd Font, sets the system font defaults, and installs Claude Code (adds `/etc/yum.repos.d/claude-code.repo` after checking the signing key's fingerprint) and Hermes Agent
 5. Enables NetworkManager, upower, bluetooth and power profiles, switches NetworkManager's Wi-Fi backend to iwd (after the next reboot), and sets the default boot target to graphical
-6. Points `~/.config/hypora/themes/current` at the chosen theme
+6. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
 7. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
 8. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
-9. Copies any scripts in `bin/` into `~/.local/bin/`
+9. Copies the scripts in `bin/` (such as `hypora-theme`) into `~/.local/bin/`
 
 Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
 
@@ -136,12 +138,16 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
 │   │                       # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
 │   │                       # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,
+│   │                       # Clock, CalendarPanel,
 │   │                       # Icon, Net, ShellState, Slider, PowerButton
-│   └── gtk-3.0, gtk-4.0/   # icon theme and dark preference
+│   ├── kitty/kitty.conf    # terminal (colors come from the theme)
+│   └── uwsm/env            # session environment (Qt apps use qt6ct)
+├── bin/hypora-theme        # applies a theme everywhere
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
-│   ├── Nord/Theme.qml      # palette, font, app defaults
-│   └── TokyoNight/Theme.qml
+│   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
+│   ├── TokyoNight/colors.toml
+│   └── templates/          # one per app; {{ key }} is filled from colors.toml
 ├── system/
 │   ├── fontconfig/         # system font defaults -> /etc/fonts/conf.d/
 │   ├── yum.repos.d/        # Claude Code repository -> /etc/yum.repos.d/
@@ -152,17 +158,17 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 └── LICENSE
 ```
 
-Not created yet: `bin/` (helper scripts; `install.sh` links anything placed there into `~/.local/bin/`), `packages/` and `install/` (see [Status](#status)).
+Not created yet: `packages/` and `install/` (see [Status](#status)).
 
 ## Customizing
 
-- **Colors and font:** edit `themes/Nord/Theme.qml`, or copy the folder to `themes/<NewName>/` and install with `THEME=<NewName>`
-- **Terminal and TUIs launched by widgets:** `terminal`, `mixer`, `network` and `bluetooth` in `Theme.qml`
+- **Colors and font:** edit `themes/<Name>/colors.toml`, or copy a theme folder to `themes/<NewName>/`, re-run `./install.sh`, then `hypora-theme <NewName>`. To theme another app, add a template to `themes/templates/` and link its output in `bin/hypora-theme`
+- **Terminal and TUIs launched by widgets:** `terminal`, `mixer`, `network` and `bluetooth` in `themes/templates/Theme.qml.tpl`
 - **Autostart, keybinds:** `config/hypr/hyprland.lua`
 - **Monitors:** Display Settings, or edit `~/.config/hypr/monitors.lua` (loaded by `hyprland.lua`)
 - **Bar contents:** `Bar.qml` (the right-hand `Row` holds the tray and the control center button)
 - **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
-- **App menu sidebar:** the `SidebarItem` entries in `AppMenuPanel.qml`
+- **Menu sections:** the `pages` list in `AppMenuPanel.qml`
 
 ## Status
 
@@ -173,17 +179,16 @@ Working:
 - SDDM login screen (needs testing on real hardware)
 
 In progress / planned:
-- Runtime theme switching (`theme-set`) that reloads apps and syncs the login screen
 - Package lists in `packages/*.txt` and a modular `install/` directory
 
 ## Known limitations
 
 - Developed and tested in a VM so far; real hardware (GPU, laptop battery and backlight) is less tested
-- Hyprland window borders are hardcoded to Nord colors in `hyprland.lua` and don't follow the selected theme yet
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
 - Hyprland comes from the third-party `sdegler/hyprland` COPR, so builds may lag behind or break after Fedora updates
 - impala needs iwd: the installer switches NetworkManager's Wi-Fi backend to iwd. If Wi-Fi misbehaves, delete `/etc/NetworkManager/conf.d/hypora-iwd.conf`, run `sudo systemctl enable wpa_supplicant`, and reboot (`nmtui` then works as before)
 - Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
+- `~/.config/quickshell/Theme.qml`, `~/.config/kitty/current-theme.conf`, `~/.config/hypr/theme.lua`, `hyprlock.conf`, the GTK `gtk.css`/`settings.ini` and `qt6ct.conf` are links to files `hypora-theme` generates; edit the palette or templates instead, or your changes are lost on the next theme switch
 - Fedora versions tested: _fill in_
 
 ## License

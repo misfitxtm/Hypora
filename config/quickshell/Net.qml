@@ -12,8 +12,10 @@ Singleton {
     property bool hasWifi: false
     property bool wifiEnabled: false
 
+    // Exactly one icon: the active connection, or "disconnected" in the machine's own terms
     readonly property string icon: type === "ethernet" ? "ethernet"
-                                 : type === "wifi" ? "wifi" : "wifi-off"
+                                 : type === "wifi" ? "wifi"
+                                 : hasWifi ? "wifi-off" : "ethernet"
 
     function refresh() { if (!poll.running) poll.running = true }
 
@@ -22,16 +24,27 @@ Singleton {
         Quickshell.execDetached(["nmcli", "radio", "wifi", on ? "on" : "off"])
     }
 
+    // Split an `nmcli -t` line on ':' while keeping escaped '\:' inside fields
+    function fields(line) {
+        const out = [""]
+        for (let i = 0; i < line.length; i++) {
+            if (line[i] === "\\" && line[i + 1] === ":") { out[out.length - 1] += ":"; i++ }
+            else if (line[i] === ":") out.push("")
+            else out[out.length - 1] += line[i]
+        }
+        return out
+    }
+
     function parse(text) {
         const [devices, radio, scan] = text.split("\n--\n")
         let type = "", ssid = "", hasWifi = false
         for (const line of (devices ?? "").split("\n")) {
-            // -t output escapes ':' inside fields as '\:'
-            const [t, state, ...rest] = line.split(/(?<!\\):/)
+            const [t, state, connection] = fields(line)
             if (t === "wifi") hasWifi = true
             if (!state?.startsWith("connected")) continue
-            if (t === "wifi" && type !== "ethernet") { type = "wifi"; ssid = rest.join(":").replace(/\\:/g, ":") }
+            // Ethernet wins when both are up, matching the route the system actually uses
             if (t === "ethernet") type = "ethernet"
+            else if (t === "wifi" && type !== "ethernet") { type = "wifi"; ssid = connection ?? "" }
         }
         let strength = 0
         for (const line of (scan ?? "").split("\n"))
