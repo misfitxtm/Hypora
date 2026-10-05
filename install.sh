@@ -50,15 +50,15 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 
 # ---------- packages ----------
 REQUIRED=(
-    hyprland uwsm quickshell kitty git
+    hyprland hyprland-guiutils uwsm quickshell kitty git
     NetworkManager NetworkManager-tui
     pipewire wireplumber upower
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
-    polkit jetbrains-mono-fonts sddm
+    polkit jetbrains-mono-fonts sddm qt6-qtsvg
 )
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
-    hyprlock hypridle pavucontrol brightnessctl
+    hyprlock hypridle hyprsunset pavucontrol brightnessctl bluez
     wl-clipboard grim slurp google-noto-emoji-fonts
 )
 
@@ -83,6 +83,7 @@ fi
 log "Enabling services"
 sudo systemctl enable --now NetworkManager || warn "Could not enable NetworkManager"
 sudo systemctl enable --now upower || warn "Could not enable upower (battery widget may show nothing)"
+sudo systemctl enable --now bluetooth 2>/dev/null || warn "No bluetooth service (the Bluetooth tile will show Unavailable)"
 sudo systemctl set-default graphical.target
 fc-cache -f >/dev/null 2>&1 || true
 
