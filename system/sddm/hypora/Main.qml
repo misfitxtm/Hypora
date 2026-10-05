@@ -13,7 +13,7 @@ Rectangle {
     readonly property color dim: config.dim || "#7b88a1"
     readonly property color accent: config.accent || "#88c0d0"
     readonly property color error: config.error || "#bf616a"
-    readonly property string font: config.font || "JetBrains Mono"
+    readonly property string font: config.font || "JetBrainsMono Nerd Font"
 
     // UserModel roles: name = UserRole + 1, realName = UserRole + 2
     readonly property int userCount: userModel.rowCount()

@@ -1,5 +1,5 @@
 //@ pragma Env QS_NO_RELOAD_POPUP=1
-//@ pragma IconTheme Adwaita
+//@ pragma IconTheme Papirus-Dark
 import Quickshell
 
 ShellRoot {
