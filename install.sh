@@ -69,6 +69,24 @@ prune() {
 # available_in_repos <pkg>: true if dnf can find it
 available() { [ -n "$(dnf repoquery --quiet "$1" 2>/dev/null)" ]; }
 
+# fetch_verified <url> <dest> <sha256>: download, and refuse it unless the hash matches.
+# Every version below is pinned deliberately. HTTPS proves you reached the right host; it
+# says nothing about whether the file behind it changed, so each artifact is pinned to a
+# release and checked against a hash recorded when it was reviewed. Bumping a version means
+# updating its hash here on purpose.
+fetch_verified() {
+    local url=$1 dest=$2 want=$3 got
+    curl -fsSL "$url" -o "$dest" || { warn "Could not download $url"; return 1; }
+    got=$(sha256sum "$dest" | cut -d' ' -f1)
+    if [ "$got" != "$want" ]; then
+        rm -f "$dest"
+        warn "Checksum mismatch for $url"
+        warn "  expected $want"
+        warn "  got      $got"
+        return 1
+    fi
+}
+
 # ---------- repos ----------
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
@@ -76,16 +94,28 @@ sudo dnf install -y dnf-plugins-core
 # Fedora doesn't ship Hyprland or uwsm; sdegler/hyprland tracks current releases
 # (the old solopasha COPR stopped at 0.49, before Lua configs existed).
 sudo dnf copr disable -y solopasha/hyprland >/dev/null 2>&1 || true
+# COPR packages are GPG-signed and dnf verifies them, but `copr enable` trusts whatever
+# key the server offers the first time. Check it against the fingerprint recorded here
+# before anything from this repo can be installed.
+HYPRLAND_COPR_FPR=64BBBF013D1CA5E4BE5B0552C043104207862204
 log "Enabling COPR sdegler/hyprland"
 sudo dnf copr enable -y sdegler/hyprland
-# spotify-tui isn't packaged by Fedora
-log "Enabling COPR atim/spotify-tui"
-sudo dnf copr enable -y atim/spotify-tui || warn "Could not enable the spotify-tui COPR"
+copr_key=$(mktemp)
+if curl -fsSL "https://download.copr.fedorainfracloud.org/results/sdegler/hyprland/pubkey.gpg" -o "$copr_key" \
+    && [ "$(gpg --show-keys --with-colons "$copr_key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$HYPRLAND_COPR_FPR" ]; then
+    sudo rpm --import "$copr_key"
+    log "Hyprland COPR signing key verified"
+else
+    rm -f "$copr_key"
+    sudo dnf copr disable -y sdegler/hyprland >/dev/null 2>&1 || true
+    die "The Hyprland COPR signing key did not match the expected fingerprint. Stopping."
+fi
+rm -f "$copr_key"
 available quickshell || die "quickshell not found in enabled repos (it ships in Fedora 42+)."
 
 # ---------- packages ----------
 REQUIRED=(
-    hyprland hyprland-guiutils uwsm quickshell kitty firefox git
+    hyprland hyprland-guiutils uwsm quickshell kitty git
     python3-pillow
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
@@ -106,8 +136,6 @@ REQUIRED=(
     upower
     # Read the machine's security state for the Security window
     fwupd mokutil policycoreutils
-    # Music, in the terminal
-    spotify-tui
     # Files, clipboard history and screenshots (SUPER+E, SUPER+SHIFT+V, SUPER+SHIFT+S)
     thunar thunar-volman tumbler
     cliphist wl-clipboard grim slurp
@@ -140,21 +168,41 @@ if ! rpm -q power-profiles-daemon >/dev/null 2>&1; then
     sudo dnf install -y tuned-ppd || warn "Could not install tuned-ppd (power modes unavailable)"
 fi
 
-# impala (Wi-Fi) and bluetui (Bluetooth) aren't packaged for Fedora; install their static
-# release builds from GitHub into /usr/local/bin. Re-running the installer updates them.
-install_release() {   # install_release <name> <github repo> <asset name>
+# impala (Wi-Fi) and bluetui (Bluetooth) aren't packaged for Fedora, so their static
+# release builds go into /usr/local/bin. Neither project publishes checksums, so the
+# versions are pinned and the hashes below were taken from the reviewed release.
+IMPALA_VERSION=v0.9.0
+IMPALA_SHA_x86_64=8dd39cec5137277717821c48d04cfd49d95b1393c8ff342bd77e538d87684acd
+IMPALA_SHA_aarch64=7010a1b854c18e89c696d2d870c0d3e06f6dd8ce62aad6da5fd7b1d75b7f0786
+BLUETUI_VERSION=v0.8.1
+BLUETUI_SHA_x86_64=c6d133930af3ef85d5fb6492c98982958619284d1f583c2c8ecf46992460d60e
+BLUETUI_SHA_aarch64=66a5b1dbf5ab5274a05f6926c62bb4bd27601e15a67606c41df625a0a1f1284f
+
+install_release() {   # install_release <name> <url> <sha256>
     local tmp; tmp=$(mktemp)
-    if curl -fsSL "https://github.com/$2/releases/latest/download/$3" -o "$tmp"; then
-        sudo install -m755 "$tmp" "/usr/local/bin/$1"
+    if fetch_verified "$2" "$tmp" "$3"; then
+        sudo install -m755 -o root -g root "$tmp" "/usr/local/bin/$1"
     else
-        warn "Could not download $1 from github.com/$2"
+        warn "Skipped $1"
     fi
     rm -f "$tmp"
 }
-log "Installing impala and bluetui"
+
 arch=$(uname -m)
-install_release impala  pythops/impala  "impala-$arch-unknown-linux-musl"
-install_release bluetui pythops/bluetui "bluetui-$arch-linux-musl"
+case "$arch" in
+    x86_64|aarch64) ;;
+    *) warn "No pinned impala/bluetui build for $arch; skipping both"; arch="" ;;
+esac
+if [ -n "$arch" ]; then
+    log "Installing impala and bluetui"
+    eval "impala_sha=\$IMPALA_SHA_$arch; bluetui_sha=\$BLUETUI_SHA_$arch"
+    install_release impala \
+        "https://github.com/pythops/impala/releases/download/$IMPALA_VERSION/impala-$arch-unknown-linux-musl" \
+        "$impala_sha"
+    install_release bluetui \
+        "https://github.com/pythops/bluetui/releases/download/$BLUETUI_VERSION/bluetui-$arch-linux-musl" \
+        "$bluetui_sha"
+fi
 
 # Hyprland reads hyprland.lua only from 0.55 on; older versions ignore it entirely
 # (no autostart, no keybinds) and generate a default hyprland.conf instead.
@@ -167,16 +215,20 @@ fi
 # JetBrainsMono Nerd Font for monospace and the shell UI, Liberation for sans-serif
 # and serif. The Nerd Font isn't packaged for Fedora; install the official
 # release system-wide so the login screen (which runs as the sddm user) can use it too.
+NERD_FONT_VERSION=v3.5.1
+NERD_FONT_SHA=04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf
 NERD_FONT_DIR=/usr/local/share/fonts/JetBrainsMonoNerdFont
 if ! ls "$NERD_FONT_DIR"/*.ttf >/dev/null 2>&1; then
     log "Installing JetBrainsMono Nerd Font"
     tmp=$(mktemp -d)
-    if curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz -o "$tmp/font.tar.xz" \
+    if fetch_verified \
+        "https://github.com/ryanoasis/nerd-fonts/releases/download/$NERD_FONT_VERSION/JetBrainsMono.tar.xz" \
+        "$tmp/font.tar.xz" "$NERD_FONT_SHA" \
         && tar -xJf "$tmp/font.tar.xz" -C "$tmp"; then
         sudo install -d "$NERD_FONT_DIR"
         sudo install -m644 "$tmp"/*.ttf "$NERD_FONT_DIR/"
     else
-        warn "Could not download JetBrainsMono Nerd Font"
+        warn "Could not install JetBrainsMono Nerd Font"
     fi
     rm -rf "$tmp"
 fi
@@ -189,8 +241,9 @@ if [ -f "$GRUVBOX_ICONS/index.theme" ]; then
 else
     log "Installing Gruvbox Plus icons"
     tmp=$(mktemp -d)
-    if curl -fsSL -o "$tmp/icons.zip" \
-        "https://github.com/SylEleuth/gruvbox-plus-icon-pack/releases/latest/download/gruvbox-plus-icon-pack-6.6.0.zip" \
+    if fetch_verified \
+        "https://github.com/SylEleuth/gruvbox-plus-icon-pack/releases/download/v6.6.0/gruvbox-plus-icon-pack-6.6.0.zip" \
+        "$tmp/icons.zip" b10a8d6378d7b88ca6d21b90797a4aa7bbdbb1907ea74101a4b9db439d2773a2 \
         && unzip -q "$tmp/icons.zip" -d "$tmp"; then
         sudo cp -r "$tmp/Gruvbox-Plus-Dark" "$tmp/Gruvbox-Plus-Light" /usr/share/icons/
         sudo gtk-update-icon-cache -qf "$GRUVBOX_ICONS" 2>/dev/null || true
@@ -248,13 +301,19 @@ sudo dnf install -y flatpak
 sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo \
     || warn "Could not add the Flathub remote"
 
+# Sandboxed by default. Firefox is here rather than as an RPM because a browser handles
+# the most hostile input on the machine and Mozilla publishes a verified build; the rest of
+# the package list stays native, either because no maintained flatpak exists or because
+# sandboxing something that needs host access just means handing it the host anyway.
 FLATPAKS=(
     io.github.flattool.Warehouse     # manage installed flatpaks and their leftover data
     com.github.tchx84.Flatseal       # review and change each flatpak's permissions
+    org.mozilla.firefox              # publisher-verified by Mozilla
     com.bitwarden.desktop
     org.localsend.localsend_app
     com.valvesoftware.Steam
     net.lutris.Lutris
+    com.spotify.Client               # sandboxed, rather than an unmaintained terminal client
 )
 if [ "${SKIP_FLATPAKS:-0}" = "1" ]; then
     log "Skipping Flatpak apps (SKIP_FLATPAKS=1)"
@@ -276,14 +335,13 @@ fi
 if [ -d "$HOME/.oh-my-zsh" ]; then
     log "Oh My Zsh already installed"
 else
+    # Clone the repository rather than piping its installer into a shell. With
+    # RUNZSH=no CHSH=no KEEP_ZSHRC=yes that script only clones anyway — Hypora writes its
+    # own .zshrc and sets the login shell itself — so running it bought nothing and meant
+    # executing a file fetched from a moving branch.
     log "Installing Oh My Zsh"
-    omz=$(mktemp)
-    if curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o "$omz"; then
-        RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$omz" --unattended || warn "Oh My Zsh install failed"
-    else
-        warn "Could not download the Oh My Zsh installer"
-    fi
-    rm -f "$omz"
+    git clone -q --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$HOME/.oh-my-zsh" \
+        || warn "Could not clone Oh My Zsh"
 fi
 
 # LazyVim starter, only when ~/.config/nvim is empty; an existing config is left alone.
