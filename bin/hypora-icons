@@ -1,0 +1,36 @@
+#!/bin/sh
+# hypora-icons: list the icon themes installed on this machine, with sample icons.
+#
+# One line per theme:  <directory><TAB><display name><TAB><icon path>|<icon path>|...
+# The Style > Icons picker reads this; run it yourself to see what it finds.
+# Themes with no real icons (cursor-only sets) are skipped.
+set -u
+
+samples="folder utilities-terminal text-x-generic preferences-system applications-games audio-headphones"
+
+for d in /usr/share/icons/*/ "$HOME"/.local/share/icons/*/; do
+    [ -f "$d/index.theme" ] || continue
+    # A cursor-only theme has nothing but a cursors directory
+    [ -n "$(find "$d" -maxdepth 1 -type d ! -name cursors ! -path "$d" -print -quit 2>/dev/null)" ] || continue
+
+    name=$(sed -nE 's/^Name[[:space:]]*=[[:space:]]*(.*)$/\1/p' "$d/index.theme" | head -1)
+    base=$(basename "$d")
+    paths=""
+    count=0
+
+    for s in $samples; do
+        [ "$count" -ge 4 ] && break
+        # Prefer a scalable SVG, then the largest raster, then any SVG
+        p=$(find "$d" -name "$s.svg" -path '*scalable*' -print -quit 2>/dev/null)
+        if [ -z "$p" ]; then
+            p=$(find "$d" -name "$s.png" 2>/dev/null \
+                | awk -F/ '{ for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+x[0-9]+$/) { split($i, a, "x"); print a[1], $0 } }' \
+                | sort -rn | head -1 | cut -d' ' -f2-)
+        fi
+        [ -z "$p" ] && p=$(find "$d" -name "$s.svg" -print -quit 2>/dev/null)
+        [ -n "$p" ] && { paths="$paths${paths:+|}$p"; count=$((count + 1)); }
+    done
+
+    [ "$count" -gt 0 ] || continue
+    printf '%s\t%s\t%s\n' "$base" "${name:-$base}" "$paths"
+done

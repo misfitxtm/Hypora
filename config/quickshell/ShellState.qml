@@ -10,6 +10,9 @@ Singleton {
     // Display Settings window (DisplaySettings.qml)
     property bool displaySettingsOpen: false
 
+    // Icon theme picker (IconPicker.qml)
+    property bool iconPickerOpen: false
+
     // Security window (SecuritySettings.qml)
     property bool securitySettingsOpen: false
 
