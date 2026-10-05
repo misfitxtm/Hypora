@@ -356,6 +356,25 @@ if [ -e "$IWD_CONF" ]; then
     sudo systemctl disable iwd 2>/dev/null || true
     sudo systemctl enable wpa_supplicant 2>/dev/null || true
 fi
+# Encrypted DNS through systemd-resolved. Plain DNS tells whoever runs the network every
+# domain you visit; these queries go to Quad9 over TLS instead. DNSOverTLS=yes is strict:
+# if the encrypted resolver can't be reached, lookups fail rather than quietly falling back
+# to plaintext. That is the point, but it also means captive portals (hotel and airport
+# Wi-Fi) can't be reached until you relax it — see the readme.
+log "Setting up encrypted DNS"
+sudo install -d /etc/systemd/resolved.conf.d /etc/NetworkManager/conf.d
+sudo install -m644 "$REPO/system/systemd/resolved.conf.d/hypora-dns.conf" /etc/systemd/resolved.conf.d/hypora-dns.conf
+sudo install -m644 "$REPO/system/NetworkManager/conf.d/hypora-dns.conf" /etc/NetworkManager/conf.d/hypora-dns.conf
+sudo systemctl enable --now systemd-resolved || warn "Could not enable systemd-resolved"
+# resolv.conf has to point at the stub, or applications bypass resolved entirely
+if [ ! -L /etc/resolv.conf ]; then
+    sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf \
+        || warn "Could not point /etc/resolv.conf at systemd-resolved"
+fi
+# Restarting NetworkManager blips the connection, which is why this runs after the package
+# installs and before the local config steps
+sudo systemctl try-restart systemd-resolved NetworkManager 2>/dev/null || true
+
 # Firewall. Fedora's FedoraWorkstation zone leaves ports 1025-65535 open on TCP and UDP;
 # `public` allows only ssh, mDNS and DHCPv6, which is the right baseline for a desktop that
 # serves nothing. LocalSend is the one thing here that listens, so it gets its port back.

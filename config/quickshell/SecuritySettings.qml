@@ -180,6 +180,62 @@ Scope {
                                         : "Not passing: " + fw.failed.map(f => `${f.name} (${f.result})`).join(", ")
                             }
 
+                            // ---------- Network ----------
+                            Heading { text: "Network" }
+
+                            StatusRow {
+                                readonly property var dns: win.info ? win.info.dns : null
+                                icon: !dns || !dns.available ? "shield"
+                                    : dns.strict ? "shield-check" : "shield-alert"
+                                tone: !dns || !dns.available ? Theme.error
+                                    : dns.strict ? Theme.accent
+                                    : dns.encrypted ? Theme.warn : Theme.error
+                                title: "Encrypted DNS"
+                                value: !dns ? "" : !dns.available ? "Off"
+                                     : dns.strict ? "On"
+                                     : dns.mode === "opportunistic" ? "Opportunistic"
+                                     : dns.mode === "unknown" ? "Unknown" : "Off"
+                                detail: {
+                                    const d = win.info ? win.info.dns : null
+                                    if (!d) return ""
+                                    if (!d.available) return d.note || ""
+                                    const via = d.server ? ` Queries go to ${d.server}.` : ""
+                                    if (d.strict) return "Lookups are encrypted to a verified resolver, and fail rather "
+                                        + "than falling back to plaintext." + via
+                                        + " Captive portals need this relaxed first: resolvectl dnsovertls <interface> opportunistic."
+                                    if (d.mode === "opportunistic") return "Lookups are encrypted when the resolver "
+                                        + "answers on port 853, and sent in plaintext when it doesn't — which a network "
+                                        + "can force by blocking that port." + via
+                                    if (d.mode === "unknown") return "systemd-resolved is running but didn't say "
+                                        + "whether DNS-over-TLS is on." + via
+                                    return "Lookups are sent in plaintext, so the network can read and rewrite "
+                                        + "which sites you visit." + via
+                                }
+                            }
+
+                            StatusRow {
+                                readonly property var fwl: win.info ? win.info.firewall : null
+                                readonly property bool good: fwl && fwl.available && fwl.running && !fwl.permissive
+                                icon: !fwl ? "shield" : good ? "shield-check" : "shield-alert"
+                                tone: !fwl ? Theme.dim
+                                    : good ? Theme.accent
+                                    : fwl.running ? Theme.warn : Theme.error
+                                title: "Firewall"
+                                value: !fwl ? "" : !fwl.available ? "Not installed"
+                                     : !fwl.running ? "Off" : fwl.zone || "On"
+                                detail: {
+                                    const f = win.info ? win.info.firewall : null
+                                    if (!f) return ""
+                                    if (!f.available || !f.running) return f.note || ""
+                                    const open = f.openPorts && f.openPorts.length > 0
+                                        ? ` Open: ${f.openPorts.join(", ")}.` : ""
+                                    return (f.permissive
+                                        ? "The FedoraWorkstation zone leaves ports 1025-65535 open on TCP and UDP. "
+                                          + "Hypora uses the public zone instead."
+                                        : "Incoming connections are refused except where a service was allowed.") + open
+                                }
+                            }
+
                             // ---------- SELinux ----------
                             Heading { text: "SELinux" }
 
