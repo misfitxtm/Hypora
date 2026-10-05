@@ -147,7 +147,7 @@ Rectangle {
                     anchors.margins: -6
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: { root.closeRequested(); Apps.inTerminal(Theme.mixer) }
+                    onClicked: { root.closeRequested(); ShellState.audioSettingsOpen = true }
                 }
             }
         }

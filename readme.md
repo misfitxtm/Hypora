@@ -40,6 +40,7 @@ Privacy here means specific things, not a slogan:
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Weather (`Weather.qml`) | To the left of the clock: current conditions and a three-day forecast. Pick your city by name — there is no IP geolocation, and nothing is requested until you choose a place. Data from [Open-Meteo](https://open-meteo.com), which needs no account or API key. Your choice lives in `~/.config/hypora/weather.json`; `bin/hypora-weather` does the lookups and can be run on its own |
+| Sound (`AudioSettings.qml`) | Menu > Settings > Sound, or the mixer button in the control centre: output and input devices with their own volume and mute, a picker when there's more than one, and a row per application that's playing. Talks to PipeWire through Quickshell — no pavucontrol. `wiremix` is behind "Advanced" for routing and profiles |
 | Clipboard (`Clipboard.qml`) | Clipboard history to the left of the clock, also on **SUPER + SHIFT + V**: recent copies, click one to put it back on the clipboard, or Clear to wipe it. Recorded by `wl-paste --watch cliphist store` (started from `hyprland.lua`) — Quickshell can't watch the clipboard itself, as it doesn't speak `wlr-data-control` |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
 | System usage (`SystemUsage.qml`, `SysInfo.qml`) | Live RAM %, CPU %, CPU temperature and, on machines that report them, GPU usage and GPU temperature — left of the control center. Readings warm to the accent colour and then to red as they climb. Click it to pick which ones appear; the choice is kept in `~/.config/hypora/sysinfo.json`. Numbers come from `bin/hypora-sysinfo` (/proc and /sys, or `nvidia-smi` for NVIDIA) |
@@ -63,7 +64,7 @@ Privacy here means specific things, not a slogan:
 |---|---|---|
 | `nmtui` | Wi-Fi, advanced | Network window > Advanced |
 | `bluetoothctl` | Bluetooth, advanced | Bluetooth window > Advanced |
-| `wiremix` | Sound outputs, inputs and per-app volume | Mixer button in the control center, menu > Sound |
+| `wiremix` | Sound, advanced (routing, profiles) | Sound window > Advanced |
 
 Network and Bluetooth have proper Quickshell windows (above). Both ship with Fedora, so nothing extra is downloaded for them.
 
@@ -108,7 +109,7 @@ Flatpak sandboxing earns its keep for software that handles hostile input, which
 **Themes**
 - Included: **Nord** (default), **Tokyo Night** and **Catppuccin Mocha**
 - A theme is one palette, `themes/<Name>/colors.toml`, applied everywhere: the Quickshell shell, kitty, Hyprland window borders, the hyprlock lock screen, GTK 3/4 apps (adw-gtk3 + libadwaita colors), Qt apps (qt6ct) and the SDDM login screen
-- Each theme comes with three **pixel-art wallpapers drawn from its own palette** by `hypora-wallgen` (peaks, city and grove), so a new theme gets matching wallpapers for free. They land in `~/.config/hypora/themes/<Name>/backgrounds/`; drop your own images in that folder to add them to the rotation
+- Each theme's wallpapers live in `themes/<Name>/backgrounds/` and are copied to `~/.config/hypora/themes/<Name>/backgrounds/`. Drop your own images in either place to add them to the rotation
 - Switch any time with the theme picker (**SUPER + ALT + T**) or `hypora-theme TokyoNight` (`hypora-theme` alone lists themes). The shell, borders and terminals change immediately; other open apps pick it up when restarted
 
 ## Requirements
@@ -220,7 +221,6 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   └── uwsm/env            # session environment (Qt apps use qt6ct)
 ├── bin/
 │   ├── hypora-theme        # applies a theme everywhere
-│   ├── hypora-wallgen      # draws each theme's pixel-art wallpapers
 │   ├── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
 │   ├── hypora-security     # security status as JSON, and the root actions behind it
@@ -246,7 +246,7 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 
 ## Customizing
 
-- **Colors and font:** edit `themes/<Name>/colors.toml`, or copy a theme folder to `themes/<NewName>/`, re-run `./install.sh`, then `hypora-theme <NewName>`. Wallpapers are drawn from the palette, so `hypora-wallgen <NewName>` gives the new theme matching ones. To theme another app, add a template to `themes/templates/` and link its output in `bin/hypora-theme`
+- **Colors and font:** edit `themes/<Name>/colors.toml`, or copy a theme folder to `themes/<NewName>/`, re-run `./install.sh`, then `hypora-theme <NewName>`. To theme another app, add a template to `themes/templates/` and link its output in `bin/hypora-theme`
 - **Terminal and TUIs launched by widgets:** `terminal`, `mixer`, `network` and `bluetooth` in `themes/templates/Theme.qml.tpl`
 - **Autostart, keybinds:** `config/hypr/hyprland.lua`
 - **Monitors:** Display Settings, or edit `~/.config/hypr/monitors.lua` (loaded by `hyprland.lua`)
