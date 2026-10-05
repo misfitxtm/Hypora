@@ -10,6 +10,8 @@ Privacy here means specific things, not a slogan:
 - **Your security state is visible and adjustable** — Secure Boot, firmware checks, SELinux, camera, microphone, location and file history all in one window, with each switch saying plainly what it does and does not cover.
 - **Flatpak apps come with the tools to audit them:** Flatseal for permissions, Warehouse for what's installed and what data it left behind. Firefox and Spotify run sandboxed rather than as system packages.
 - **Everything downloaded is verified.** Each file fetched outside dnf is pinned to a release and checked against a recorded SHA-256; the Hyprland COPR's signing key is checked against a pinned fingerprint before anything installs from it; Claude Code's repository key likewise. HTTPS proves which host answered, not what it sent.
+- **The firewall is on, and closed by default.** Fedora's workstation zone leaves ports 1025-65535 open on TCP and UDP; Hypora uses `public`, which allows only ssh, mDNS and DHCPv6, and opens LocalSend's port because that's the one thing here that listens.
+- **The screen locks on its own.** Ten minutes to lock, fifteen to blank, and it locks before suspending, so waking needs your password.
 - **Full-disk encryption is checked, not assumed.** The Security window reports whether this system is on an encrypted volume, and warns about swap that reaches the disk in the clear. Encryption itself has to be chosen when Fedora is installed — see Requirements.
 - **Secrets stay out of argv and privileged paths stay out of `$HOME`.** Wi-Fi passwords are handed to `nmcli` on stdin, never as a command-line argument that any process could read from `/proc`; the one helper that runs as root lives in a root-owned directory.
 
@@ -169,7 +171,7 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | SUPER + ALT + T | Theme picker |
 | SUPER + SHIFT + V | Clipboard history |
 | SUPER + SHIFT + S | Screenshot a region |
-| SUPER + L | Lock |
+| SUPER + L | Lock (also locks on its own after 10 minutes) |
 | SUPER + M | Log out |
 | SUPER + Q | Close window |
 | SUPER + V | Toggle floating |
@@ -206,7 +208,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 .
 ├── install.sh              # main installer
 ├── config/                 # copied into ~/.config
-│   ├── hypr/hyprland.lua
+│   ├── hypr/hyprland.lua, hypridle.conf
 │   ├── quickshell/         # shell.qml, Bar, ControlCenter, Tray, Volume, Network,
 │   │                       # Battery, Notifications, PolkitDialog, Launcher, ControlPanel, Tile,
 │   │                       # AppMenu, AppMenuPanel, Apps, Dropdown, DisplaySettings, Logo,

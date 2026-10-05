@@ -52,6 +52,8 @@ hl.on("hyprland.start", function()
     -- wlr-data-control), so wl-paste records into cliphist for the bar widget to read.
     hl.exec_cmd("wl-paste --type text --watch cliphist store")
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
+    -- Idle locking (~/.config/hypr/hypridle.conf). Without this nothing ever locks.
+    hl.exec_cmd(app("hypridle"))
 end)
 
 ------------------ LOOK AND FEEL -------------
