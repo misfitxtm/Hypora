@@ -1,0 +1,18 @@
+# Keeps system-wide flatpaks current. dnf-automatic doesn't see these, and the apps most
+# worth keeping patched here — Firefox above all — are flatpaks.
+#
+# Started by hypora-flatpak-update.timer. Run it now with:
+#     sudo systemctl start hypora-flatpak-update.service
+[Unit]
+Description=Update system Flatpak apps
+Documentation=man:flatpak-update(1)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/usr/bin/flatpak
+
+[Service]
+Type=oneshot
+# Stay out of the way of anything you're actually doing
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/usr/bin/flatpak update --system --assumeyes --noninteractive

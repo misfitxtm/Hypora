@@ -11,7 +11,9 @@ Privacy here means specific things, not a slogan:
 - **Flatpak apps come with the tools to audit them:** Flatseal for permissions, Warehouse for what's installed and what data it left behind. Firefox and Spotify run sandboxed rather than as system packages.
 - **Everything downloaded is verified.** Each file fetched outside dnf is pinned to a release and checked against a recorded SHA-256; the Hyprland COPR's signing key is checked against a pinned fingerprint before anything installs from it; Claude Code's repository key likewise. HTTPS proves which host answered, not what it sent.
 - **The firewall is on, and closed by default.** Fedora's workstation zone leaves ports 1025-65535 open on TCP and UDP; Hypora uses `public`, which allows only ssh, mDNS and DHCPv6, and opens LocalSend's port because that's the one thing here that listens.
-- **DNS queries are encrypted.** Lookups go to [Quad9](https://quad9.net) over TLS through systemd-resolved, with the resolver's certificate verified, so the network you're on can't read or rewrite which sites you visit. This is strict mode — see [Encrypted DNS](#encrypted-dns) for the captive-portal caveat and how to relax it.
+- **DNS is encrypted where it can be, and stays yours.** Lookups go through systemd-resolved with DNS-over-TLS in opportunistic mode, so the connection to the resolver is encrypted whenever the resolver supports it. DNS follows the network rather than overriding it, which is what keeps a resolver you run yourself — a Pi-hole, a router — in charge; [Quad9](https://quad9.net) is the fallback when a network provides none. See [DNS](#dns).
+- **Your MAC address doesn't follow you between networks.** Wi-Fi scanning is randomized, and each network sees a per-network address instead of the card's permanent serial number. See [MAC addresses](#mac-addresses).
+- **Security updates install themselves, and the third-party repo doesn't.** Fedora security advisories apply daily, and so do flatpak updates — which is where the browser lives. The Hyprland COPR is deliberately excluded, so the compositor never changes under you. See [Automatic updates](#automatic-updates).
 - **The screen locks on its own.** Ten minutes to lock, fifteen to blank, and it locks before suspending, so waking needs your password.
 - **Full-disk encryption is checked, not assumed.** The Security window reports whether this system is on an encrypted volume, and warns about swap that reaches the disk in the clear. Encryption itself has to be chosen when Fedora is installed — see Requirements.
 - **Secrets stay out of argv and privileged paths stay out of `$HOME`.** Wi-Fi passwords are handed to `nmcli` on stdin, never as a command-line argument that any process could read from `/proc`; the one helper that runs as root lives in a root-owned directory.
@@ -38,7 +40,7 @@ Privacy here means specific things, not a slogan:
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
 | Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound, plus any control panels installed), **Security**, **Tools** (Terminal, Claude Code, region screenshot) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
-| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, whether this system is on an encrypted volume (and whether any swap is unencrypted), and fwupd's firmware checks (the HSI level, how many passed, and which didn't). **Network**: whether DNS is encrypted (and in strict or opportunistic mode, and to which resolver) and whether the firewall is running in a closed zone. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
+| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, whether this system is on an encrypted volume (and whether any swap is unencrypted), and fwupd's firmware checks (the HSI level, how many passed, and which didn't). **Network**: whether DNS is encrypted (and in which mode, and to which resolver), whether each card is presenting a randomized MAC address, and whether the firewall is running in a closed zone. **Updates**: whether system packages and flatpaks update on their own, and what the package timer is allowed to install. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
 | Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
@@ -144,7 +146,7 @@ The installer is safe to re-run. It:
 3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), with nmtui and bluetoothctl as the advanced fallbacks
 4. Installs Oh My Zsh and the LazyVim starter, and makes zsh your login shell (an existing `~/.config/nvim` is left alone)
 5. Installs JetBrainsMono Nerd Font and sets the system font defaults, then **asks** whether to install Claude Code (default no)
-6. Enables NetworkManager, upower, bluetooth and power profiles, points DNS at systemd-resolved with DNS-over-TLS, enables `firewalld` in the closed `public` zone, and sets the default boot target to graphical
+6. Enables NetworkManager, upower, bluetooth and power profiles, points DNS at systemd-resolved with DNS-over-TLS, randomizes MAC addresses, enables `firewalld` in the closed `public` zone, turns on automatic security updates for packages and flatpaks, and sets the default boot target to graphical
 7. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
 8. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
 9. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
@@ -238,8 +240,11 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 ├── system/
 │   ├── fontconfig/         # system font defaults -> /etc/fonts/conf.d/
 │   ├── yum.repos.d/        # Claude Code repository -> /etc/yum.repos.d/
-│   ├── systemd/            # resolved.conf.d/ -> /etc/systemd/resolved.conf.d/ (DNS-over-TLS)
-│   ├── NetworkManager/     # conf.d/ -> /etc/NetworkManager/conf.d/ (use systemd-resolved)
+│   ├── systemd/            # resolved.conf.d/ -> /etc/systemd/resolved.conf.d/ (DNS)
+│   │                       # system/ -> /etc/systemd/system/ (flatpak update timer)
+│   ├── NetworkManager/     # conf.d/ -> /etc/NetworkManager/conf.d/
+│   │                       # (systemd-resolved, MAC randomization)
+│   ├── dnf/automatic.conf  # -> /etc/dnf/ (automatic security updates)
 │   └── sddm/               # login screen, installed by install.sh
 │       ├── 10-hypora.conf  # -> /etc/sddm.conf.d/ (Wayland greeter on Hyprland, hypora theme)
 │       ├── hyprland.lua    # minimal Hyprland session that hosts the greeter
@@ -259,43 +264,134 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
 - **Menu sections:** the `pages` list in `AppMenuPanel.qml`
 - **Security:** menu > Security; anything needing root asks through the polkit prompt
-- **DNS resolver:** `system/systemd/resolved.conf.d/hypora-dns.conf`, then re-run `./install.sh` (see [Encrypted DNS](#encrypted-dns))
+- **DNS resolver:** `system/systemd/resolved.conf.d/hypora-dns.conf`, then re-run `./install.sh` (see [DNS](#dns))
+- **MAC randomization:** `system/NetworkManager/conf.d/hypora-mac.conf`, or per network with `nmcli connection modify` (see [MAC addresses](#mac-addresses))
+- **What updates on its own:** `system/dnf/automatic.conf` (see [Automatic updates](#automatic-updates))
 - **Keybinds:** menu > Help > Keybindings, or the `keys` table at the top of the keybindings section in `config/hypr/hyprland.lua`
 - **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
 - **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
 - **System usage readings:** click the widget in the bar, or edit `~/.config/hypora/sysinfo.json`
 
-## Encrypted DNS
+## DNS
 
-Plain DNS is the one part of browsing that stays readable to whoever runs the network, long after HTTPS covered everything else: the domain of every site you open, visible to the café router, your ISP and anyone in between, and rewritable by all of them. Hypora sends those queries to Quad9 over TLS instead, through systemd-resolved:
+Plain DNS is the one part of browsing that stays readable to whoever runs the network, long after HTTPS covered everything else: the domain of every site you open, visible to the café router, your ISP and anyone in between, and rewritable by all of them.
+
+Two things fix that, and they pull in opposite directions: encrypting the connection to the resolver, and choosing which resolver you trust. Hypora resolves the tension in favour of **a resolver you control**:
 
 ```ini
 # /etc/systemd/resolved.conf.d/hypora-dns.conf
-DNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net
-Domains=~.
-DNSOverTLS=yes
+FallbackDNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net
+DNSOverTLS=opportunistic
 DNSSEC=allow-downgrade
+Cache=yes
 ```
 
-The `#dns.quad9.net` suffix is what makes it encrypted DNS rather than DNS to an encrypted-looking address: it's the name the resolver's certificate has to match. `Domains=~.` routes *all* lookups here instead of only ones no other resolver claims — without it the file would apply to almost nothing, because NetworkManager hands resolved the DHCP server for the link. A second file, `/etc/NetworkManager/conf.d/hypora-dns.conf`, tells NetworkManager to write its DNS into resolved rather than straight into `/etc/resolv.conf`.
+- **DNS follows the network.** Whatever resolver DHCP hands out is the one used. That's what keeps a Pi-hole, a router or an internal DNS server in charge, with its filtering and its local names intact. `FallbackDNS=` only applies when a network hands out no resolver at all.
+- **`DNSOverTLS=opportunistic`** encrypts the connection when the resolver answers on port 853 and uses plain DNS when it doesn't. A Pi-hole on port 53 needs that fallback. The cost is that a network can force plaintext by blocking 853, so this stops someone passively watching, not the network operator itself.
+- A second file, `/etc/NetworkManager/conf.d/hypora-dns.conf`, tells NetworkManager to hand its DNS to resolved rather than writing `/etc/resolv.conf` directly — without it, none of the above is consulted.
 
-Quad9 is the default because it doesn't log client IP addresses and filters known-malicious domains. To use a different resolver, replace the `DNS=` line with its addresses and hostname and run `sudo systemctl restart systemd-resolved`. Cloudflare is `1.1.1.1#one.one.one.one` (plus `2606:4700:4700::1111`); Mullvad is `194.242.2.2#dns.mullvad.net`.
-
-Check it's working:
+Check it:
 
 ```bash
-resolvectl status          # "+DNSOverTLS" and the Quad9 servers under Global
+resolvectl status          # the resolver in use, and DNSOverTLS under Global
 resolvectl query github.com
 ```
 
-**The captive-portal caveat.** `DNSOverTLS=yes` is strict: if the encrypted resolver can't be reached, lookups fail rather than falling back to plaintext. That's the whole point — a network can't downgrade you by blocking port 853 — but it also means hotel, airport and other sign-in Wi-Fi won't work, because the portal needs DNS to show you its login page and blocks DNS until you've used it. When you hit one, relax it for as long as you need:
+### Pinning one resolver
+
+To send every lookup to one resolver regardless of what the network says, set both `DNS=` and `Domains=~.`. The second line is the one that matters: without it resolved keeps using the DHCP servers for most queries and a `DNS=` line does close to nothing.
+
+For a Pi-hole at a static address — worth doing, because it makes routing deterministic instead of depending on what DHCP said:
+
+```ini
+DNS=10.0.0.2
+Domains=~.
+```
+
+For encrypted DNS on untrusted Wi-Fi, strictly, with no plaintext fallback:
+
+```ini
+DNS=9.9.9.9#dns.quad9.net 2620:fe::fe#dns.quad9.net
+Domains=~.
+DNSOverTLS=yes
+```
+
+The `#dns.quad9.net` suffix is what makes that encrypted DNS rather than DNS to an encrypted-looking address: it's the name the resolver's certificate has to match. Cloudflare is `1.1.1.1#one.one.one.one`, Mullvad `194.242.2.2#dns.mullvad.net`. Edit the file (or `system/systemd/resolved.conf.d/hypora-dns.conf` and re-run the installer) and `sudo systemctl restart systemd-resolved`.
+
+Note that `DNSOverTLS=yes` breaks captive portals — hotel and airport sign-in pages need DNS to load and block DNS until you've used them. For a one-off, without editing anything:
 
 ```bash
 sudo resolvectl dnsovertls <interface> opportunistic   # e.g. wlan0; sign in
 sudo resolvectl dnsovertls <interface> yes             # then put it back
 ```
 
-To make opportunistic mode permanent, change `DNSOverTLS=yes` to `opportunistic` in `system/systemd/resolved.conf.d/hypora-dns.conf` and re-run the installer. Understand the trade: opportunistic encrypts when it can and silently sends plaintext when it can't, so it protects you from passive snooping but not from a network that wants to see your queries.
+One more knob: `Cache=yes` makes repeat lookups instant, at the cost of hiding them from the resolver, so a Pi-hole's dashboard will undercount. `Cache=no` shows it everything.
+
+## MAC addresses
+
+A network card's permanent MAC address is a unique serial number it broadcasts, unencrypted, at every network it touches. Left alone it's a tracking identifier with no cookie to clear: the same laptop is recognisable across every café, airport and shop it passes, by anyone listening.
+
+`/etc/NetworkManager/conf.d/hypora-mac.conf` randomizes two separate things:
+
+```ini
+[device-mac-randomization]
+wifi.scan-rand-mac-address=yes
+
+[connection-mac-randomization]
+wifi.cloned-mac-address=stable
+ethernet.cloned-mac-address=stable
+```
+
+**Scanning** is the probe requests a Wi-Fi card broadcasts while looking for networks — constantly, whether or not you ever connect. This is the leak that follows you around a building. NetworkManager already defaults it to on; it's set explicitly so a future change of that default doesn't quietly turn it off.
+
+**Connections** use `stable`, not `random`: one address per connection profile, the same every time you join that network, different for every other network. That defeats cross-network tracking while leaving the things a changing MAC breaks — DHCP reservations, captive portal sessions, router rules keyed to a device — working, because each network still sees one consistent address. `random` is stronger and breaks all of those; `permanent` is the card's real address.
+
+Two consequences worth knowing:
+
+- **The address changes once**, when this first takes effect, so existing DHCP reservations need updating to the new one. To exempt a network instead and keep the real address: `nmcli connection modify "<name>" wifi.cloned-mac-address permanent`.
+- **`stable` is derived from the connection profile and `/etc/machine-id`.** Delete and recreate the profile and the address changes again.
+
+Check it:
+
+```bash
+nmcli -f GENERAL.HWADDR,GENERAL.PERM-HWADDR device show wlan0
+```
+
+When the two differ, it's working. Menu > Security reports the same thing, and flags a card that's on a network using its permanent address.
+
+## Automatic updates
+
+Nothing covers both halves of this system, so there are two timers.
+
+**System packages** go through `dnf5-automatic.timer` (daily at 06:00, up to an hour of jitter, catching up on missed runs), configured in `/etc/dnf/automatic.conf`. Both timers are enabled but not started by the installer, so they begin at the reboot it ends with:
+
+```ini
+[commands]
+apply_updates = yes
+download_updates = yes
+upgrade_type = security
+reboot = never
+```
+
+`upgrade_type = security` limits unattended installs to packages carrying a Fedora security advisory, which has two consequences:
+
+- **It excludes the Hyprland COPR.** Third-party repositories publish no advisory metadata, so nothing from them can ever match — meaning the compositor this desktop depends on never updates while you're using it. COPR updates stay a decision you make by running `sudo dnf upgrade` yourself.
+- **It also excludes real fixes** that Fedora shipped as a bugfix or enhancement update rather than a security one, which happens often enough to matter. This narrows the window on the worst holes; it is not a substitute for updating.
+
+`reboot = never`, because a desktop deciding on its own to restart is worse than a kernel that waits. `dnf5 needs-restarting -r` says when a reboot is due.
+
+**Flatpak apps** — including Firefox, where most of the day-to-day risk actually lives — are invisible to dnf, so `hypora-flatpak-update.timer` runs `flatpak update --system` daily at 07:00. Old runtimes aren't cleaned up automatically; `flatpak uninstall --unused` does that, or Warehouse.
+
+Check both:
+
+```bash
+systemctl list-timers 'dnf*' 'hypora*'
+journalctl -u dnf5-automatic -u hypora-flatpak-update
+sudo systemctl start hypora-flatpak-update.service   # run the flatpak one now
+sudo dnf5 automatic --no-installupdates              # see what the package one would do
+```
+
+To go back to updating by hand, `sudo systemctl disable --now dnf5-automatic.timer hypora-flatpak-update.timer`. To install everything rather than security advisories only, set `upgrade_type = default` in `system/dnf/automatic.conf` and re-run the installer — understanding that this includes the COPR.
 
 ## Status
 
@@ -317,7 +413,9 @@ In progress / planned:
 - NetworkManager keeps Fedora's own Wi-Fi backend. An earlier version switched it to iwd so that `impala` would work; both are gone, and re-running the installer puts a machine that took that switch back on the stock configuration
 - Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
 - `~/.config/quickshell/Theme.qml`, `~/.config/kitty/current-theme.conf`, `~/.config/hypr/theme.lua`, `hyprlock.conf`, the GTK `gtk.css`/`settings.ini` and `qt6ct.conf` are links to files `hypora-theme` generates; edit the palette or templates instead, or your changes are lost on the next theme switch
-- Encrypted DNS is on in strict mode, so captive portals (hotel and airport Wi-Fi) need `resolvectl dnsovertls <interface> opportunistic` before you can sign in — see [Encrypted DNS](#encrypted-dns)
+- DNS-over-TLS is opportunistic, not strict, so a network that blocks port 853 silently gets plaintext queries. Strict mode is a two-line change but breaks captive portals — see [DNS](#dns)
+- MAC randomization changes each card's address once, which breaks existing DHCP reservations until they're updated — see [MAC addresses](#mac-addresses)
+- Automatic updates only install packages Fedora tagged as security advisories, which misses fixes shipped as bugfix updates. Run `sudo dnf upgrade` periodically anyway
 - Fedora versions tested: Fedora 44
 
 ## License

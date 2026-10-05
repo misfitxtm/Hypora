@@ -356,15 +356,15 @@ if [ -e "$IWD_CONF" ]; then
     sudo systemctl disable iwd 2>/dev/null || true
     sudo systemctl enable wpa_supplicant 2>/dev/null || true
 fi
-# Encrypted DNS through systemd-resolved. Plain DNS tells whoever runs the network every
-# domain you visit; these queries go to Quad9 over TLS instead. DNSOverTLS=yes is strict:
-# if the encrypted resolver can't be reached, lookups fail rather than quietly falling back
-# to plaintext. That is the point, but it also means captive portals (hotel and airport
-# Wi-Fi) can't be reached until you relax it — see the readme.
-log "Setting up encrypted DNS"
+# DNS through systemd-resolved, encrypted opportunistically, and MAC addresses that don't
+# follow you between networks. Both files carry the full reasoning; the short version is
+# that DNS follows the network so a resolver you run yourself stays in charge, and Wi-Fi
+# and ethernet present a per-network address instead of the card's permanent serial number.
+log "Setting up DNS and MAC address privacy"
 sudo install -d /etc/systemd/resolved.conf.d /etc/NetworkManager/conf.d
 sudo install -m644 "$REPO/system/systemd/resolved.conf.d/hypora-dns.conf" /etc/systemd/resolved.conf.d/hypora-dns.conf
 sudo install -m644 "$REPO/system/NetworkManager/conf.d/hypora-dns.conf" /etc/NetworkManager/conf.d/hypora-dns.conf
+sudo install -m644 "$REPO/system/NetworkManager/conf.d/hypora-mac.conf" /etc/NetworkManager/conf.d/hypora-mac.conf
 sudo systemctl enable --now systemd-resolved || warn "Could not enable systemd-resolved"
 # resolv.conf has to point at the stub, or applications bypass resolved entirely
 if [ ! -L /etc/resolv.conf ]; then
@@ -386,6 +386,36 @@ if systemctl is-active --quiet firewalld; then
     sudo firewall-cmd --quiet --permanent --add-port=53317/udp || true
     sudo firewall-cmd --quiet --reload || true
 fi
+
+# Automatic security updates, in two halves because nothing covers both.
+# dnf5-automatic takes the system packages, limited to Fedora security advisories so the
+# Hyprland COPR is never upgraded behind your back (third-party repos ship no advisory
+# metadata, so they can't match). A timer of our own takes the flatpaks, which dnf cannot
+# see at all and which include the browser.
+# Both timers are enabled without --now on purpose: they are Persistent, so starting them
+# here would fire a transaction immediately and fight the installer for the dnf lock. They
+# take effect at the reboot the install ends with.
+log "Enabling automatic security updates"
+sudo dnf install -y dnf5-plugin-automatic \
+    || sudo dnf install -y dnf-automatic \
+    || warn "Could not install dnf-automatic"
+if command -v dnf-automatic >/dev/null 2>&1; then
+    # Both dnf5's plugin and dnf4's dnf-automatic read this path and share these keys
+    sudo install -d /etc/dnf
+    sudo install -m644 "$REPO/system/dnf/automatic.conf" /etc/dnf/automatic.conf
+    sudo systemctl enable dnf5-automatic.timer 2>/dev/null \
+        || sudo systemctl enable dnf-automatic.timer 2>/dev/null \
+        || warn "Could not enable the automatic update timer"
+else
+    warn "dnf-automatic is not available; system updates stay manual"
+fi
+sudo install -m644 "$REPO/system/systemd/system/hypora-flatpak-update.service" \
+    /etc/systemd/system/hypora-flatpak-update.service
+sudo install -m644 "$REPO/system/systemd/system/hypora-flatpak-update.timer" \
+    /etc/systemd/system/hypora-flatpak-update.timer
+sudo systemctl daemon-reload
+sudo systemctl enable hypora-flatpak-update.timer \
+    || warn "Could not enable the flatpak update timer"
 
 sudo systemctl set-default graphical.target
 
