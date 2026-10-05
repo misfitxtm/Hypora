@@ -216,7 +216,7 @@ In progress / planned:
 - impala needs iwd: the installer switches NetworkManager's Wi-Fi backend to iwd. If Wi-Fi misbehaves, delete `/etc/NetworkManager/conf.d/hypora-iwd.conf`, run `sudo systemctl enable wpa_supplicant`, and reboot (`nmtui` then works as before)
 - Don't add a `qmldir` to `config/quickshell/`: it hides every component not listed in it (`Bar is not a type`). Quickshell finds `Theme.qml` on its own via `pragma Singleton`
 - `~/.config/quickshell/Theme.qml`, `~/.config/kitty/current-theme.conf`, `~/.config/hypr/theme.lua`, `hyprlock.conf`, the GTK `gtk.css`/`settings.ini` and `qt6ct.conf` are links to files `hypora-theme` generates; edit the palette or templates instead, or your changes are lost on the next theme switch
-- Fedora versions tested: _fill in_
+- Fedora versions tested: Fedora 44
 
 ## License
 
