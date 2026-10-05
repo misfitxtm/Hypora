@@ -185,11 +185,11 @@ Scope {
 
                             StatusRow {
                                 readonly property var dns: win.info ? win.info.dns : null
-                                icon: !dns || !dns.available ? "shield"
-                                    : dns.strict ? "shield-check" : "shield-alert"
+                                icon: !dns || !dns.available ? "shield-alert"
+                                    : dns.strict ? "shield-check"
+                                    : dns.encrypted ? "shield" : "shield-alert"
                                 tone: !dns || !dns.available ? Theme.error
-                                    : dns.strict ? Theme.accent
-                                    : dns.encrypted ? Theme.warn : Theme.error
+                                    : dns.encrypted ? Theme.accent : Theme.error
                                 title: "Encrypted DNS"
                                 value: !dns ? "" : !dns.available ? "Off"
                                      : dns.strict ? "On"
@@ -205,11 +205,42 @@ Scope {
                                         + " Captive portals need this relaxed first: resolvectl dnsovertls <interface> opportunistic."
                                     if (d.mode === "opportunistic") return "Lookups are encrypted when the resolver "
                                         + "answers on port 853, and sent in plaintext when it doesn't — which a network "
-                                        + "can force by blocking that port." + via
+                                        + "can force by blocking that port, and which a resolver on your own network "
+                                        + "(a Pi-hole, a router) normally needs." + via
+                                        + " Set DNSOverTLS=yes in /etc/systemd/resolved.conf.d/hypora-dns.conf to refuse plaintext."
                                     if (d.mode === "unknown") return "systemd-resolved is running but didn't say "
                                         + "whether DNS-over-TLS is on." + via
                                     return "Lookups are sent in plaintext, so the network can read and rewrite "
                                         + "which sites you visit." + via
+                                }
+                            }
+
+                            StatusRow {
+                                readonly property var mac: win.info ? win.info.mac : null
+                                readonly property int leaks: mac && mac.activeLeaks ? mac.activeLeaks.length : 0
+                                readonly property int hidden: mac && mac.devices
+                                    ? mac.devices.filter(d => d.randomized).length : 0
+                                visible: mac === null || mac.available
+                                icon: !mac || !mac.available ? "shield"
+                                    : leaks > 0 ? "shield-alert" : "shield-check"
+                                tone: !mac || !mac.available ? Theme.dim
+                                    : leaks > 0 ? Theme.warn : Theme.accent
+                                title: "MAC address"
+                                value: !mac ? "" : !mac.available ? "Unknown"
+                                     : leaks > 0 ? "Permanent" : hidden > 0 ? "Randomized" : "Idle"
+                                detail: {
+                                    const m = win.info ? win.info.mac : null
+                                    if (!m) return ""
+                                    if (!m.available) return m.note || ""
+                                    const on = m.devices.filter(d => d.randomized).map(d => d.name)
+                                    if (m.activeLeaks.length > 0)
+                                        return `${m.activeLeaks.join(", ")} is on the network using the card's permanent `
+                                            + "address, which identifies this machine to every network it joins."
+                                    if (on.length > 0)
+                                        return `${on.join(", ")} presents a per-network address instead of the card's `
+                                            + "permanent one, so the same machine isn't recognisable across networks."
+                                    return "Nothing is connected, so no address is being broadcast. Each card will take "
+                                         + "a per-network address when it joins one."
                                 }
                             }
 
@@ -234,6 +265,46 @@ Scope {
                                           + "Hypora uses the public zone instead."
                                         : "Incoming connections are refused except where a service was allowed.") + open
                                 }
+                            }
+
+                            // ---------- Updates ----------
+                            Heading { text: "Updates" }
+
+                            StatusRow {
+                                readonly property var up: win.info ? win.info.updates : null
+                                readonly property bool good: up && up.packagesEnabled && up.packagesApply
+                                icon: !up ? "shield" : good ? "shield-check" : "shield-alert"
+                                tone: !up ? Theme.dim : good ? Theme.accent : Theme.warn
+                                title: "System packages"
+                                value: !up ? "" : !up.packagesEnabled ? "Manual"
+                                     : !up.packagesApply ? "Download only"
+                                     : up.upgradeType === "security" ? "Security only" : "All updates"
+                                detail: {
+                                    const u = win.info ? win.info.updates : null
+                                    if (!u) return ""
+                                    if (u.packagesNote) return u.packagesNote
+                                         + " Run sudo dnf upgrade yourself, or see the readme."
+                                    const when = u.packagesLastRun ? ` Last run: ${u.packagesLastRun}.` : ""
+                                    return (u.upgradeType === "security"
+                                        ? "Fedora security advisories install on their own, daily. Updates tagged as "
+                                          + "bugfixes, and anything from a COPR, still wait for you to run dnf."
+                                        : "Every available update installs on its own, daily, including third-party "
+                                          + "repositories.") + when
+                                }
+                            }
+
+                            StatusRow {
+                                readonly property var up: win.info ? win.info.updates : null
+                                icon: !up ? "shield" : up.flatpakEnabled ? "shield-check" : "shield-alert"
+                                tone: !up ? Theme.dim : up.flatpakEnabled ? Theme.accent : Theme.warn
+                                title: "Flatpak apps"
+                                value: !up ? "" : up.flatpakEnabled ? "Daily" : "Manual"
+                                detail: !up ? ""
+                                      : up.flatpakEnabled
+                                        ? "Firefox and the other sandboxed apps update on their own, daily. dnf never "
+                                          + "sees these, which is why they have a timer of their own."
+                                        : "Nothing updates the flatpaks, including the browser. Run flatpak update, or "
+                                          + "enable hypora-flatpak-update.timer."
                             }
 
                             // ---------- SELinux ----------

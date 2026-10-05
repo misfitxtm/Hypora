@@ -200,6 +200,120 @@ def dns():
     return out
 
 
+def mac_addresses():
+    """Is each network card presenting something other than its permanent address?
+
+    Reads the live addresses rather than the policy: NetworkManager's default can be
+    overridden per connection, so the only honest answer comes from comparing what the
+    card is using now against what is burned into it. A device that isn't connected
+    usually shows its permanent address, which is not a leak in itself — nothing is being
+    broadcast — so it's reported as such rather than as a failure.
+    """
+    if not shutil.which("nmcli"):
+        return {"available": False, "note": "nmcli is not installed, so MAC addresses can't be read."}
+
+    rc, out = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device"])
+    if rc != 0:
+        return {"available": False, "note": "NetworkManager did not report any devices."}
+
+    devices = []
+    for line in out.splitlines():
+        parts = line.split(":")
+        if len(parts) < 3 or parts[1] not in ("wifi", "ethernet"):
+            continue
+        name, kind, state = parts[0], parts[1], parts[2]
+        rc, info = run(["nmcli", "-t", "--escape", "no", "-f",
+                        "GENERAL.HWADDR,GENERAL.PERM-HWADDR", "device", "show", name])
+        if rc != 0:
+            continue
+        addrs = {}
+        for row in info.splitlines():
+            key, _, value = row.partition(":")
+            addrs[key.strip()] = value.strip().replace("\\", "")
+        now = addrs.get("GENERAL.HWADDR", "")
+        perm = addrs.get("GENERAL.PERM-HWADDR", "")
+        devices.append({
+            "name": name,
+            "kind": kind,
+            "connected": state == "connected",
+            # Some drivers don't report a permanent address; then there's nothing to compare
+            "known": bool(now and perm and perm != "(unknown)"),
+            "randomized": bool(now and perm and perm != "(unknown)" and now.lower() != perm.lower()),
+        })
+
+    policy = ""
+    try:
+        text = Path("/etc/NetworkManager/conf.d/hypora-mac.conf").read_text()
+        m = re.search(r"^\s*wifi\.cloned-mac-address\s*=\s*(\S+)", text, re.M)
+        if m:
+            policy = m.group(1)
+    except OSError:
+        pass
+
+    return {
+        "available": bool(devices),
+        "note": "" if devices else "No Wi-Fi or ethernet device to report on.",
+        "policy": policy,
+        "devices": devices,
+        # Only count devices that are actually on a network: a parked card tells us nothing
+        "activeLeaks": [d["name"] for d in devices
+                        if d["connected"] and d["known"] and not d["randomized"]],
+    }
+
+
+def _automatic_conf():
+    """dnf5's merged automatic settings: packaged defaults, then the host's overrides."""
+    import configparser
+    parser = configparser.ConfigParser(interpolation=None)
+    for path in ("/usr/share/dnf5/dnf5-plugins/automatic.conf",
+                 "/etc/dnf/dnf5-plugins/automatic.conf",
+                 "/etc/dnf/automatic.conf"):
+        try:
+            parser.read_string(Path(path).read_text(), source=path)
+        except (OSError, configparser.Error):
+            continue
+    if not parser.has_section("commands"):
+        return {}
+    return dict(parser["commands"])
+
+
+def updates():
+    """Are security updates installing on their own — for packages and for flatpaks?
+
+    Two timers, because neither covers the other: dnf never sees flatpaks, and the flatpak
+    timer never sees the system.
+    """
+    out = {"available": True}
+
+    timer = ""
+    for candidate in ("dnf5-automatic.timer", "dnf-automatic.timer"):
+        rc, state = run(["systemctl", "is-enabled", candidate])
+        if state and state != "not-found":
+            timer, out["packagesState"] = candidate, state
+            break
+    conf = _automatic_conf()
+    applies = str(conf.get("apply_updates", "no")).strip().lower() in ("yes", "true", "1")
+    out["packagesTimer"] = timer
+    out["packagesEnabled"] = bool(timer) and out.get("packagesState") == "enabled"
+    out["packagesApply"] = applies
+    out["upgradeType"] = str(conf.get("upgrade_type", "")).strip()
+    if not timer:
+        out["packagesNote"] = "dnf's automatic update timer isn't installed."
+    elif not out["packagesEnabled"]:
+        out["packagesNote"] = "The timer exists but isn't enabled, so nothing updates on its own."
+    elif not applies:
+        out["packagesNote"] = "Updates are downloaded but not installed (apply_updates is off)."
+
+    if timer:
+        _, last = run(["systemctl", "show", "-p", "LastTriggerUSec", "--value", timer])
+        out["packagesLastRun"] = last if last and last != "n/a" else ""
+
+    rc, state = run(["systemctl", "is-enabled", "hypora-flatpak-update.timer"])
+    out["flatpakState"] = state or "not-found"
+    out["flatpakEnabled"] = state == "enabled"
+    return out
+
+
 def firewall():
     """firewalld's state and zone. Fedora's own zone leaves the high ports open."""
     if not shutil.which("firewall-cmd"):
@@ -288,7 +402,9 @@ def status():
         "encryption": encryption(),
         "firmware": firmware_checks(),
         "dns": dns(),
+        "mac": mac_addresses(),
         "firewall": firewall(),
+        "updates": updates(),
         "selinux": selinux(),
         "camera": camera(),
         "location": location(),
