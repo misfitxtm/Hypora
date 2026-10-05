@@ -7,8 +7,10 @@ import QtQuick.Layouts
 // Security and privacy: what the machine's security state actually is, and the switches
 // that genuinely change it. Every switch says what it covers — and what it doesn't.
 //
-// Readings and privileged changes go through bin/hypora-security. Run
-// `hypora-security status` yourself to see exactly what this window is reading.
+// Readings and privileged changes go through /usr/local/bin/hypora-security. That path is
+// root-owned on purpose: pkexec runs it as root, and a helper sitting somewhere the user
+// can write would turn any write access to $HOME into root. Run `hypora-security status`
+// yourself to see exactly what this window is reading.
 // Open from the menu (Security) or:  qs ipc call security open
 Scope {
     id: root
@@ -40,11 +42,14 @@ Scope {
 
             function refresh() { if (!probe.running) { loading = info === null; probe.running = true } }
 
-            // Privileged changes go through pkexec, which raises Hypora's polkit prompt
+            // Privileged changes go through pkexec, which raises Hypora's polkit prompt.
+            // argv, not a shell string: nothing here is word-split or glob-expanded, and
+            // the helper validates each value against a fixed list anyway.
+            readonly property string helper: "/usr/local/bin/hypora-security"
+
             function admin(args, what) {
                 notice = what
-                Quickshell.execDetached(["sh", "-c",
-                    `pkexec ${Quickshell.env("HOME")}/.local/bin/hypora-security ${args}`])
+                Quickshell.execDetached(["pkexec", helper].concat(args))
                 recheck.restart()
             }
 
@@ -55,7 +60,7 @@ Scope {
 
             Process {
                 id: probe
-                command: [Quickshell.env("HOME") + "/.local/bin/hypora-security", "status"]
+                command: [win.helper, "status"]
                 stdout: StdioCollector {
                     onStreamFinished: {
                         try { win.info = JSON.parse(text) } catch (e) { win.info = null }
@@ -194,7 +199,7 @@ Scope {
                                         // Changing the running mode only works if SELinux is already on
                                         enabled: win.info && win.info.selinux.mode !== "disabled"
                                         current: win.info && win.info.selinux.mode === want
-                                        onClicked: win.admin("selinux " + want, `Switching to ${want}…`)
+                                        onClicked: win.admin(["selinux", want], `Switching to ${want}…`)
                                     }
                                 }
                                 Item { Layout.fillWidth: true }
@@ -226,7 +231,7 @@ Scope {
                                         text: modelData
                                         small: true
                                         current: win.info && win.info.selinux.boot === want
-                                        onClicked: win.admin("selinux-boot " + want,
+                                        onClicked: win.admin(["selinux-boot", want],
                                             want === "disabled" ? "Will be off after a reboot…"
                                                                 : "Will relabel on the next boot…")
                                     }
@@ -247,7 +252,7 @@ Scope {
                                       : cam.enabled
                                         ? `Available to apps (${cam.devices.join(", ")}). Turning this off unloads the ${cam.driver || "camera"} driver.`
                                         : "The camera driver is unloaded, so no app can open it."
-                                onToggled: win.admin("camera " + (checked ? "off" : "on"),
+                                onToggled: win.admin(["camera", checked ? "off" : "on"],
                                                      checked ? "Unloading the camera driver…" : "Loading the camera driver…")
                             }
 
@@ -277,7 +282,7 @@ Scope {
                                       : loc.enabled
                                         ? "GeoClue may give your approximate location to apps that ask."
                                         : "GeoClue is masked, so nothing can start it."
-                                onToggled: win.admin("location " + (checked ? "off" : "on"),
+                                onToggled: win.admin(["location", checked ? "off" : "on"],
                                                      checked ? "Masking GeoClue…" : "Unmasking GeoClue…")
                             }
 

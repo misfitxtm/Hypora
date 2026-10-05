@@ -426,12 +426,21 @@ for f in "$REPO"/applications/*.desktop; do
     [ -f "$f" ] && put "$f" "$HOME/.local/share/applications/$(basename "$f")"
 done
 
-# ---------- bin (optional) ----------
+# ---------- bin ----------
+# hypora-security is the one script that gets run as root (via pkexec, from the Security
+# window). It must live somewhere only root can write: a copy under ~/.local/bin would let
+# anything that can write your home directory earn root the next time you touch a toggle.
+log "Installing hypora-security to /usr/local/bin (root-owned)"
+sudo install -m755 -o root -g root "$REPO/bin/hypora-security" /usr/local/bin/hypora-security
+# Drop the user-writable copy an earlier version of this installer left behind
+rm -f "$HOME/.local/bin/hypora-security"
+
 shopt -s nullglob
 bin_files=("$REPO"/bin/*)
 if [ ${#bin_files[@]} -gt 0 ]; then
     log "Installing bin scripts to ~/.local/bin"
     for f in "${bin_files[@]}"; do
+        [ "$(basename "$f")" = hypora-security ] && continue   # root-owned, installed above
         put "$f" "$HOME/.local/bin/$(basename "$f")" 755
     done
 fi

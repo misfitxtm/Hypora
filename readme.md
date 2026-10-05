@@ -9,6 +9,7 @@ Privacy here means specific things, not a slogan:
 - **AI tooling is opt-in.** The installer asks before installing Claude Code, and the default answer is no.
 - **Your security state is visible and adjustable** — Secure Boot, firmware checks, SELinux, camera, microphone, location and file history all in one window, with each switch saying plainly what it does and does not cover.
 - **Flatpak apps come with the tools to audit them:** Flatseal for permissions, Warehouse for what's installed and what data it left behind.
+- **Secrets stay out of argv and privileged paths stay out of `$HOME`.** Wi-Fi passwords are handed to `nmcli` on stdin, never as a command-line argument that any process could read from `/proc`; the one helper that runs as root lives in a root-owned directory.
 
 > **Status: early / work in progress.** The desktop shell, installer and SDDM login screen are ready for testing on a fresh install. See [Status](#status).
 
@@ -32,7 +33,7 @@ Privacy here means specific things, not a slogan:
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
 | Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound, plus any control panels installed), **Security**, **Tools** (Terminal, Claude Code, region screenshot) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
-| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, and fwupd's firmware checks (the HSI level, how many passed, and which didn't). **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `bin/hypora-security`; run `hypora-security status` to see exactly what it reads |
+| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, and fwupd's firmware checks (the HSI level, how many passed, and which didn't). **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
 | Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
@@ -199,6 +200,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
 │   ├── hypora-security     # security status as JSON, and the root actions behind it
+│   │                       # (installed root-owned to /usr/local/bin, not ~/.local/bin)
 │   └── hypora-weather      # place search and forecast via Open-Meteo
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
