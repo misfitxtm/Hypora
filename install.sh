@@ -116,7 +116,6 @@ available quickshell || die "quickshell not found in enabled repos (it ships in 
 # ---------- packages ----------
 REQUIRED=(
     hyprland hyprland-guiutils uwsm quickshell kitty git
-    python3-pillow
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
@@ -146,7 +145,7 @@ REQUIRED=(
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
     hyprlock hypridle hyprsunset brightnessctl
-    pamixer playerctl pavucontrol
+    pamixer playerctl
     google-noto-emoji-fonts
     # Network and security tools
     nmap aircrack-ng wireshark wireshark-cli
@@ -466,10 +465,14 @@ if [ ${#bin_files[@]} -gt 0 ]; then
 fi
 
 # ---------- wallpapers ----------
-# Pixel art drawn from each theme's own palette (bin/hypora-wallgen). Only the files it
-# generates are replaced, so your own images in those folders are left alone.
-log "Drawing wallpapers"
-"$HOME/.local/bin/hypora-wallgen" || warn "Could not draw wallpapers (is python3-pillow installed?)"
+# Each theme's images come from themes/<Name>/backgrounds/ in the repo. Anything you drop
+# into ~/.config/hypora/themes/<Name>/backgrounds/ yourself is left alone.
+log "Installing wallpapers"
+for f in "$REPO"/themes/*/backgrounds/*; do
+    [ -f "$f" ] || continue
+    theme=$(basename "$(dirname "$(dirname "$f")")")
+    put "$f" "$CONF/hypora/themes/$theme/backgrounds/$(basename "$f")"
+done
 
 # ---------- apply the theme ----------
 # Renders the palette into Quickshell, kitty, Hyprland, hyprlock, GTK and Qt

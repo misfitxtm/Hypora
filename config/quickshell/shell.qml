@@ -20,6 +20,7 @@ ShellRoot {
     IconPicker {}
     NetworkSettings {}
     BluetoothSettings {}
+    AudioSettings {}
     KeybindHelp {}
     SecuritySettings {}
 }

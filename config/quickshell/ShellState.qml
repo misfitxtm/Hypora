@@ -19,6 +19,9 @@ Singleton {
     // Keyboard shortcuts window (KeybindHelp.qml)
     property bool keybindHelpOpen: false
 
+    // Sound window (AudioSettings.qml)
+    property bool audioSettingsOpen: false
+
     // Network and Bluetooth windows
     property bool networkSettingsOpen: false
     property bool bluetoothSettingsOpen: false

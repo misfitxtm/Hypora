@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sound
+Comment=Output and input devices, and per-application volume
+Exec=qs ipc call audio open
+Icon=preferences-desktop-sound
+Categories=Settings;Audio;
+Keywords=sound;audio;volume;output;input;microphone;

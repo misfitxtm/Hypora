@@ -32,7 +32,7 @@ Rectangle {
             { icon: "monitor", label: "Display", run: () => ShellState.displaySettingsOpen = true },
             { icon: "wifi", label: "Network", run: () => ShellState.networkSettingsOpen = true },
             { icon: "bluetooth", label: "Bluetooth", run: () => ShellState.bluetoothSettingsOpen = true },
-            { icon: "volume", label: "Sound", run: () => Apps.inTerminal(Theme.mixer) }
+            { icon: "volume", label: "Sound", run: () => ShellState.audioSettingsOpen = true }
         ],
         "Security": [
             { icon: "shield", label: "Security & Privacy", run: () => ShellState.securitySettingsOpen = true }
