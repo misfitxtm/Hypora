@@ -399,14 +399,14 @@ Working:
 - Installer for packages, services, theme and config links
 - Quickshell bar, app menu, control center, display settings, tray, volume, network, battery, notifications and polkit prompt
 - Hyprland Lua config with keybinds, Nord-style borders and Quickshell autostart
-- SDDM login screen (needs testing on real hardware)
+- SDDM login screen (exercised on a bare-metal boot)
 
 In progress / planned:
 - Package lists in `packages/*.txt` and a modular `install/` directory
 
 ## Known limitations
 
-- Developed and tested in a VM so far; real hardware (GPU, laptop battery and backlight) is less tested
+- Most development happened in a VM. It has since been installed and booted on bare metal, where encrypted DNS was confirmed to route as intended, but hardware-specific pieces (GPU, laptop battery and backlight) have had far less exercise than the rest
 - The Hyprland Lua config format is new; if something misbehaves after a Hyprland update, check `hyprctl configerrors` and the Hyprland wiki
 - Hyprland comes from the third-party `sdegler/hyprland` COPR, so builds may lag behind or break after Fedora updates
 - In a VM with no Wi-Fi or Bluetooth adapter, the Network and Bluetooth windows say so plainly rather than looking broken

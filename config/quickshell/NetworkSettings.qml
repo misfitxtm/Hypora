@@ -31,6 +31,22 @@ Scope {
             readonly property var wifiDevice: Networking.devices.values.find(d => d.type === DeviceType.Wifi) ?? null
             readonly property var wired: Networking.devices.values.find(d => d.type !== DeviceType.Wifi && d.connected) ?? null
 
+            // A card whose radio is switched off drops out of Networking.devices entirely, so
+            // "no device" does not mean "no hardware" — reporting it that way sends you looking
+            // for a driver or firmware problem that isn't there. Net asks nmcli, which lists the
+            // card in every state, so it is the honest answer to "is there a Wi-Fi card".
+            readonly property bool wifiPresent: wifiDevice !== null || Net.hasWifi
+            // False only for a hard block: a physical switch, or the BIOS
+            readonly property bool wifiBlocked: !Networking.wifiHardwareEnabled
+
+            // The radio goes through Net (nmcli) rather than the Networking module, because
+            // with the radio off there's no device object for the module to act on, which is
+            // exactly when you need the switch to work. Same path the control centre uses.
+            function setRadio(on) {
+                Net.setWifiEnabled(on)
+                Networking.requestSetWifiEnabled(on)
+            }
+
             // Strongest entry per name, connected first, then by signal
             readonly property var networks: {
                 const best = {}
@@ -109,15 +125,18 @@ Scope {
                             color: Theme.fg
                         }
                         Text {
-                            visible: win.wifiDevice !== null
-                            text: Networking.wifiEnabled ? "Wi-Fi on" : "Wi-Fi off"
+                            visible: win.wifiPresent
+                            text: win.wifiBlocked ? "Wi-Fi blocked"
+                                : Networking.wifiEnabled ? "Wi-Fi on" : "Wi-Fi off"
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                             color: Theme.dim
                         }
                         Toggle {
-                            visible: win.wifiDevice !== null
+                            visible: win.wifiPresent
+                            enabled: !win.wifiBlocked
+                            opacity: enabled ? 1 : 0.4
                             checked: Networking.wifiEnabled
-                            onToggled: Networking.requestSetWifiEnabled(!Networking.wifiEnabled)
+                            onToggled: win.setRadio(!Networking.wifiEnabled)
                         }
                     }
 
@@ -285,8 +304,12 @@ Scope {
                         Text {
                             anchors.centerIn: parent
                             visible: list.count === 0
-                            text: !win.wifiDevice ? "No Wi-Fi adapter found"
-                                 : !Networking.wifiEnabled ? "Wi-Fi is off"
+                            width: list.width - 40
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
+                            text: !win.wifiPresent ? "No Wi-Fi adapter found"
+                                 : win.wifiBlocked ? "Wi-Fi is blocked by a hardware switch or the BIOS"
+                                 : !Networking.wifiEnabled ? "Wi-Fi is off — use the switch above"
                                  : "Looking for networks..."
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                             color: Theme.dim
