@@ -2,7 +2,8 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Weather, left of the clock. Click for conditions and a short forecast.
+// Weather, right of the clock. Click for conditions and a short forecast, in a panel that
+// opens under the icon rather than at a fixed edge of the screen.
 //
 // Hypora never guesses where you are: there is no IP lookup. You pick a place by name,
 // which is the only thing sent, and the coordinates are kept in
@@ -162,6 +163,7 @@ Rectangle {
         id: drop
         screen: root.window.screen
         barHeight: root.window.height
+        anchorItem: root
         onVisibleChanged: if (visible) { if (root.configured) root.refresh(); else query.forceActiveFocus() }
 
         Rectangle {
