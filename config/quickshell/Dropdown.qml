@@ -4,6 +4,9 @@ import QtQuick
 
 // Hosts a dropdown panel under the bar. It covers the whole screen with an invisible
 // layer, so a click anywhere outside the panel (the bar included) or Escape closes it.
+//
+// Horizontal placement, in order of precedence: centred under `anchorItem` if one is set,
+// otherwise alignCenter / alignRight / the left edge.
 PanelWindow {
     id: root
     property bool open: false
@@ -11,6 +14,20 @@ PanelWindow {
     property bool alignCenter: false
     property int barHeight: 30
     default property alias content: holder.data
+
+    // The bar widget this panel belongs to, so the panel opens under the thing you clicked
+    // rather than at a fixed edge. Both this window and the bar span the screen from x = 0,
+    // so the widget's scene position is also its screen position.
+    property Item anchorItem: null
+    property real anchorCentre: 0
+    readonly property int edgeMargin: 8
+
+    // mapToItem is a function call, not a binding, so it's refreshed each time the panel
+    // opens — the bar's own layout shifts as the clock text and the tray change width.
+    function refreshAnchor() {
+        if (anchorItem)
+            anchorCentre = anchorItem.mapToItem(null, anchorItem.width / 2, 0).x
+    }
 
     visible: open
     anchors { top: true; bottom: true; left: true; right: true }
@@ -33,7 +50,16 @@ PanelWindow {
 
     FocusScope {
         id: holder
-        x: root.alignCenter ? (root.width - width) / 2 : root.alignRight ? root.width - width - 8 : 8
+        x: {
+            if (root.anchorItem)
+                // Centred on the widget, but never hanging off either edge of the screen
+                return Math.max(root.edgeMargin,
+                                Math.min(root.width - width - root.edgeMargin,
+                                         root.anchorCentre - width / 2))
+            if (root.alignCenter) return (root.width - width) / 2
+            if (root.alignRight) return root.width - width - root.edgeMargin
+            return root.edgeMargin
+        }
         y: root.barHeight + 6
         width: childrenRect.width
         height: childrenRect.height
@@ -50,5 +76,7 @@ PanelWindow {
         }
     }
 
+    // Before the panel can paint, so it doesn't appear at a stale position and slide across
+    onOpenChanged: if (open) refreshAnchor()
     onVisibleChanged: if (visible) { holder.forceActiveFocus(); appear.restart() }
 }
