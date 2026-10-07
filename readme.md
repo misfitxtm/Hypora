@@ -20,6 +20,18 @@ Privacy here means specific things, not a slogan:
 
 > **Status: early / work in progress.** The desktop shell, installer and SDDM login screen are ready for testing on a fresh install. See [Status](#status).
 
+## Screenshots
+
+**Boot screen and LUKS passphrase prompt**, in each of the three palettes. Composed from the theme's own generated assets at their real sizes — see [Boot screen](#boot-screen).
+
+![Hypora boot screen in Nord, Tokyo Night and Catppuccin Mocha](docs/images/boot-screen.png)
+
+**Included wallpapers**, with each theme's background, surface and accent swatches at the right.
+
+![The wallpapers shipped with each theme](docs/images/wallpapers.png)
+
+> Shots of the running desktop — the bar, the menu, the Security window and the login screen — are still to be added.
+
 ## Goals
 
 - An "install it and it just looks good" experience on Fedora, without giving up control of it
@@ -230,11 +242,13 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-theme        # applies a theme everywhere
 │   ├── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
+│   ├── hypora-console      # puts the theme's colours on the text console (kernel args)
 │   ├── hypora-firmware     # checks LVFS and installs firmware updates, in a terminal
 │   ├── hypora-plymouth     # draws the boot screen's images in the current palette
 │   ├── hypora-security     # security status as JSON, and the root actions behind it
 │   │                       # (installed root-owned to /usr/local/bin, not ~/.local/bin)
 │   └── hypora-weather      # place search and forecast via Open-Meteo
+├── docs/images/            # the screenshots used in this readme
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
 │   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
@@ -271,6 +285,7 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Menu sections:** the `pages` list in `AppMenuPanel.qml`
 - **Security:** menu > Security; anything needing root asks through the polkit prompt
 - **Boot screen:** `themes/templates/plymouth.plymouth.tpl` for layout, `bin/hypora-plymouth` for the images (see [Boot screen](#boot-screen))
+- **Text console colours:** `sudo hypora-console apply` (see [Text console](#text-console))
 - **DNS resolver:** `system/systemd/resolved.conf.d/hypora-dns.conf`, then re-run `./install.sh` (see [DNS](#dns))
 - **MAC randomization:** `system/NetworkManager/conf.d/hypora-mac.conf`, or per network with `nmcli connection modify` (see [MAC addresses](#mac-addresses))
 - **What updates on its own:** `system/dnf/automatic.conf` (see [Automatic updates](#automatic-updates))
@@ -348,6 +363,27 @@ sudo plymouth quit
 ```
 
 If the theme ever fails to render on a machine that needs a passphrase, **Esc** drops Plymouth to the plain text prompt. The installer also refuses to switch to the theme unless `entry.png` and `bullet.png` are actually on disk, so a half-generated theme can't lock you out.
+
+## Text console
+
+The boot screen above is Plymouth drawing on a graphics device. When there isn't one — a VM with no KMS, a GPU whose driver loads after the initramfs asks for your passphrase, or any boot where you press Esc — Plymouth falls back to its text module and you get a plain console instead.
+
+That fallback can't be themed through Plymouth: `text.plymouth` has no colour settings and the module hard-codes them. What *can* be changed is the Linux virtual terminal's own 16-colour palette, which is a kernel parameter:
+
+```bash
+hypora-console print      # the arguments for the current theme
+hypora-console status     # what the running kernel is using
+sudo hypora-console apply # set them; takes effect at the next boot
+sudo hypora-console remove
+```
+
+It has to be a kernel argument rather than a config file because the palette is set when the console initialises — before the initramfs asks for a passphrase. Anything that waits for a service to start is already too late.
+
+Slot 0 is the console background and slot 7 the foreground, so those take the theme's `background` and `foreground` rather than its black and white; the other fourteen are the palette's ANSI colours. `apply` writes through `grubby` **and** `/etc/kernel/cmdline` — updating only the boot entries is how the colours quietly vanish one kernel update later, since new kernels take their command line from that file.
+
+Two things it deliberately doesn't do: it isn't run by `hypora-theme` on every theme switch (editing the kernel command line shouldn't be a side effect of picking a colour scheme — `hypora-theme` just prints a reminder when the console is out of step), and it leaves the cursor alone. Add `vt.global_cursor_default=0` yourself if you'd rather not have the blinking block.
+
+Related knobs this doesn't touch: the console font is `FONT=` in `/etc/vconsole.conf` (`terminus-fonts-console` provides `ter-v22n` and similar), and `loglevel=3` next to `quiet` stops kernel messages scrolling the passphrase prompt away.
 
 ## DNS
 
@@ -495,6 +531,24 @@ In progress / planned:
 - Automatic updates only install packages Fedora tagged as security advisories, which misses fixes shipped as bugfix updates. Run `sudo dnf upgrade` periodically anyway
 - Fedora versions tested: Fedora 44
 
+## Reporting bugs
+
+**Please file bugs and feature requests as [GitHub issues](https://github.com/misfitxtm/Hypora/issues).** That's the only place they're tracked.
+
+What makes a report useful here:
+
+- Which Fedora version, and whether it's bare metal or a VM
+- The output of `hyprctl configerrors` if it's a compositor or keybind problem
+- The output of `qs` run from a terminal if it's a shell problem — QML errors print there and nowhere else
+- `hypora-security status` for anything in the Security window
+- `journalctl -b -u <unit>` for a service that didn't start
+
 ## License
 
 See [LICENSE](LICENSE).
+
+## A note on AI assistance
+
+The code here was written and reviewed by me, with help from [Claude Code](https://claude.com/claude-code). I decide what gets built and why, read every change before it lands, and test it on real hardware.
+
+Either way, read the code rather than trust it. This is a desktop that configures your firewall, your DNS, your firmware updates and a helper that runs as root; the installer is plain shell and the shell layer is plain QML, both commented to explain *why* rather than *what*, specifically so that reading them is practical.

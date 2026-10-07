@@ -35,7 +35,14 @@ Scope {
             property var info: null
             property var deepInfo: null        // result of the one privileged pass, if run
             property bool deepRunning: false
-            readonly property bool deep: deepInfo !== null
+            // Tracked per reading, not as one flag: the pass can come back with one half and
+            // not the other, and a half-filled result used to hide the button while the rows
+            // were still asking for it.
+            readonly property bool haveFirmware: deepInfo !== null && !!deepInfo.firmware
+            readonly property bool haveFirewallDetail: deepInfo !== null
+                                                       && !!deepInfo.firewallDetail
+                                                       && !deepInfo.firewallDetail.note
+            readonly property bool deep: haveFirmware || haveFirewallDetail
             property bool loading: true
             property string notice: ""
 
@@ -168,6 +175,29 @@ Scope {
                             width: parent.width
                             spacing: 4
 
+                            // Unlocks rows in two different sections, so it sits above both
+                            // rather than inside either one.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.bottomMargin: 4
+                                spacing: 10
+                                visible: !win.haveFirmware || !win.haveFirewallDetail
+                                Pill {
+                                    text: win.deepRunning ? "Checking…" : "Run the deeper checks"
+                                    small: true
+                                    enabled: !win.deepRunning
+                                    onClicked: win.runDeep()
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Fills in the firmware security attributes and the firewall's zone. "
+                                        + "Asks for your password once; nothing else on this page does."
+                                    wrapMode: Text.Wrap
+                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                    color: Theme.dim
+                                }
+                            }
+
                             // ---------- Device security ----------
                             Heading { text: "Device Security" }
 
@@ -221,8 +251,8 @@ Scope {
                                 value: win.deepRunning ? "Checking…" : !fw ? "Not checked yet"
                                      : !fw.available ? "Unavailable"
                                      : `${fw.passed} of ${fw.total} passed` + (fw.hsi ? `  ·  ${fw.hsi}` : "")
-                                detail: !fw ? "fwupd reads these through a privileged call, so it is left out of the "
-                                            + "automatic reading — use the button below."
+                                detail: !fw ? "fwupd reads these through a privileged call, so they are left out of "
+                                            + "the automatic reading. Use \"Run the deeper checks\" above."
                                       : !fw.available ? fw.note
                                       : fw.failed.length === 0
                                         ? "Every check fwupd knows about passed."
@@ -231,28 +261,6 @@ Scope {
 
                             // Firmware updates are the one thing here that writes to the
                             // hardware, so they're a button rather than anything automatic.
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 12
-                                Layout.topMargin: 2
-                                spacing: 10
-                                visible: !win.deep
-                                Pill {
-                                    text: win.deepRunning ? "Checking…" : "Run the deeper checks"
-                                    small: true
-                                    enabled: !win.deepRunning
-                                    onClicked: win.runDeep()
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Reads the firmware security attributes and the firewall's zone. "
-                                        + "Asks for your password once; nothing else here does."
-                                    wrapMode: Text.Wrap
-                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
-                                    color: Theme.dim
-                                }
-                            }
-
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 12
@@ -365,11 +373,16 @@ Scope {
                                      : !fwl.running ? "Off"
                                      : fwl.deep ? (fwl.zone || "On") : "On"
                                 detail: {
-                                    const f = win.info ? win.info.firewall : null
+                                    const f = fwl        // the merged object, not win.info.firewall
                                     if (!f) return ""
                                     if (!f.available || !f.running) return f.note || ""
-                                    if (!f.deep) return "Running. Which zone it uses and which ports are open needs "
-                                        + "a query to firewalld — use the button below."
+                                    if (!f.deep) {
+                                        const d = win.deepInfo ? win.deepInfo.firewallDetail : null
+                                        if (d && d.note) return "Running. " + d.note
+                                        return "Running. Which zone it uses and which ports are open is read from "
+                                             + "firewalld's own configuration, which only root can see. "
+                                             + "Use \"Run the deeper checks\" above."
+                                    }
                                     const open = f.openPorts && f.openPorts.length > 0
                                         ? ` Open: ${f.openPorts.join(", ")}.` : ""
                                     return (f.permissive

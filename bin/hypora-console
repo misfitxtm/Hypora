@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""hypora-console: put the active theme's colours on the text console.
+
+    hypora-console print      show the kernel arguments for the current theme (no root)
+    hypora-console status     show what is on the running kernel's command line
+    hypora-console apply      set them (needs root; takes effect at the next boot)
+    hypora-console remove     take them back off
+
+This is the console you get before the desktop exists: the LUKS passphrase prompt when
+Plymouth can't draw, anything after pressing Esc during boot, and a TTY reached with
+Ctrl+Alt+F3. Plymouth's own text theme has no colour settings — the module hard-codes them —
+so the Linux virtual terminal's 16-colour palette is the only thing left to change, and it
+is a kernel parameter rather than a config file.
+
+Doing it on the kernel command line is what makes it apply early enough. The palette is set
+when the console is initialised, before the initramfs asks for a passphrase; anything that
+waits for a service to start is already too late.
+
+Slot 0 is the console background and slot 7 the foreground, which is why those two take the
+theme's background and foreground rather than its black and white.
+"""
+import os
+import pwd
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+KEYS = ("vt.default_red", "vt.default_grn", "vt.default_blu")
+KERNEL_CMDLINE = Path("/etc/kernel/cmdline")
+
+# The 16 virtual-terminal colour slots, in the order the kernel expects them
+SLOTS = [
+    "background",                                                    # 0: console background
+    "red", "green", "yellow", "blue", "magenta", "cyan",             # 1-6
+    "foreground",                                                    # 7: console foreground
+    "bright_black",                                                  # 8
+    "bright_red", "bright_green", "bright_yellow",                   # 9-11
+    "bright_blue", "bright_magenta", "bright_cyan", "bright_white",  # 12-15
+]
+
+
+def home():
+    """The invoking user's home, not root's — this is usually run through sudo."""
+    who = os.environ.get("SUDO_USER")
+    if who:
+        try:
+            return Path(pwd.getpwnam(who).pw_dir)
+        except KeyError:
+            pass
+    return Path.home()
+
+
+def palette():
+    """The current theme's 16 slots as (r, g, b) triples."""
+    conf = home() / ".config/hypora"
+    try:
+        name = (conf / "current/name").read_text().strip()
+    except OSError:
+        sys.exit("No theme is applied yet; run hypora-theme first.")
+    colors = conf / "themes" / name / "colors.toml"
+    try:
+        text = colors.read_text()
+    except OSError as e:
+        sys.exit(f"Cannot read {colors}: {e}")
+
+    out = []
+    for key in SLOTS:
+        m = re.search(rf'^{key}\s*=\s*"#([0-9a-fA-F]{{6}})"', text, re.M)
+        if not m:
+            sys.exit(f"{colors} has no '{key}'; a theme needs all 16 console colours.")
+        h = m.group(1)
+        out.append(tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)))
+    return name, out
+
+
+def args():
+    name, slots = palette()
+    return name, [f"{k}={','.join(str(c[i]) for c in slots)}" for i, k in enumerate(KEYS)]
+
+
+def need_root():
+    if os.geteuid() != 0:
+        sys.exit("This changes the kernel command line, so it needs root:\n"
+                 f"    sudo {Path(sys.argv[0]).name} {sys.argv[1] if len(sys.argv) > 1 else 'apply'}")
+
+
+def run(cmd):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except OSError as e:
+        return 1, str(e)
+
+
+def edit_kernel_cmdline(new_args):
+    """Keep /etc/kernel/cmdline in step with the booted entries.
+
+    grubby rewrites the boot entries that exist now. The next kernel installed gets its
+    command line from this file instead, so skipping it is how the colours quietly disappear
+    one kernel update later.
+    """
+    if not KERNEL_CMDLINE.is_file():
+        return None  # not used on this system; new kernels inherit from /proc/cmdline
+    text = KERNEL_CMDLINE.read_text().strip()
+    kept = [w for w in text.split() if not w.split("=", 1)[0] in KEYS]
+    KERNEL_CMDLINE.write_text(" ".join(kept + list(new_args)).strip() + "\n")
+    return KERNEL_CMDLINE
+
+
+def apply():
+    need_root()
+    name, new = args()
+    rc, out = run(["grubby", "--update-kernel=ALL",
+                   "--remove-args=" + " ".join(KEYS),
+                   "--args=" + " ".join(new)])
+    if rc != 0:
+        sys.exit(f"grubby failed: {out}")
+    touched = edit_kernel_cmdline(new)
+    print(f"Console colours set to {name}.")
+    for a in new:
+        print(f"    {a}")
+    if touched:
+        print(f"Also recorded in {touched}, so the next kernel keeps them.")
+    print("Takes effect at the next boot.")
+
+
+def remove():
+    need_root()
+    rc, out = run(["grubby", "--update-kernel=ALL", "--remove-args=" + " ".join(KEYS)])
+    if rc != 0:
+        sys.exit(f"grubby failed: {out}")
+    edit_kernel_cmdline([])
+    print("Console colours removed. The stock palette returns at the next boot.")
+
+
+def status():
+    try:
+        cmdline = Path("/proc/cmdline").read_text().split()
+    except OSError as e:
+        sys.exit(f"Cannot read /proc/cmdline: {e}")
+    found = [w for w in cmdline if w.split("=", 1)[0] in KEYS]
+    if not found:
+        print("The running kernel is using the stock console palette.")
+        print("Set the theme's colours with:  sudo hypora-console apply")
+        return
+    print("The running kernel has themed console colours:")
+    for f in found:
+        print(f"    {f}")
+    # Only a comparison; if the theme can't be read there is still something useful above
+    try:
+        _, want = args()
+    except SystemExit:
+        return
+    if sorted(found) != sorted(want):
+        print("\nThese don't match the theme that's currently applied.")
+        print("Bring them in step with:  sudo hypora-console apply")
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "print"
+    if cmd in ("-h", "--help"):
+        print(__doc__, file=sys.stderr)
+        return 0
+    if cmd == "print":
+        name, new = args()
+        print(f"# {name}")
+        for a in new:
+            print(a)
+        return 0
+    actions = {"apply": apply, "remove": remove, "status": status}
+    if cmd not in actions:
+        print(__doc__, file=sys.stderr)
+        return 2
+    actions[cmd]()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
