@@ -286,6 +286,31 @@ hl.window_rule({
     center = true,
 })
 
+-- Small utility windows that are better floating than taking half the screen. Add an entry
+-- and it is picked up; the regex Hyprland matches on is built from this list.
+--
+-- These are Wayland app IDs, which for GTK apps is the application ID rather than the
+-- binary name — `hyprctl clients` prints it as "class" for a window you have open.
+local floatingApps = {
+    "org.gnome.Calculator",
+}
+
+local function class_regex(list)
+    local parts = {}
+    for _, c in ipairs(list) do
+        -- A dot is "any character" to the matcher, so pin it to a literal one
+        parts[#parts + 1] = c:gsub("%.", "\\.")
+    end
+    return "^(" .. table.concat(parts, "|") .. ")$"
+end
+
+hl.window_rule({
+    name   = "hypora-float-utilities",
+    match  = { class = class_regex(floatingApps) },
+    float  = true,
+    center = true,
+})
+
 hl.window_rule({
     -- The firmware updater (Menu > Security). Floating and pinned, so it stays in front and
     -- on screen while it writes — watching it finish matters more than tidy tiling, and a
