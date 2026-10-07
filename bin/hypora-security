@@ -680,6 +680,48 @@ def _mapper_name(name):
     return f"cryptswap-{safe}"
 
 
+# GPT type GUIDs. systemd-gpt-auto-generator activates a partition marked "Linux swap"
+# on the root disk with no fstab entry at all, which is how Fedora's installer leaves it:
+# the fstab it writes has no swap line. Re-typing the partition to the generic "Linux
+# filesystem" is what stops that, and it is also simply true afterwards -- the partition
+# holds a dm-crypt container, not swap.
+GPT_LINUX_SWAP = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f"
+GPT_LINUX_GENERIC = "0fc63daf-8483-4772-8e79-3d69d8477de4"
+
+
+def _partition_of(name):
+    """(disk device, partition number) for a partition's kernel name, or None.
+
+    Read from sysfs rather than by chopping the name up: sda2, nvme0n1p2 and mmcblk0p2 all
+    split differently, and sysfs already knows the answer.
+    """
+    base = Path("/sys/class/block") / name
+    try:
+        num = int((base / "partition").read_text().strip())
+        disk = base.resolve().parent.name
+    except (OSError, ValueError):
+        return None
+    if not disk:
+        return None
+    return f"/dev/{disk}", num
+
+
+def _retype_partition(name):
+    """Stop gpt-auto claiming this partition as swap. (ok, detail)"""
+    where = _partition_of(name)
+    if where is None:
+        # Not a partition (an LVM volume, say) -- gpt-auto only looks at partitions
+        return True, "not a partition"
+    disk, num = where
+    rc, out = run(["sfdisk", "--part-type", disk, str(num), GPT_LINUX_GENERIC], timeout=30)
+    # sfdisk can still fail to make the kernel re-read a table whose partitions are in use.
+    # That part does not matter: the type is on disk, and gpt-auto reads it at the next boot.
+    if rc != 0:
+        rc2, _ = run(["lsblk", "-ndo", "PARTTYPE", f"/dev/{name}"])
+        return False, out or "sfdisk failed"
+    return True, f"{disk} partition {num} re-typed to Linux filesystem"
+
+
 def encrypt_swap(arg=""):
     need_root()
     allow_hibernate_loss = arg in ("--break-hibernate", "force")
@@ -771,7 +813,14 @@ def encrypt_swap(arg=""):
                 fstab += "\n"
             # nofail so that a swap that fails to come up cannot hold up the boot
             fstab += f"{target} none swap defaults,nofail 0 0\n"
-        done.append({"device": dev, "mapper": mapper, "ref": ref, "replaced": replaced})
+
+        # Commenting out fstab is not enough on its own: with no fstab entry -- which is how
+        # Fedora ships -- the partition is activated purely because its GPT type says
+        # "Linux swap". Left alone, the next boot would generate a swap unit for the raw
+        # partition, which now holds ciphertext and no swap signature.
+        retyped, detail = _retype_partition(name)
+        done.append({"device": dev, "mapper": mapper, "ref": ref, "replaced": replaced,
+                     "retyped": retyped, "retypeDetail": detail})
 
     if not done:
         sys.exit("No swap was changed.")
@@ -783,6 +832,12 @@ def encrypt_swap(arg=""):
     for d in done:
         print(f"{d['device']} is now encrypted swap at /dev/mapper/{d['mapper']} "
               f"(keyed from /dev/urandom, referenced as {d['ref']})")
+        if not d["retyped"]:
+            print(f"warning: {d['device']} is still marked as a swap partition in the "
+                  f"partition table ({d['retypeDetail']}). systemd will try to activate it "
+                  "directly at the next boot, which will fail now that it is encrypted. Fix "
+                  f"with: sfdisk --part-type <disk> <number> {GPT_LINUX_GENERIC}",
+                  file=sys.stderr)
     if hib["configured"]:
         print("Hibernation will no longer work. Remove resume= from the kernel command line "
               "to stop the boot waiting for it.", file=sys.stderr)
