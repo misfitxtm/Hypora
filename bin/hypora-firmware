@@ -13,8 +13,10 @@
 # appears before any device is touched.
 set -uo pipefail
 
-# The Hyprland window rule floats and pins on this title. It's an escape sequence rather
-# than a terminal flag so it works whichever terminal Theme.terminal names.
+# The Hyprland window rule floats and pins on this title. The Security window also passes
+# --title when it launches this, because Hyprland decides float/pin when the window is
+# mapped and a title set afterwards is too late. This escape sequence is for the other case:
+# running hypora-firmware yourself, in a terminal that was started without the flag.
 printf '\033]0;Firmware Update\007'
 
 bold=$'\033[1m'; dim=$'\033[2m'; red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; off=$'\033[0m'

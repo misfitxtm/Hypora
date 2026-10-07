@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """hypora-security: report and change the system's security settings.
 
-    hypora-security status                      print everything as JSON (no root needed)
-    hypora-security status --no-firmware        the same, minus the one check that can prompt
+    hypora-security status                      print the state as JSON; never authenticates
+    hypora-security deep                        the two readings that need root, as JSON
+    hypora-security status --deep               status plus those, run as whoever calls it
     hypora-security firmware                    only the fwupd firmware checks
     hypora-security selinux <enforcing|permissive>   change the running mode
     hypora-security selinux-boot <enforcing|permissive|disabled>   change it for next boot
@@ -13,10 +14,11 @@ Only `status` and `firmware` run unprivileged; the rest need root and are meant 
 with pkexec, which puts the request through Hypora's polkit prompt. Run `status` yourself to
 see exactly what the Security window is reading.
 
-`firmware` is a separate subcommand because it is the one reading that can raise a polkit
-prompt of its own: `fwupdmgr security` reads BIOS settings, and polkit guards that action
-with auth_admin_keep. Everything else answers without authenticating, so the Security window
-polls `status --no-firmware` and asks for the firmware block only once per window.
+Plain `status` is deliberately prompt-free. Two readings can raise a polkit prompt and are
+behind `--deep`: `fwupdmgr security`, which reads BIOS settings (polkit guards that with
+auth_admin_keep), and firewall-cmd's zone and port queries. The Security window runs plain
+`status` when it opens and `--deep` only when you press "Run the deeper checks", so opening
+the window never asks for a password.
 """
 import json
 import os
@@ -321,24 +323,78 @@ def updates():
     return out
 
 
-def firewall():
-    """firewalld's state and zone. Fedora's own zone leaves the high ports open."""
+def firewall_detail():
+    """The default zone and its open ports, read from firewalld's own configuration.
+
+    Root only — /etc/firewalld is mode 0750. Reading the files rather than asking firewalld
+    over D-Bus means this half of the privileged pass cannot produce a polkit prompt of its
+    own, which is the whole point of running it under a single pkexec.
+
+    These are the files `firewall-cmd --permanent` writes, which is what install.sh uses, so
+    they are the right source for "what is Hypora's firewall set to".
+    """
+    out = {}
+    try:
+        text = Path("/etc/firewalld/firewalld.conf").read_text()
+    except OSError as e:
+        return {"note": f"Could not read firewalld's configuration: {e}"}
+    m = re.search(r"^\s*DefaultZone\s*=\s*(\S+)", text, re.M)
+    zone = m.group(1).strip() if m else ""
+    out["zone"] = zone
+    out["permissive"] = zone == "FedoraWorkstation"
+
+    ports = []
+    # A zone the admin has changed lives in /etc; otherwise it's the stock one in /usr/lib
+    for base in ("/etc/firewalld/zones", "/usr/lib/firewalld/zones"):
+        path = Path(base) / f"{zone}.xml"
+        if not path.is_file():
+            continue
+        try:
+            import xml.etree.ElementTree as ET
+            for el in ET.parse(str(path)).getroot().findall("port"):
+                ports.append(f"{el.get('port')}/{el.get('protocol')}")
+        except Exception:
+            pass
+        break
+    out["openPorts"] = ports
+    return out
+
+
+def deep():
+    """The two readings that need privilege, gathered in one go.
+
+    Meant to be run as `pkexec hypora-security deep`: one polkit prompt for pkexec, and then
+    nothing inside asks again. Deliberately does NOT call status() — that reads the user's
+    own gsettings and recently-used list, which under pkexec would be root's, not yours.
+    """
+    return {"firmware": firmware_checks(), "firewallDetail": firewall_detail()}
+
+
+def firewall(deep=False):
+    """Is firewalld running, and (only when asked) which zone and ports.
+
+    Whether the service is up comes from systemd, which answers any user without
+    authenticating. The zone and the open ports come from firewall-cmd, which goes to
+    firewalld over D-Bus — read-only calls that polkit's shipped policy allows outright, but
+    they are kept behind `deep` anyway so that merely opening the Security window can never
+    produce a password prompt.
+    """
     if not shutil.which("firewall-cmd"):
-        return {"available": False, "note": "firewalld is not installed."}
-    rc, state = run(["firewall-cmd", "--state"])
-    if state != "running":
-        return {"available": True, "running": False,
+        return {"available": False, "deep": deep, "note": "firewalld is not installed."}
+    _, state = run(["systemctl", "is-active", "firewalld.service"])
+    if state != "active":
+        return {"available": True, "deep": deep, "running": False,
                 "note": "firewalld is installed but not running, so nothing is filtering."}
+    out = {"available": True, "deep": deep, "running": True}
+    if not deep:
+        return out
     _, zone = run(["firewall-cmd", "--get-default-zone"])
-    rc, ports = run(["firewall-cmd", f"--zone={zone}", "--list-ports"])
-    return {
-        "available": True,
-        "running": True,
-        "zone": zone,
-        "openPorts": ports.split() if rc == 0 and ports else [],
-        # FedoraWorkstation permits 1025-65535 on TCP and UDP; public is closed by default
-        "permissive": zone == "FedoraWorkstation",
-    }
+    rc, ports = run(["firewall-cmd", f"--zone={zone}", "--list-ports"]) if zone else (1, "")
+    out["zone"] = zone
+    out["openPorts"] = ports.split() if rc == 0 and ports else []
+    # FedoraWorkstation permits 1025-65535 on TCP and UDP; public is closed by default
+    out["permissive"] = zone == "FedoraWorkstation"
+    return out
 
 
 def selinux():
@@ -403,18 +459,23 @@ def file_history():
     return out
 
 
-def status(firmware=True):
+def status(deep=False):
+    """Everything the Security window shows.
+
+    Without --deep this makes no call that can ask polkit for a password, so the window can
+    open — and refresh — without a prompt. --deep adds the two that can: fwupd's host
+    security attributes, and firewalld's zone and ports.
+    """
     out = {
         "secureBoot": secure_boot(),
         "encryption": encryption(),
     }
-    # Kept in place in the output, but skippable: see the note at the top of this file
-    if firmware:
+    if deep:
         out["firmware"] = firmware_checks()
     out.update({
         "dns": dns(),
         "mac": mac_addresses(),
-        "firewall": firewall(),
+        "firewall": firewall(deep),
         "updates": updates(),
         "selinux": selinux(),
         "camera": camera(),
@@ -486,7 +547,10 @@ def set_location(state):
 
 def main(argv):
     if len(argv) < 2 or argv[1] == "status":
-        print(json.dumps(status(firmware="--no-firmware" not in argv), indent=2))
+        print(json.dumps(status(deep="--deep" in argv), indent=2))
+        return 0
+    if argv[1] == "deep":
+        print(json.dumps(deep(), indent=2))
         return 0
     if argv[1] == "firmware":
         print(json.dumps(firmware_checks(), indent=2))

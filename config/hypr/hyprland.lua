@@ -289,8 +289,9 @@ hl.window_rule({
 hl.window_rule({
     -- The firmware updater (Menu > Security). Floating and pinned, so it stays in front and
     -- on screen while it writes — watching it finish matters more than tidy tiling, and a
-    -- workspace switch mid-update shouldn't hide it. hypora-firmware sets this title with an
-    -- escape sequence, so it works whichever terminal Theme.terminal names.
+    -- workspace switch mid-update shouldn't hide it. The title has to exist when the window
+    -- is mapped, which is why the Security window passes --title rather than relying on the
+    -- escape sequence hypora-firmware prints: a rule can't float a window retroactively.
     --
     -- No `size` here on purpose: Hyprland 0.56.2 ignores size/move on floating windows and
     -- opens them maximised instead (hyprwm/Hyprland#16446), so the terminal's own default
