@@ -570,10 +570,27 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY"
         sudo install -m644 -o root -g root "$CONF"/hypora/current/plymouth/*.png \
             /usr/share/plymouth/themes/hypora/
     fi
+    # Plymouth's own tools grep this file unanchored and expand the result unquoted, so a
+    # second line matching one of their keys — a comment mentioning it, say — makes the value
+    # two lines. The test downstream then fails with "too many arguments", which is not fatal
+    # in itself, but the module afterwards gets installed under a mangled path and never
+    # reaches the initramfs, so the boot screen silently falls back to text. Catch it here,
+    # where the message can say what actually went wrong.
+    ply_dupes=0
+    for key in ModuleName ImageDir; do
+        n=$(grep -cE "${key} *= *" /usr/share/plymouth/themes/hypora/hypora.plymouth 2>/dev/null || true)
+        n=${n:-0}
+        if [ "$n" -ne 1 ]; then
+            warn "hypora.plymouth has $n lines matching '$key'; Plymouth needs exactly one"
+            ply_dupes=1
+        fi
+    done
+
     # A theme missing its images leaves you with no visible passphrase prompt, which on an
     # encrypted disk means no way in short of Esc for the text fallback. Only switch to it
     # once the field and its bullets are actually on disk.
-    if [ -f /usr/share/plymouth/themes/hypora/entry.png ] \
+    if [ "$ply_dupes" -eq 0 ] \
+       && [ -f /usr/share/plymouth/themes/hypora/entry.png ] \
        && [ -f /usr/share/plymouth/themes/hypora/bullet.png ]; then
         sudo plymouth-set-default-theme hypora -R \
             || warn "Could not set the boot theme; the previous one is still in place"

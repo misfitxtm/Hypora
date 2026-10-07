@@ -22,15 +22,24 @@ Privacy here means specific things, not a slogan:
 
 ## Screenshots
 
-**Boot screen and LUKS passphrase prompt**, in each of the three palettes. Composed from the theme's own generated assets at their real sizes — see [Boot screen](#boot-screen).
+All shown in **Nord**; every theme drives the same widgets from its own palette.
 
-![Hypora boot screen in Nord, Tokyo Night and Catppuccin Mocha](docs/images/boot-screen.png)
+**The menu** (`AppMenuPanel.qml`), from the Hypora logo at the top left. Sections on the left, a section opened on the right — Settings lists Hypora's own windows, not the system's control panels.
+
+<p>
+<img src="docs/images/menu-sections.png" alt="The Hypora menu, showing its six sections" width="330">
+<img src="docs/images/menu-settings.png" alt="The menu's Settings section" width="330">
+</p>
+
+**The Security window** (`SecuritySettings.qml`), Menu > Security — shown with the deeper checks already run, so the firmware attributes and the firewall's zone are filled in. What each row reads is in the components table below.
+
+<img src="docs/images/security.png" alt="The Hypora Security window" width="620">
 
 **Included wallpapers**, with each theme's background, surface and accent swatches at the right.
 
 ![The wallpapers shipped with each theme](docs/images/wallpapers.png)
 
-> Shots of the running desktop — the bar, the menu, the Security window and the login screen — are still to be added.
+> Shots of the bar and the login screen are still to be added.
 
 ## Goals
 
@@ -338,6 +347,8 @@ The rules are applied from the `hyprland.start` hook rather than at the top leve
 
 ## Boot screen
 
+![Hypora boot screen in Nord, Tokyo Night and Catppuccin Mocha](docs/images/boot-screen.png)
+
 The boot splash and the **LUKS passphrase prompt** are the same screen: `systemd-cryptsetup` asks through `systemd-ask-password`, and Plymouth draws it. So theming the unlock prompt means shipping a Plymouth theme, which Hypora generates from the active palette like everything else.
 
 Two halves:
@@ -346,6 +357,8 @@ Two halves:
 - `bin/hypora-plymouth` draws `entry.png`, `bullet.png`, `lock.png`, `capslock.png` and `watermark.png` in the palette's colours. Everything the module doesn't colour itself is a PNG, so the images have to be generated per theme. It uses signed distance fields and the standard library only — no Pillow, no ImageMagick — because this has to work on a machine mid-install.
 
 The padlock is the same geometry as the shell's `lock` icon, and the watermark is the same hexagon mark as the bar and the login screen. The mark keeps its own gradient in every palette, matching `Logo.qml`.
+
+**Don't put Plymouth's own key names in the comments.** `plymouth-set-default-theme` and `plymouth-populate-initrd` read this file with unanchored greps and expand the result unquoted, so a comment containing `ModuleName=` matches alongside the real line. The value becomes two lines, `[ ! -e $VALUE.so ]` fails with *"too many arguments"*, and — because that failure makes the guarding `if` false rather than true — the module is then installed under a mangled path and **never reaches the initramfs**, leaving a boot screen that silently falls back to text. `ModuleName` and `ImageDir` have no guard at all; `Font`, `TitleFont` and `MonospaceFont` take the first match, so a comment above the real line shadows it. The installer checks for this and refuses to switch themes rather than leaving you with a text prompt.
 
 **It lives in the initramfs.** Plymouth runs before the root filesystem is mounted, so the theme is copied into the initramfs by dracut. That has two consequences:
 
