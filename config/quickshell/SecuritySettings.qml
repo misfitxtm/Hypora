@@ -33,7 +33,9 @@ Scope {
             onClosed: ShellState.securitySettingsOpen = false
 
             property var info: null
-            property var firmwareInfo: null     // fetched once; see firmwareProbe
+            property var deepInfo: null        // result of the one privileged pass, if run
+            property bool deepRunning: false
+            readonly property bool deep: deepInfo !== null
             property bool loading: true
             property string notice: ""
 
@@ -41,7 +43,13 @@ Scope {
             readonly property var micAudio: source ? source.audio : null
             PwObjectTracker { objects: win.source ? [win.source] : [] }
 
-            function refresh() { if (!probe.running) { loading = info === null; probe.running = true } }
+            // Only ever the unprivileged pass: deepInfo is kept separately, so refreshing
+            // after a toggle never blanks the privileged rows and never re-prompts.
+            function refresh() {
+                if (probe.running) return
+                loading = info === null
+                probe.running = true
+            }
 
             // Privileged changes go through pkexec, which raises Hypora's polkit prompt.
             // argv, not a shell string: nothing here is word-split or glob-expanded, and
@@ -59,11 +67,12 @@ Scope {
                 recheck.restart()
             }
 
+            // Plain `status` makes no call that can reach polkit, so this is safe to run
+            // whenever. The two readings that can — fwupd's BIOS settings and firewalld's
+            // zone — live in the separate privileged pass below.
             Process {
                 id: probe
-                // --no-firmware: everything here answers without authenticating, so this can
-                // be polled freely. The firmware block is fetched separately, once.
-                command: [win.helper, "status", "--no-firmware"]
+                command: [win.helper, "status"]
                 stdout: StdioCollector {
                     onStreamFinished: {
                         try { win.info = JSON.parse(text) } catch (e) { win.info = null }
@@ -73,29 +82,43 @@ Scope {
                 onExited: code => { if (code !== 0 && win.info === null) win.loading = false }
             }
 
-            // `fwupdmgr security` reads BIOS settings, which polkit guards with
-            // auth_admin_keep — so this is the one reading that raises a password prompt.
-            // It runs once when the window opens and never on the poll: folding it into the
-            // 15-second refresh meant a fresh prompt every 15 seconds, stacking up.
+            // The two readings that need root, gathered by one privileged process so there is
+            // one password prompt rather than one per service. pkexec runs the root-owned
+            // helper; `deep` deliberately re-reads nothing of yours, so running it as root
+            // can't substitute root's settings for your own.
+            //
+            // This is why the shell itself never runs as root: Quickshell is a single process
+            // loading QML out of ~/.config/quickshell, which you can write — privileged code
+            // must not live on a path its user can edit.
             Process {
-                id: firmwareProbe
-                command: [win.helper, "firmware"]
+                id: deepProbe
+                command: ["pkexec", win.helper, "deep"]
                 stdout: StdioCollector {
                     onStreamFinished: {
-                        try { win.firmwareInfo = JSON.parse(text) } catch (e) {
-                            win.firmwareInfo = { available: false, note: "Could not read the firmware checks." }
-                        }
+                        try { win.deepInfo = JSON.parse(text) } catch (e) { win.deepInfo = null }
                     }
                 }
                 onExited: code => {
-                    if (code !== 0 && win.firmwareInfo === null)
-                        win.firmwareInfo = { available: false, note: "The firmware check did not complete." }
+                    win.deepRunning = false
+                    // 126 is pkexec's "dismissed or not authorised"; saying so beats a blank row
+                    win.notice = win.deepInfo !== null ? ""
+                               : code === 126 ? "Authentication cancelled."
+                               : "The deeper checks did not complete."
                 }
             }
 
+            function runDeep() {
+                if (deepProbe.running) return
+                deepRunning = true
+                notice = "Asking for permission…"
+                deepProbe.running = true
+            }
+
+            // There is no periodic refresh on purpose. Re-reading on a timer is what turned a
+            // single password prompt into one every fifteen seconds; the window now reloads
+            // when it opens and after you change something here.
             Timer { id: recheck; interval: 1500; onTriggered: win.refresh() }
-            Timer { running: true; repeat: true; interval: 15000; onTriggered: win.refresh() }
-            Component.onCompleted: { refresh(); firmwareProbe.running = true }
+            Component.onCompleted: refresh()
 
             Rectangle {
                 id: page
@@ -189,15 +212,17 @@ Scope {
                             }
 
                             StatusRow {
-                                readonly property var fw: win.firmwareInfo
+                                readonly property var fw: win.deepInfo ? win.deepInfo.firmware : null
                                 icon: !fw || !fw.available ? "shield"
                                     : fw.failed.length === 0 ? "shield-check" : "shield-alert"
                                 tone: !fw || !fw.available ? Theme.dim
                                     : fw.failed.length === 0 ? Theme.accent : Theme.warn
                                 title: "Firmware checks"
-                                value: !fw ? "Checking…" : !fw.available ? "Unavailable"
+                                value: win.deepRunning ? "Checking…" : !fw ? "Not checked yet"
+                                     : !fw.available ? "Unavailable"
                                      : `${fw.passed} of ${fw.total} passed` + (fw.hsi ? `  ·  ${fw.hsi}` : "")
-                                detail: !fw ? "fwupd reads these through a privileged call, so this is the one check that asks for your password."
+                                detail: !fw ? "fwupd reads these through a privileged call, so it is left out of the "
+                                            + "automatic reading — use the button below."
                                       : !fw.available ? fw.note
                                       : fw.failed.length === 0
                                         ? "Every check fwupd knows about passed."
@@ -210,6 +235,28 @@ Scope {
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 12
                                 Layout.topMargin: 2
+                                spacing: 10
+                                visible: !win.deep
+                                Pill {
+                                    text: win.deepRunning ? "Checking…" : "Run the deeper checks"
+                                    small: true
+                                    enabled: !win.deepRunning
+                                    onClicked: win.runDeep()
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Reads the firmware security attributes and the firewall's zone. "
+                                        + "Asks for your password once; nothing else here does."
+                                    wrapMode: Text.Wrap
+                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                    color: Theme.dim
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.topMargin: 2
                                 Layout.bottomMargin: 10
                                 spacing: 10
                                 Pill {
@@ -217,10 +264,13 @@ Scope {
                                     small: true
                                     onClicked: {
                                         win.notice = "Firmware updater opened."
-                                        // Apps.run, not Apps.inTerminal: the script waits for a
-                                        // keypress itself on every path, so inTerminal's
-                                        // hold-on-error would ask a second time after a failure.
-                                        Apps.run([Theme.terminal, "-e", "hypora-firmware"])
+                                        // --title, not the escape sequence the script also sets:
+                                        // Hyprland decides float/pin when the window is mapped, and
+                                        // a title set afterwards by the program is too late, so the
+                                        // window ends up tiled. Apps.run rather than inTerminal
+                                        // because the script already waits for a keypress itself.
+                                        Apps.run([Theme.terminal, "--title", "Firmware Update",
+                                                  "-e", "hypora-firmware"])
                                     }
                                 }
                                 Text {
@@ -297,19 +347,29 @@ Scope {
                             }
 
                             StatusRow {
-                                readonly property var fwl: win.info ? win.info.firewall : null
-                                readonly property bool good: fwl && fwl.available && fwl.running && !fwl.permissive
+                                // Running state is free; zone and ports come from the privileged pass
+                                readonly property var fwl: {
+                                    const base = win.info ? win.info.firewall : null
+                                    if (!base) return null
+                                    const d = win.deepInfo ? win.deepInfo.firewallDetail : null
+                                    return (d && !d.note) ? Object.assign({}, base, d, { deep: true }) : base
+                                }
+                                readonly property bool good: fwl && fwl.available && fwl.running
+                                                             && (!fwl.deep || !fwl.permissive)
                                 icon: !fwl ? "shield" : good ? "shield-check" : "shield-alert"
                                 tone: !fwl ? Theme.dim
                                     : good ? Theme.accent
                                     : fwl.running ? Theme.warn : Theme.error
                                 title: "Firewall"
                                 value: !fwl ? "" : !fwl.available ? "Not installed"
-                                     : !fwl.running ? "Off" : fwl.zone || "On"
+                                     : !fwl.running ? "Off"
+                                     : fwl.deep ? (fwl.zone || "On") : "On"
                                 detail: {
                                     const f = win.info ? win.info.firewall : null
                                     if (!f) return ""
                                     if (!f.available || !f.running) return f.note || ""
+                                    if (!f.deep) return "Running. Which zone it uses and which ports are open needs "
+                                        + "a query to firewalld — use the button below."
                                     const open = f.openPorts && f.openPorts.length > 0
                                         ? ` Open: ${f.openPorts.join(", ")}.` : ""
                                     return (f.permissive

@@ -87,4 +87,14 @@ Singleton {
         running: true
         onExited: code => root.useUwsm = code === 0
     }
+
+    // The installer asks before installing Claude Code and defaults to no, so the menu has
+    // to find out rather than assume. Checked once at startup; installing it later shows up
+    // after a shell reload.
+    property bool hasClaude: false
+    Process {
+        command: ["sh", "-c", "command -v claude"]
+        running: true
+        onExited: code => root.hasClaude = code === 0
+    }
 }

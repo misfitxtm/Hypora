@@ -39,7 +39,9 @@ Rectangle {
         ],
         "Tools": [
             { icon: "terminal", label: "Terminal", run: () => Apps.run([Theme.terminal]) },
-            { icon: "claude", label: "Claude Code", run: () => Apps.inTerminal("claude") },
+            // Optional at install time: hidden entirely when it isn't installed
+            { icon: "claude", label: "Claude Code", available: () => Apps.hasClaude,
+              run: () => Apps.inTerminal("claude") },
             { icon: "camera", label: "Screenshot (region)", run: () => screenshot() }
         ],
         "Help": [
@@ -50,10 +52,11 @@ Rectangle {
     // What the list shows: app search results, all apps, a section's items, or the sections
     readonly property var items: search.text !== "" ? Apps.query(search.text, "").map(e => ({ app: e }))
                                : page === "Apps" ? Apps.all.map(e => ({ app: e }))
-                               // Settings lists Hypora's own windows only. The system's control
-                               // panels are GNOME's, built for a shell that isn't running here.
-                               : page === "Settings" ? pages.Settings
-                               : page !== "" ? pages[page]
+                               // A section's own items, minus any that declare an `available`
+                               // test and fail it. Settings lists Hypora's own windows only:
+                               // the system's control panels are GNOME's, built for a shell
+                               // that isn't running here.
+                               : page !== "" ? (pages[page] ?? []).filter(it => !it.available || it.available())
                                : sections
 
     // Called each time the menu opens
