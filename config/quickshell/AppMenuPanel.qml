@@ -50,7 +50,9 @@ Rectangle {
     // What the list shows: app search results, all apps, a section's items, or the sections
     readonly property var items: search.text !== "" ? Apps.query(search.text, "").map(e => ({ app: e }))
                                : page === "Apps" ? Apps.all.map(e => ({ app: e }))
-                               : page === "Settings" ? pages.Settings.concat(Apps.settingsApps.map(e => ({ app: e })))
+                               // Settings lists Hypora's own windows only. The system's control
+                               // panels are GNOME's, built for a shell that isn't running here.
+                               : page === "Settings" ? pages.Settings
                                : page !== "" ? pages[page]
                                : sections
 

@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""hypora-plymouth OUTDIR [--bg HEX] [--surface HEX] [--fg HEX] [--dim HEX] [--accent HEX]
+
+Draws the Plymouth boot theme's images in the current palette's colours: the passphrase
+field, its bullets, the padlock, the caps-lock warning and the Hypora watermark.
+
+Plymouth's `two-step` module takes colours for the background and progress bar from its
+.plymouth file, but everything else is a PNG it loads from ImageDir — so a themed boot
+screen means generating those PNGs. They end up in the initramfs, which is why this writes
+files rather than drawing at boot: there is no Qt, no GTK and no shell that early.
+
+Everything here is drawn with signed distance fields and written with zlib, so it needs
+nothing but the standard library. Adding Pillow or ImageMagick to the install for five
+small images isn't worth it, and this has to keep working on a machine mid-install.
+"""
+import math
+import os
+import struct
+import sys
+import zlib
+
+# The mark's gradient is deliberately not themed: config/quickshell/Logo.qml keeps the same
+# two colours whichever palette is active, and a logo that changes colour isn't much of one.
+LOGO_FROM = (0x7a, 0xa2, 0xf7)
+LOGO_TO = (0xc3, 0x7a, 0xf7)
+
+
+# ---------- output ----------
+
+def write_png(path, width, height, pixels):
+    """pixels: a bytearray of width*height*4 bytes, RGBA, top row first."""
+    rows = b"".join(b"\x00" + bytes(pixels[y * width * 4:(y + 1) * width * 4])
+                    for y in range(height))
+
+    def chunk(tag, data):
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff))
+
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(rows, 9))
+                + chunk(b"IEND", b""))
+
+
+def rgb(text):
+    t = text.lstrip("#")
+    if len(t) != 6:
+        raise ValueError(f"not a #rrggbb colour: {text}")
+    return tuple(int(t[i:i + 2], 16) for i in (0, 2, 4))
+
+
+class Canvas:
+    """A premultiplied-alpha RGBA buffer painted through coverage masks.
+
+    Shapes are signed distance functions: distance in pixels to the shape's edge, negative
+    inside. Coverage comes straight off that distance, which antialiases every edge without
+    supersampling and makes strokes a one-line transform of a fill.
+    """
+
+    def __init__(self, width, height):
+        self.w, self.h = width, height
+        self.buf = bytearray(width * height * 4)
+
+    def paint(self, sdf, colour, alpha=1.0):
+        """Composite `colour` wherever `sdf(x, y)` is inside, antialiasing the boundary."""
+        r, g, b = colour
+        for y in range(self.h):
+            py = y + 0.5
+            row = y * self.w * 4
+            for x in range(self.w):
+                d = sdf(x + 0.5, py)
+                if d > 0.75:
+                    continue
+                cov = min(max(0.5 - d, 0.0), 1.0) * alpha
+                if cov <= 0.0:
+                    continue
+                i = row + x * 4
+                # Straight-alpha "over": the images are composited by Plymouth, not by us
+                a0 = self.buf[i + 3] / 255.0
+                a1 = cov + a0 * (1 - cov)
+                if a1 <= 0:
+                    continue
+                for k, c in enumerate((r, g, b)):
+                    self.buf[i + k] = int(round((c * cov + self.buf[i + k] * a0 * (1 - cov)) / a1))
+                self.buf[i + 3] = int(round(a1 * 255))
+
+    def paint_shaded(self, sdf, shade, alpha=1.0):
+        """As paint(), but `shade(x, y)` gives the colour per pixel — used for the gradient."""
+        for y in range(self.h):
+            py = y + 0.5
+            row = y * self.w * 4
+            for x in range(self.w):
+                d = sdf(x + 0.5, py)
+                if d > 0.75:
+                    continue
+                cov = min(max(0.5 - d, 0.0), 1.0) * alpha
+                if cov <= 0.0:
+                    continue
+                i = row + x * 4
+                a0 = self.buf[i + 3] / 255.0
+                a1 = cov + a0 * (1 - cov)
+                if a1 <= 0:
+                    continue
+                for k, c in enumerate(shade(x + 0.5, py)):
+                    self.buf[i + k] = int(round((c * cov + self.buf[i + k] * a0 * (1 - cov)) / a1))
+                self.buf[i + 3] = int(round(a1 * 255))
+
+    def save(self, path):
+        write_png(path, self.w, self.h, self.buf)
+
+
+# ---------- signed distance fields ----------
+
+def rounded_rect(cx, cy, half_w, half_h, radius):
+    def f(x, y):
+        dx = abs(x - cx) - (half_w - radius)
+        dy = abs(y - cy) - (half_h - radius)
+        ox, oy = max(dx, 0.0), max(dy, 0.0)
+        return math.hypot(ox, oy) + min(max(dx, dy), 0.0) - radius
+    return f
+
+
+def circle(cx, cy, radius):
+    return lambda x, y: math.hypot(x - cx, y - cy) - radius
+
+
+def segments(points, closed=False):
+    """Distance to a polyline — the min over its segments, so joins come out round."""
+    pts = list(points)
+    if closed:
+        pts.append(pts[0])
+
+    def f(x, y):
+        best = float("inf")
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            vx, vy = x1 - x0, y1 - y0
+            wx, wy = x - x0, y - y0
+            L = vx * vx + vy * vy
+            t = 0.0 if L == 0 else min(max((wx * vx + wy * vy) / L, 0.0), 1.0)
+            best = min(best, math.hypot(wx - t * vx, wy - t * vy))
+        return best
+    return f
+
+
+def stroke(sdf, width):
+    """Turn a fill (or a path's distance) into an outline of the given width."""
+    half = width / 2.0
+    return lambda x, y: abs(sdf(x, y)) - half
+
+
+def path_stroke(sdf, width):
+    """As stroke(), for an unsigned path distance that is never negative inside."""
+    half = width / 2.0
+    return lambda x, y: sdf(x, y) - half
+
+
+def arc(cx, cy, radius, start, end, width):
+    """Open arc from `start` to `end` radians, measured clockwise from 3 o'clock."""
+    half = width / 2.0
+
+    def f(x, y):
+        dx, dy = x - cx, y - cy
+        a = math.atan2(dy, dx) % (2 * math.pi)
+        s, e = start % (2 * math.pi), end % (2 * math.pi)
+        inside = (s <= a <= e) if s <= e else (a >= s or a <= e)
+        if inside:
+            return abs(math.hypot(dx, dy) - radius) - half
+        # Past either end: fall back to the distance to that endpoint, giving a round cap
+        ends = [(cx + radius * math.cos(t), cy + radius * math.sin(t)) for t in (start, end)]
+        return min(math.hypot(x - ex, y - ey) for ex, ey in ends) - half
+    return f
+
+
+def intersect(*sdfs):
+    return lambda x, y: max(f(x, y) for f in sdfs)
+
+
+def union(*sdfs):
+    return lambda x, y: min(f(x, y) for f in sdfs)
+
+
+def half_plane_above(y_limit):
+    """Inside where y <= y_limit; used to clip a shape to its upper part."""
+    return lambda x, y: y - y_limit
+
+
+def bezier_points(p0, p1, p2, p3, steps=24):
+    out = []
+    for i in range(steps + 1):
+        t = i / steps
+        u = 1 - t
+        out.append((u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+                    u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]))
+    return out
+
+
+# ---------- the images ----------
+
+def draw_entry(path, surface, accent, width=305, height=34):
+    """The passphrase field. Matches the shell's text inputs: a filled surface, accent
+    border — the field is always the focused thing on this screen."""
+    c = Canvas(width, height)
+    inset = 1.5
+    body = rounded_rect(width / 2, height / 2,
+                        width / 2 - inset, height / 2 - inset, (height - 2 * inset) / 2)
+    c.paint(body, surface)
+    c.paint(stroke(body, 2.0), accent)
+    c.save(path)
+
+
+def draw_bullet(path, accent, size=12):
+    """One dot per typed character."""
+    c = Canvas(size, size)
+    c.paint(circle(size / 2, size / 2, size / 2 - 1.5), accent)
+    c.save(path)
+
+
+def draw_lock(path, accent, size=36):
+    """A padlock, in the same geometry as Icon.qml's "lock" so the boot screen and the
+    shell draw the same glyph: body x 3..21 y 11..22, shackle a radius-5 arc centred at
+    (12, 7), all in a 24-unit box."""
+    c = Canvas(size, size)
+    s = size / 24.0
+    sw = 2.0 * s
+    c.paint(stroke(rounded_rect(12 * s, 16.5 * s, 9 * s, 5.5 * s, 2 * s), sw), accent)
+    # Shackle: the top half of a ring, plus the two stubs down to the body
+    c.paint(arc(12 * s, 7 * s, 5 * s, math.pi, 2 * math.pi, sw), accent)
+    c.paint(path_stroke(segments([(7 * s, 7 * s), (7 * s, 11 * s)]), sw), accent)
+    c.paint(path_stroke(segments([(17 * s, 7 * s), (17 * s, 11 * s)]), sw), accent)
+    c.save(path)
+
+
+def draw_capslock(path, colour, width=26, height=30):
+    """Caps-lock warning: an upward chevron over a bar. Shown only when it's on, and the
+    one thing on this screen that explains a passphrase being rejected."""
+    c = Canvas(width, height)
+    sw = 3.0
+    mid = width / 2
+    c.paint(path_stroke(segments([(mid - 8.5, height * 0.50),
+                                  (mid, height * 0.16),
+                                  (mid + 8.5, height * 0.50)]), sw), colour)
+    c.paint(path_stroke(segments([(mid - 8.5, height * 0.80),
+                                  (mid + 8.5, height * 0.80)]), sw), colour)
+    c.save(path)
+
+
+def draw_watermark(path, size=72):
+    """The Hypora mark: a hexagon around an H whose crossbar is an aurora wave. Same
+    geometry as config/quickshell/Logo.qml and the SDDM theme — keep the three in step."""
+    c = Canvas(size, size)
+    s = size / 24.0          # the mark is authored in a 24x24 box
+    sw = 1.9 * s
+
+    def shade(x, y):
+        # Diagonal gradient, matching Logo.qml's x1,y1 3,2 -> x2,y2 21,22
+        t = min(max(((x / s - 3) + (y / s - 2)) / 38.0, 0.0), 1.0)
+        return tuple(int(round(a + (b - a) * t)) for a, b in zip(LOGO_FROM, LOGO_TO))
+
+    hexagon = [(12, 1.8), (20.8, 6.9), (20.8, 17.1), (12, 22.2), (3.2, 17.1), (3.2, 6.9)]
+    c.paint_shaded(path_stroke(segments([(x * s, y * s) for x, y in hexagon], closed=True), sw), shade)
+    for x in (8.4, 15.6):
+        c.paint_shaded(path_stroke(segments([(x * s, 7.6 * s), (x * s, 16.4 * s)]), sw), shade)
+    wave = (bezier_points((8.4, 12), (9.6, 10.3), (10.8, 10.3), (12, 12))
+            + bezier_points((12, 12), (13.2, 13.7), (14.4, 13.7), (15.6, 12)))
+    c.paint_shaded(path_stroke(segments([(x * s, y * s) for x, y in wave]), sw), shade)
+    c.save(path)
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__, file=sys.stderr)
+        return 2
+    outdir = argv[1]
+    opts = {"bg": "#2e3440", "surface": "#3b4252", "fg": "#eceff4",
+            "dim": "#7b88a1", "accent": "#88c0d0"}
+    rest = argv[2:]
+    while rest:
+        key = rest.pop(0)
+        if not key.startswith("--") or key[2:] not in opts:
+            print(f"unknown option {key}", file=sys.stderr)
+            return 2
+        if not rest:
+            print(f"{key} needs a value", file=sys.stderr)
+            return 2
+        opts[key[2:]] = rest.pop(0)
+    try:
+        colours = {k: rgb(v) for k, v in opts.items()}
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+
+    os.makedirs(outdir, exist_ok=True)
+    draw_entry(os.path.join(outdir, "entry.png"), colours["surface"], colours["accent"])
+    draw_bullet(os.path.join(outdir, "bullet.png"), colours["accent"])
+    draw_lock(os.path.join(outdir, "lock.png"), colours["accent"])
+    draw_capslock(os.path.join(outdir, "capslock.png"), colours["fg"])
+    draw_watermark(os.path.join(outdir, "watermark.png"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

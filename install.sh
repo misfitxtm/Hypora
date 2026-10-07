@@ -147,6 +147,13 @@ OPTIONAL=(
     hyprsunset brightnessctl
     pamixer playerctl
     google-noto-emoji-fonts
+    # Qt can only decode jpeg, png, gif and svg out of the box. Hypora's own wallpapers are
+    # all jpeg, but the wallpaper and theme pickers accept webp too, and without this a webp
+    # you drop in yourself is listed and then renders as nothing.
+    qt6-qtimageformats
+    # Boot screen, including the LUKS passphrase prompt. Fedora ships these already; they
+    # are listed so a minimal install still gets a themed boot rather than a bare console.
+    plymouth plymouth-plugin-two-step plymouth-scripts
     # Network and security tools
     nmap aircrack-ng wireshark wireshark-cli
 )
@@ -546,6 +553,35 @@ log "Applying theme: $THEME"
 RENDERED_SDDM="$CONF/hypora/current/sddm-theme.conf"
 if [ -f "$RENDERED_SDDM" ] && [ -d "$SDDM_THEME" ]; then
     sudo install -m644 -o root -g root "$RENDERED_SDDM" "$SDDM_THEME/theme.conf"
+fi
+
+# Boot screen, including the LUKS passphrase prompt. Plymouth renders that prompt, so
+# theming it means shipping a Plymouth theme; the two-step module is the one Fedora's own
+# themes use. The theme has to be inside the initramfs to exist that early, which is what
+# -R rebuilds — the slowest single step in this script, and the reason hypora-theme doesn't
+# do it on every theme switch.
+RENDERED_PLY="$CONF/hypora/current/plymouth.plymouth"
+if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY" ]; then
+    log "Installing the boot screen theme"
+    sudo install -d -m755 /usr/share/plymouth/themes/hypora
+    sudo install -m644 -o root -g root "$RENDERED_PLY" \
+        /usr/share/plymouth/themes/hypora/hypora.plymouth
+    if [ -d "$CONF/hypora/current/plymouth" ]; then
+        sudo install -m644 -o root -g root "$CONF"/hypora/current/plymouth/*.png \
+            /usr/share/plymouth/themes/hypora/
+    fi
+    # A theme missing its images leaves you with no visible passphrase prompt, which on an
+    # encrypted disk means no way in short of Esc for the text fallback. Only switch to it
+    # once the field and its bullets are actually on disk.
+    if [ -f /usr/share/plymouth/themes/hypora/entry.png ] \
+       && [ -f /usr/share/plymouth/themes/hypora/bullet.png ]; then
+        sudo plymouth-set-default-theme hypora -R \
+            || warn "Could not set the boot theme; the previous one is still in place"
+    else
+        warn "Boot screen images are missing; leaving the existing boot theme alone"
+    fi
+else
+    warn "Plymouth is not installed; the boot screen stays as it is"
 fi
 
 # ---------- bookkeeping ----------

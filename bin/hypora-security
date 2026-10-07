@@ -2,14 +2,21 @@
 """hypora-security: report and change the system's security settings.
 
     hypora-security status                      print everything as JSON (no root needed)
+    hypora-security status --no-firmware        the same, minus the one check that can prompt
+    hypora-security firmware                    only the fwupd firmware checks
     hypora-security selinux <enforcing|permissive>   change the running mode
     hypora-security selinux-boot <enforcing|permissive|disabled>   change it for next boot
     hypora-security camera <on|off>             load or unload the webcam driver
     hypora-security location <on|off>           unmask or mask geoclue
 
-Only `status` runs unprivileged; the rest need root and are meant to be run with pkexec,
-which puts the request through Hypora's polkit prompt. Run `status` yourself to see exactly
-what the Security window is reading.
+Only `status` and `firmware` run unprivileged; the rest need root and are meant to be run
+with pkexec, which puts the request through Hypora's polkit prompt. Run `status` yourself to
+see exactly what the Security window is reading.
+
+`firmware` is a separate subcommand because it is the one reading that can raise a polkit
+prompt of its own: `fwupdmgr security` reads BIOS settings, and polkit guards that action
+with auth_admin_keep. Everything else answers without authenticating, so the Security window
+polls `status --no-firmware` and asks for the firmware block only once per window.
 """
 import json
 import os
@@ -396,11 +403,15 @@ def file_history():
     return out
 
 
-def status():
-    return {
+def status(firmware=True):
+    out = {
         "secureBoot": secure_boot(),
         "encryption": encryption(),
-        "firmware": firmware_checks(),
+    }
+    # Kept in place in the output, but skippable: see the note at the top of this file
+    if firmware:
+        out["firmware"] = firmware_checks()
+    out.update({
         "dns": dns(),
         "mac": mac_addresses(),
         "firewall": firewall(),
@@ -409,7 +420,8 @@ def status():
         "camera": camera(),
         "location": location(),
         "fileHistory": file_history(),
-    }
+    })
+    return out
 
 
 # ---------- actions (root) ----------
@@ -474,7 +486,10 @@ def set_location(state):
 
 def main(argv):
     if len(argv) < 2 or argv[1] == "status":
-        print(json.dumps(status(), indent=2))
+        print(json.dumps(status(firmware="--no-firmware" not in argv), indent=2))
+        return 0
+    if argv[1] == "firmware":
+        print(json.dumps(firmware_checks(), indent=2))
         return 0
     cmd, arg = argv[1], (argv[2] if len(argv) > 2 else "")
     actions = {

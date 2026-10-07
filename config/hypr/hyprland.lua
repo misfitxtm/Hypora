@@ -44,6 +44,10 @@ hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")   -- Qt apps follow the theme (also set in ~/.config/uwsm/env)
 
 ------------------ AUTOSTART -----------------
+-- Declared here, defined in the WORKSPACES section. A Lua closure only sees locals that
+-- already exist where it's written, so the hook below would otherwise capture a nil global.
+local workspace_rules
+
 -- Quickshell replaces waybar + mako + a standalone polkit agent.
 -- Don't start any of those alongside it.
 hl.on("hyprland.start", function()
@@ -54,6 +58,8 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
     -- Idle locking (~/.config/hypr/hypridle.conf). Without this nothing ever locks.
     hl.exec_cmd(app("hypridle"))
+    -- The monitors exist by now, which they don't when the config is first read
+    workspace_rules()
 end)
 
 ------------------ LOOK AND FEEL -------------
@@ -193,16 +199,65 @@ hl.bind(keys.focusRight, hl.dsp.focus({ direction = "right" }))
 hl.bind(keys.focusUp,    hl.dsp.focus({ direction = "up" }))
 hl.bind(keys.focusDown,  hl.dsp.focus({ direction = "down" }))
 
--- Workspaces: SUPER + [0-9] to switch, SUPER + SHIFT + [0-9] to move window
-for i = 1, 10 do
-    local key = i % 10      -- 10 maps to key 0
-    hl.bind(mainMod .. " + " .. key,           hl.dsp.focus({ workspace = i }))
-    hl.bind(mainMod .. " + SHIFT + " .. key,   hl.dsp.window.move({ workspace = i }))
+-- Workspaces: SUPER + [0-9] to switch, SUPER + SHIFT + [0-9] to move window.
+--
+-- Every monitor has its own set, so workspace 1 exists on each screen at once and sending a
+-- window to the other monitor leaves it on the workspace you sent it to.
+--
+-- Hyprland numbers workspaces globally — one workspace lives on one monitor — so a
+-- per-monitor set is built by giving each monitor a block of WS_STRIDE numbers: monitor 0
+-- owns 1-10, monitor 1 owns 11-20, and so on. The keys always address the block belonging
+-- to the monitor you're on, which is why these binds are functions: the target depends on
+-- where the focus is when you press them, not on what was true when the config loaded.
+--
+-- The first WS_STATIC of each block are persistent, so they exist whether or not anything
+-- is on them and the bar can always show them. The rest are made when you first switch to
+-- one and go away again when they're empty.
+local WS_STATIC = 5      -- always-there workspaces per monitor
+local WS_STRIDE = 10     -- numbers reserved per monitor; keys 1-9,0 address them
+
+function workspace_rules()      -- assigns the local forward-declared near AUTOSTART
+    for _, m in ipairs(hl.get_monitors()) do
+        for i = 1, WS_STRIDE do
+            hl.workspace_rule({
+                workspace  = tostring(m.id * WS_STRIDE + i),
+                monitor    = m.name,
+                -- Pin every number in the block, so even the on-demand ones stay put
+                persistent = i <= WS_STATIC or nil,
+                default    = (i == 1) or nil,
+            })
+        end
+    end
 end
 
--- Scroll through workspaces
-hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
-hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
+-- hl.get_monitors() is empty this early — the config is read before the outputs come up —
+-- so the real call is the one in the hyprland.start hook below. This one covers a reload,
+-- when the monitors are already there.
+workspace_rules()
+-- And again when a screen is plugged in. pcall because an event name this config gets
+-- wrong would otherwise take down everything defined after it.
+pcall(hl.on, "monitor.added", workspace_rules)
+
+-- Which block the keys address: whichever monitor has the focus right now
+local function ws(n)
+    local m = hl.get_active_monitor()
+    return tostring((m and m.id or 0) * WS_STRIDE + n)
+end
+
+for i = 1, 10 do
+    local key = i % 10      -- 10 maps to key 0
+    hl.bind(mainMod .. " + " .. key, function()
+        hl.dispatch(hl.dsp.focus({ workspace = ws(i) }))
+    end)
+    hl.bind(mainMod .. " + SHIFT + " .. key, function()
+        hl.dispatch(hl.dsp.window.move({ workspace = ws(i) }))
+    end)
+end
+
+-- Scroll through this monitor's workspaces. "m" is Hyprland's own selector for existing
+-- workspaces on the current monitor, so it can't wander onto the other screen's block.
+hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "m+1" }))
+hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "m-1" }))
 
 -- Move / resize windows with the mouse
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
@@ -228,6 +283,22 @@ hl.window_rule({
     name  = "hypora-settings-windows",
     match = { title = "^(Display Settings|Network|Bluetooth)$" },
     float  = true,
+    center = true,
+})
+
+hl.window_rule({
+    -- The firmware updater (Menu > Security). Floating and pinned, so it stays in front and
+    -- on screen while it writes — watching it finish matters more than tidy tiling, and a
+    -- workspace switch mid-update shouldn't hide it. hypora-firmware sets this title with an
+    -- escape sequence, so it works whichever terminal Theme.terminal names.
+    --
+    -- No `size` here on purpose: Hyprland 0.56.2 ignores size/move on floating windows and
+    -- opens them maximised instead (hyprwm/Hyprland#16446), so the terminal's own default
+    -- geometry is the more predictable choice.
+    name   = "hypora-firmware-updater",
+    match  = { title = "^Firmware Update$" },
+    float  = true,
+    pin    = true,
     center = true,
 })
 
