@@ -5,10 +5,18 @@
 # /usr/share/plymouth/themes/hypora/hypora.plymouth and copied into the initramfs by dracut,
 # so changes here only reach the screen after `sudo dracut -f`.
 #
-# ModuleName=two-step is the module Fedora's own themes use. It takes these colours from
-# this file; everything else on screen is a PNG from ImageDir, which hypora-plymouth draws
-# in the same palette. One thing it does NOT expose is the colour of the prompt text, which
-# it always draws white — fine for a dark palette, wrong for a light one.
+# The two-step module below is the one Fedora's own themes are built on. It takes these
+# colours from this file; everything else on screen is a PNG from the image directory, which
+# hypora-plymouth draws in the same palette. One thing it does NOT expose is the colour of
+# the prompt text, which it always draws white — fine for a dark palette, wrong for a light.
+#
+# Careful with comments here. plymouth-set-default-theme and plymouth-populate-initrd pull
+# values out of this file with unanchored greps and expand them unquoted, so a comment that
+# happens to contain one of their key names followed by '=' matches too. The value then
+# becomes two lines, and `[ ! -e $VALUE.so ]` dies with "too many arguments" — after which
+# the module is silently left out of the initramfs and the boot screen falls back to text.
+# Keys that bite: ModuleName and ImageDir (no guard at all), Font, TitleFont and
+# MonospaceFont (first match wins, so a comment above the real line would shadow it).
 #
 # plymouth-populate-initrd runs fc-match on Font and TitleFont and copies the matching font
 # file into the initramfs, so naming a font here is all that's needed to use it at boot.
