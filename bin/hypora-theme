@@ -155,4 +155,10 @@ if [ -d "$PLY_DIR" ] && [ -f "$OUT/plymouth.plymouth" ]; then
     fi
 fi
 
+# Console colours, if they were ever applied. Changing them means editing the kernel command
+# line and rebooting, so this only says so rather than doing it.
+if grep -q "vt.default_red=" /proc/cmdline 2>/dev/null; then
+    echo "Text console is still on the previous theme's colours; run: sudo hypora-console apply"
+fi
+
 echo "Theme set to $NAME. Already-open GTK and Qt apps pick it up when restarted."
