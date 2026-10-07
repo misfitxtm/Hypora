@@ -14,6 +14,7 @@ ShellRoot {
     Bar {}
     PolkitDialog {}
     Notifications {}
+    BatteryWatch {}
     Launcher {}
     DisplaySettings {}
     ThemePicker {}

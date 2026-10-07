@@ -175,26 +175,59 @@ Scope {
                             width: parent.width
                             spacing: 4
 
-                            // Unlocks rows in two different sections, so it sits above both
-                            // rather than inside either one.
-                            RowLayout {
+                            // A banner, not a pill in a row: it unlocks rows in two separate
+                            // sections, and as a small button it read as a footnote to whichever
+                            // section it happened to sit next to.
+                            Rectangle {
+                                id: deepBanner
                                 Layout.fillWidth: true
-                                Layout.bottomMargin: 4
-                                spacing: 10
+                                Layout.bottomMargin: 12
+                                implicitHeight: deepRow.implicitHeight + 28
+                                radius: 12
                                 visible: !win.haveFirmware || !win.haveFirewallDetail
-                                Pill {
-                                    text: win.deepRunning ? "Checking…" : "Run the deeper checks"
-                                    small: true
-                                    enabled: !win.deepRunning
-                                    onClicked: win.runDeep()
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Fills in the firmware security attributes and the firewall's zone. "
-                                        + "Asks for your password once; nothing else on this page does."
-                                    wrapMode: Text.Wrap
-                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
-                                    color: Theme.dim
+                                color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.10)
+                                border.width: 1
+                                border.color: Theme.accent
+
+                                RowLayout {
+                                    id: deepRow
+                                    anchors { fill: parent; leftMargin: 16; rightMargin: 16;
+                                              topMargin: 14; bottomMargin: 14 }
+                                    spacing: 14
+
+                                    Icon {
+                                        Layout.alignment: Qt.AlignTop
+                                        name: "shield-alert"
+                                        size: 20
+                                        color: Theme.accent
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 3
+                                        Text {
+                                            text: "Two checks still to run"
+                                            font.family: Theme.font
+                                            font.pixelSize: Theme.fontSize
+                                            font.bold: true
+                                            color: Theme.fg
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "The firmware security attributes and the firewall's zone need root. "
+                                                + "One password prompt covers both; nothing else on this page asks."
+                                            wrapMode: Text.Wrap
+                                            font.family: Theme.font
+                                            font.pixelSize: Theme.fontSize - 3
+                                            color: Theme.dim
+                                        }
+                                    }
+                                    Pill {
+                                        Layout.alignment: Qt.AlignVCenter
+                                        text: win.deepRunning ? "Checking…" : "Run checks"
+                                        current: !win.deepRunning      // filled, so it reads as the action
+                                        enabled: !win.deepRunning
+                                        onClicked: win.runDeep()
+                                    }
                                 }
                             }
 

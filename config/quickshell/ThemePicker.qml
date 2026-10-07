@@ -124,12 +124,19 @@ Scope {
                 }
             }
 
-            Column {
-                anchors.centerIn: parent
-                spacing: 0
+            // Laid out against the window, not stacked in a Column. A Column takes the
+            // width of its widest child, which here is the full-width carousel, so the
+            // heading and dots ended up at its left edge and the strip itself was pushed
+            // off centre. Anchoring each piece independently keeps the selected card on
+            // the middle of the monitor whatever the screen width is.
+            Item {
+                id: stage
+                anchors.fill: parent
 
                 // ---------- heading ----------
                 Item {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: carousel.top
                     width: win.cardWidth
                     height: 56
                     Text {
@@ -171,9 +178,11 @@ Scope {
                 // ---------- the carousel ----------
                 ListView {
                     id: carousel
-                    width: win.width
+                    // Full width so the centred card lands on the centre of the screen, and
+                    // so the neighbours have somewhere to show
+                    anchors { left: parent.left; right: parent.right }
+                    y: (parent.height - height) / 2
                     height: win.cardHeight + 24
-                    x: -(win.width - win.cardWidth) / 2      // bleed past the column so neighbours show
 
                     orientation: ListView.Horizontal
                     model: win.shown
@@ -388,6 +397,8 @@ Scope {
 
                 // ---------- position dots ----------
                 Item {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: carousel.bottom
                     width: win.cardWidth
                     height: 40
                     Row {

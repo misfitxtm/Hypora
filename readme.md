@@ -68,18 +68,19 @@ All shown in **Nord**; every theme drives the same widgets from its own palette.
 | Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, whether this system is on an encrypted volume (and whether any swap is unencrypted), and fwupd's firmware checks, with **Check for firmware updates** to install any your vendor has published — see [Firmware updates](#firmware-updates). **Opening this window never asks for a password.** The two readings that need root — fwupd's host security attributes and firewalld's zone — sit behind **Run the deeper checks**, which is a single `pkexec hypora-security deep`: one prompt, not one per service. There is no periodic refresh, because re-reading on a timer turned one prompt into one every fifteen seconds.
 
 The shell itself is never run as root, and shouldn't be. Quickshell is a single process — the Security window is not separable from the bar, launcher and notification daemon — and it loads its QML from `~/.config/quickshell/`, which you can write. Privileged code must not sit on a path its own user can edit, which is why `hypora-security` is root-owned in `/usr/local/bin` and reached through pkexec. `hypora-security deep` deliberately re-reads none of your per-user settings, so running it as root can't substitute root's configuration for yours; it reads firewalld's zone from `/etc/firewalld` directly rather than over D-Bus, so that half can't raise a second prompt. **Network**: whether DNS is encrypted (and in which mode, and to which resolver), whether each card is presenting a randomized MAC address, and whether the firewall is running in a closed zone. **Updates**: whether system packages and flatpaks update on their own, and what the package timer is allowed to install. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
-| Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
+| Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. A chord already in use is **accepted**, not refused: a standing banner names the overlapping actions and the affected rows turn red, because refusing it made swapping two shortcuts impossible. Hyprland keeps only the last binding for a chord, so the others stop firing until you resolve it. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Style > Theme): a full-screen carousel, one theme at a time with its neighbours peeking in. Each card is a live preview — the theme's own wallpaper under a miniature desktop drawn in that theme's colours, plus its palette. Left/Right or scroll to slide, Enter or click to apply, Esc to close; start typing to filter |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Weather (`Weather.qml`) | To the right of the clock: current conditions and a three-day forecast. Pick your city by name — there is no IP geolocation, and nothing is requested until you choose a place. Data from [Open-Meteo](https://open-meteo.com), which needs no account or API key. Your choice lives in `~/.config/hypora/weather.json`; `bin/hypora-weather` does the lookups and can be run on its own |
 | Sound (`AudioSettings.qml`) | Menu > Settings > Sound, or the mixer button in the control centre: output and input devices with their own volume and mute, a picker when there's more than one, and a row per application that's playing. Talks to PipeWire through Quickshell — no pavucontrol. `wiremix` is behind "Advanced" for routing and profiles |
+| Battery (`Battery.qml`, `BatteryWatch.qml`) | Charge in the bar on laptops, red when low. `BatteryWatch` notifies at 20% and 10%, and suspends at 5% — a laptop that runs flat mid-write is how filesystems get damaged. Each threshold fires once per discharge; plugging in resets them |
 | Clipboard (`Clipboard.qml`) | Clipboard history to the left of the clock, also on **SUPER + SHIFT + V**: recent copies, click one to put it back on the clipboard, or Clear to wipe it. Recorded by `wl-paste --watch cliphist store` (started from `hyprland.lua`) — Quickshell can't watch the clipboard itself, as it doesn't speak `wlr-data-control` |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock in the middle of the bar: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
 | System usage (`SystemUsage.qml`, `SysInfo.qml`) | Live RAM %, CPU %, CPU temperature and, on machines that report them, GPU usage and GPU temperature — left of the control center. Readings warm to the accent colour and then to red as they climb. Click it to pick which ones appear; the choice is kept in `~/.config/hypora/sysinfo.json`. Numbers come from `bin/hypora-sysinfo` (/proc and /sys, or `nvidia-smi` for NVIDIA) |
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | Quick settings: click the status icons at the top right. Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness sliders, power mode (Saver / Balanced / Performance), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles. The arrows and the mixer button open the TUIs below |
 | Network (`NetworkSettings.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed |
 | Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
-| Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
+| Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live, then a full-screen prompt appears **on every monitor** asking whether to keep them — it reverts after 15 seconds otherwise. On every screen because a bad mode can hide the window holding the undo. Enter keeps, Esc reverts. Kept settings go to `~/.config/hypr/monitors.lua` |
 | Workspaces | Click to switch; highlights the one active on that monitor and dims empty ones |
 | Volume (`Volume.qml`) | PipeWire volume icon in the bar. Scroll over it to change the volume |
 | Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens the Network window |
@@ -105,7 +106,8 @@ Network and Bluetooth have proper Quickshell windows (above). Both ship with Fed
 - **Papirus-Dark** icons for apps, the launcher and the app menu (GTK settings and gsettings are set to match)
 
 **AI tools**
-- **Claude Code**, *optional*: the installer asks, and the default answer is no. Answer ahead of time with `INSTALL_CLAUDE=yes ./install.sh` (or `=no`); a non-interactive run skips it. It comes from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update) and needs a paid Claude plan. Run `claude` to log in, and remove it with `sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo`. The menu's **Tools > Claude Code** entry appears only when the `claude` command is on your `PATH`, so installing or removing it later is reflected after a shell reload
+- **RPM Fusion**, *optional*: the installer offers it near the end, defaulting to no. It carries what Fedora won't ship — media codecs, NVIDIA's own driver, firmware for some Broadcom and Realtek chips. Answer ahead of time with `ENABLE_RPMFUSION=yes ./install.sh`. It is a different trust decision from the rest of Hypora: the release RPMs come over HTTPS from rpmfusion.org and can't be pinned to a fingerprint the way the Hyprland COPR and Anthropic's repository are, because both the package and its key change with every Fedora release. Packages from it are GPG-checked normally once it's enabled. Remove with `sudo dnf remove rpmfusion-free-release rpmfusion-nonfree-release`
+- **Claude Code**, *optional*: the installer asks last, and the default answer is no. Answer ahead of time with `INSTALL_CLAUDE=yes ./install.sh` (or `=no`); a non-interactive run skips it. It comes from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update) and needs a paid Claude plan. Run `claude` to log in, and remove it with `sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo`. The menu's **Tools > Claude Code** entry appears only when the `claude` command is on your `PATH`, so installing or removing it later is reflected after a shell reload
 - Nothing else AI-related is installed, and nothing is installed without asking
 
 **Shell, editor and fetch**
@@ -172,12 +174,14 @@ The installer is safe to re-run. It:
 2. Enables the `sdegler/hyprland` COPR (Fedora doesn't package Hyprland or uwsm) and checks Hyprland is 0.55+
 3. Installs required packages (warns and continues if an optional one is unavailable): PipeWire with wiremix, BlueZ, tuned-ppd for power modes, zsh, Neovim, fastfetch, the `@virtualization` group (libvirt, QEMU/KVM, virt-manager), network and security tools (nmap, aircrack-ng, wireshark/tshark), with nmtui and bluetoothctl as the advanced fallbacks
 4. Installs Oh My Zsh and the LazyVim starter, and makes zsh your login shell (an existing `~/.config/nvim` is left alone)
-5. Installs JetBrainsMono Nerd Font and sets the system font defaults, then **asks** whether to install Claude Code (default no)
+5. Installs JetBrainsMono Nerd Font and sets the system font defaults
 6. Enables NetworkManager, upower, bluetooth and power profiles, points DNS at systemd-resolved with DNS-over-TLS, randomizes MAC addresses, enables `firewalld` in the closed `public` zone, turns on automatic security updates for packages and flatpaks, and sets the default boot target to graphical
 7. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
 8. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
 9. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM, and installs the Plymouth boot theme — the slowest step, because it rebuilds the initramfs
 10. Copies the scripts in `bin/` (such as `hypora-theme`) into `~/.local/bin/`
+11. Checks hardware, firmware and drivers (see [Hardware, drivers and firmware](#hardware-drivers-and-firmware))
+12. Last, and only if you say yes: **offers RPM Fusion** (free and nonfree), then **offers Claude Code**. Both default to no, and both are the end of the run so a declined answer costs nothing
 
 Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
 
@@ -258,6 +262,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
 │   ├── hypora-console      # puts the theme's colours on the text console (kernel args)
 │   ├── hypora-firmware     # checks LVFS and installs firmware updates, in a terminal
+│   ├── hypora-hardware     # finds hardware with no driver, firmware or radio, and fixes it
 │   ├── hypora-plymouth     # draws the boot screen's images in the current palette
 │   ├── hypora-security     # security status as JSON, and the root actions behind it
 │   │                       # (installed root-owned to /usr/local/bin, not ~/.local/bin)
@@ -308,6 +313,29 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
 - **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
 - **System usage readings:** click the widget in the bar, or edit `~/.config/hypora/sysinfo.json`
+
+## Hardware, drivers and firmware
+
+A fresh install coming up with no Wi-Fi or Bluetooth is almost never one cause on Fedora, and the three look identical from the desktop:
+
+1. the firmware package isn't installed,
+2. the driver never bound to the device, or
+3. the radio is switched off in software (rfkill).
+
+`bin/hypora-hardware` tells them apart. The installer runs it, and you can at any time:
+
+```bash
+hypora-hardware probe      # what's present, what's wrong (no root)
+sudo hypora-hardware fix   # install firmware, load drivers, unblock radios
+```
+
+It reads sysfs rather than the kernel log, because `kernel.dmesg_restrict` is 1 on Fedora — firmware errors need root to read, and a probe you have to `sudo` is a probe nobody runs. For each Wi-Fi, Bluetooth, ethernet, GPU and camera device it reports the bound driver, whether Fedora's firmware package for that vendor is installed, and the rfkill state. Where nothing is bound it asks `modprobe -R` what the kernel *would* use, which separates "needs loading" from "no driver exists".
+
+**It will not add a third-party repository.** Fedora splits `linux-firmware` into about two dozen per-vendor packages and that covers most hardware, but not all — Broadcom's `wl` is the usual gap. Those are named and explained, never installed.
+
+**NVIDIA** gets nouveau, the in-tree open driver, together with Fedora's own `nvidia-gpu-firmware` (the GSP firmware modern cards need). That is the open-source driver and it needs no third-party repo. NVIDIA's own driver — including their "open kernel modules" flavour, which is still a proprietary userspace — lives in RPM Fusion, and Hypora doesn't add it for you. If you want it, that's a deliberate step you take.
+
+One cross-check worth knowing: if a camera is present but `uvcvideo` isn't loaded, the probe points at **Menu > Security**, since Hypora's own camera toggle unloads that module.
 
 ## Firmware updates
 

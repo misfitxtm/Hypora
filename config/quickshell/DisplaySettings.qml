@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic as C
@@ -17,7 +18,130 @@ Scope {
         function close(): void { ShellState.displaySettingsOpen = false }
     }
 
+    // Keep-or-revert, as a full-screen overlay on every monitor rather than a line in the
+    // settings window. A display change is the one setting that can hide its own undo: put
+    // a panel on the wrong mode or the wrong output and the window holding "Revert" may be
+    // off-screen, mirrored away or on a monitor that just went black. Drawing this on every
+    // screen means whichever one still works has the way out.
+    //
+    // It reads the loader's item because countdown, keep() and revert() live on the window
+    // inside it, and this has to outlive being unable to see that window.
+    Variants {
+        model: Quickshell.screens
+
+        PanelWindow {
+            id: confirm
+            required property var modelData
+            readonly property var dlg: loader.item ?? null
+            readonly property int left: dlg ? dlg.countdown : 0
+
+            screen: modelData
+            visible: left > 0
+            anchors { top: true; bottom: true; left: true; right: true }
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+            WlrLayershell.namespace: "hypora-display-confirm"
+            color: "#b3000000"
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 420
+                height: body.implicitHeight + 48
+                radius: 16
+                color: Theme.bg
+                border.width: 1
+                border.color: Theme.accent
+
+                Column {
+                    id: body
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
+                    spacing: 10
+
+                    Text {
+                        width: parent.width
+                        text: "Keep these display settings?"
+                        font.family: Theme.font; font.pixelSize: Theme.fontSize + 4; font.bold: true
+                        color: Theme.fg
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        text: `Reverting to the previous settings in ${confirm.left} second`
+                              + (confirm.left === 1 ? "." : "s.")
+                        font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
+                        color: Theme.dim
+                    }
+
+                    // A bar that drains, so the time left reads at a glance
+                    Rectangle {
+                        width: parent.width; height: 4; radius: 2
+                        color: Theme.surface
+                        Rectangle {
+                            width: parent.width * (confirm.left / 15)
+                            height: parent.height; radius: 2
+                            color: Theme.accent
+                            Behavior on width { NumberAnimation { duration: 950 } }
+                        }
+                    }
+
+                    Item { width: 1; height: 6 }
+
+                    Row {
+                        anchors.right: parent.right
+                        spacing: 10
+                        Rectangle {
+                            width: revertText.implicitWidth + 30; height: 36; radius: 18
+                            color: revertArea.containsMouse ? Qt.lighter(Theme.surface, 1.3) : Theme.surface
+                            Text {
+                                id: revertText
+                                anchors.centerIn: parent
+                                text: "Revert"
+                                font.family: Theme.font; font.pixelSize: Theme.fontSize
+                                color: Theme.fg
+                            }
+                            MouseArea {
+                                id: revertArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (confirm.dlg) confirm.dlg.revert()
+                            }
+                        }
+                        Rectangle {
+                            width: keepText.implicitWidth + 30; height: 36; radius: 18
+                            color: Theme.accent
+                            Text {
+                                id: keepText
+                                anchors.centerIn: parent
+                                text: "Keep changes"
+                                font.family: Theme.font; font.pixelSize: Theme.fontSize; font.bold: true
+                                color: Theme.bg
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (confirm.dlg) confirm.dlg.keep()
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Enter keeps, Esc reverts — the same answer from any keyboard on any screen
+            Item {
+                anchors.fill: parent
+                focus: true
+                Keys.onReturnPressed: if (confirm.dlg) confirm.dlg.keep()
+                Keys.onEnterPressed: if (confirm.dlg) confirm.dlg.keep()
+                Keys.onEscapePressed: if (confirm.dlg) confirm.dlg.revert()
+                onVisibleChanged: if (visible) forceActiveFocus()
+            }
+        }
+    }
+
     LazyLoader {
+        id: loader
         active: ShellState.displaySettingsOpen
 
         FloatingWindow {
@@ -333,21 +457,21 @@ Scope {
                         Text {
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
-                            text: win.countdown > 0 ? `Keep these display settings? Reverting in ${win.countdown}s.`
+                            text: win.countdown > 0 ? "Waiting for you to confirm on screen…"
                                                     : "Changes apply right away and can be reverted."
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
-                            color: win.countdown > 0 ? Theme.fg : Theme.dim
+                            color: Theme.dim
                         }
                         Button {
-                            text: win.countdown > 0 ? "Revert" : "Reset"
-                            enabled: win.countdown > 0 || win.dirty
-                            onClicked: win.countdown > 0 ? win.revert() : (win.edits = win.current())
+                            text: "Reset"
+                            enabled: win.countdown === 0 && win.dirty
+                            onClicked: win.edits = win.current()
                         }
                         Button {
-                            text: win.countdown > 0 ? "Keep changes" : "Apply"
+                            text: "Apply"
                             primary: true
-                            enabled: win.countdown > 0 || win.dirty
-                            onClicked: win.countdown > 0 ? win.keep() : win.apply()
+                            enabled: win.countdown === 0 && win.dirty
+                            onClicked: win.apply()
                         }
                     }
                 }
