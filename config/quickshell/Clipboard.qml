@@ -88,6 +88,7 @@ Rectangle {
         id: drop
         screen: root.window.screen
         barHeight: root.window.height
+        anchorItem: root        // open under the icon, not at the far left of the bar
         onVisibleChanged: if (visible) root.refresh()
 
         Rectangle {

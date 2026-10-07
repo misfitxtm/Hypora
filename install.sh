@@ -13,7 +13,10 @@ CONF="$HOME/.config"
 THEME="${THEME:-$(cat "$CONF/hypora/current/name" 2>/dev/null || echo Nord)}"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
+# Warnings are shown as they happen and kept, so the summary at the end can repeat them.
+# A 400-line install scrolls past; the one line that mattered shouldn't only appear there.
+WARNINGS=()
+warn() { WARNINGS+=("$*"); printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------- sanity checks ----------
@@ -233,45 +236,6 @@ else
 fi
 sudo fc-cache -f >/dev/null 2>&1 || true
 
-# ---------- AI tools (optional) ----------
-# Claude Code is not installed unless you say so. Set INSTALL_CLAUDE=yes or =no to answer
-# ahead of time; without an answer on a non-interactive run it is skipped.
-CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
-
-want_claude() {
-    case "${INSTALL_CLAUDE:-}" in
-        yes|y|1) return 0 ;;
-        no|n|0)  return 1 ;;
-    esac
-    if [ ! -t 0 ]; then
-        log "Skipping Claude Code (no terminal to ask; set INSTALL_CLAUDE=yes to install it)"
-        return 1
-    fi
-    printf '\n%s\n%s\n' \
-        "Claude Code is an AI coding assistant from Anthropic. It needs a paid Claude plan." \
-        "It installs from Anthropic's signed dnf repository and can be removed later with:" >&2
-    printf '  sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo\n' >&2
-    read -r -p "Install Claude Code? [y/N] " answer
-    case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
-}
-
-if want_claude; then
-    log "Installing Claude Code"
-    # Check the signing key against the fingerprint Anthropic publishes before rpm trusts it
-    key=$(mktemp)
-    if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
-        && [ "$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$CLAUDE_KEY_FPR" ]; then
-        sudo rpm --import "$key"
-        sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
-        sudo dnf install -y claude-code || warn "Could not install claude-code"
-    else
-        warn "Claude Code signing key missing or fingerprint mismatch; skipped Claude Code"
-    fi
-    rm -f "$key"
-else
-    log "Skipping Claude Code"
-fi
-
 # ---------- Flatpak ----------
 # Flathub as a system remote, then the apps. Each install is skipped if it's already
 # there, so re-running costs nothing. Set SKIP_FLATPAKS=1 to install none of them.
@@ -423,6 +387,17 @@ sudo install -m644 "$REPO/system/systemd/system/hypora-flatpak-update.timer" \
 sudo systemctl daemon-reload
 sudo systemctl enable hypora-flatpak-update.timer \
     || warn "Could not enable the flatpak update timer"
+
+# Hardware that didn't come up. A laptop with no Wi-Fi or Bluetooth after a fresh install is
+# usually one of three things — firmware package absent, driver never bound, or the radio
+# soft-blocked — and they look identical from the desktop. hypora-hardware separates them and
+# fixes the ones that can be fixed from Fedora's own repositories. It never adds a third-party
+# repo; where a chip needs one (Broadcom's wl, typically) it says so and leaves it to you.
+if [ -x "$HOME/.local/bin/hypora-hardware" ]; then
+    log "Checking hardware, firmware and drivers"
+    sudo "$HOME/.local/bin/hypora-hardware" fix || warn "Some hardware could not be fixed"
+    "$HOME/.local/bin/hypora-hardware" probe || true
+fi
 
 sudo systemctl set-default graphical.target
 
@@ -606,22 +581,131 @@ prune
 mkdir -p "$(dirname "$MANIFEST")"
 mv "$NEW_MANIFEST" "$MANIFEST"
 
+# ---------- optional third-party repositories ----------
+# RPM Fusion carries what Fedora won't ship: patent-encumbered codecs, NVIDIA's own driver,
+# Broadcom's wl. Off unless you ask for it, because it is a different trust decision from the
+# rest of Hypora — the release RPMs are fetched over HTTPS from rpmfusion.org and cannot be
+# pinned to a fingerprint the way the Hyprland COPR and Anthropic's repository are, since both
+# the package and its key change with every Fedora release. Once installed, packages from it
+# are GPG-checked normally.
+#
+# Set ENABLE_RPMFUSION=yes or =no to answer ahead of time.
+want_rpmfusion() {
+    case "${ENABLE_RPMFUSION:-}" in
+        yes|y|1) return 0 ;;
+        no|n|0)  return 1 ;;
+    esac
+    if rpm -q rpmfusion-free-release >/dev/null 2>&1; then
+        log "RPM Fusion is already enabled"
+        return 1
+    fi
+    if [ ! -t 0 ]; then
+        log "Skipping RPM Fusion (no terminal to ask; set ENABLE_RPMFUSION=yes to enable it)"
+        return 1
+    fi
+    printf '\n%s\n%s\n%s\n' \
+        "RPM Fusion (free and nonfree) carries packages Fedora cannot: media codecs," \
+        "NVIDIA's own graphics driver, and firmware for some Broadcom and Realtek chips." \
+        "It is a third-party repository, so this is your trust decision, not Hypora's." >&2
+    printf '  Remove later with: sudo dnf remove rpmfusion-free-release rpmfusion-nonfree-release\n' >&2
+    read -r -p "Enable RPM Fusion? [y/N] " answer
+    case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+if want_rpmfusion; then
+    log "Enabling RPM Fusion"
+    rel=$(rpm -E %fedora)
+    sudo dnf install -y \
+        "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$rel.noarch.rpm" \
+        "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$rel.noarch.rpm" \
+        || warn "Could not enable RPM Fusion"
+else
+    log "Skipping RPM Fusion"
+fi
+
+# ---------- AI tools (optional) ----------
+# Claude Code is not installed unless you say so. Set INSTALL_CLAUDE=yes or =no to answer
+# ahead of time; without an answer on a non-interactive run it is skipped.
+CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+
+want_claude() {
+    case "${INSTALL_CLAUDE:-}" in
+        yes|y|1) return 0 ;;
+        no|n|0)  return 1 ;;
+    esac
+    if [ ! -t 0 ]; then
+        log "Skipping Claude Code (no terminal to ask; set INSTALL_CLAUDE=yes to install it)"
+        return 1
+    fi
+    printf '\n%s\n%s\n' \
+        "Claude Code is an AI coding assistant from Anthropic. It needs a paid Claude plan." \
+        "It installs from Anthropic's signed dnf repository and can be removed later with:" >&2
+    printf '  sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo\n' >&2
+    read -r -p "Install Claude Code? [y/N] " answer
+    case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+if want_claude; then
+    log "Installing Claude Code"
+    # Check the signing key against the fingerprint Anthropic publishes before rpm trusts it
+    key=$(mktemp)
+    if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
+        && [ "$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$CLAUDE_KEY_FPR" ]; then
+        sudo rpm --import "$key"
+        sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
+        sudo dnf install -y claude-code || warn "Could not install claude-code"
+    else
+        warn "Claude Code signing key missing or fingerprint mismatch; skipped Claude Code"
+    fi
+    rm -f "$key"
+else
+    log "Skipping Claude Code"
+fi
+
 # ---------- done ----------
-log "Done."
-cat <<EOF
+# The hexagon mark from config/quickshell/Logo.qml, in its own two colours. Printed with
+# truecolor escapes where the terminal supports them and plain otherwise, so this still
+# reads on a TTY after a failed graphical boot — which is exactly when someone is looking.
+banner() {
+    # The same mark fastfetch prints, so there is one ASCII Hypora rather than two. That file
+    # uses $1 and $2 as colour slots; substitute the logo's own two colours into them.
+    local a b r logo="$REPO/config/fastfetch/hypora.txt"
+    if [ "${COLORTERM:-}" = "truecolor" ] || [ "${COLORTERM:-}" = "24bit" ]; then
+        a=$'\033[38;2;122;162;247m'; b=$'\033[38;2;195;122;247m'
+    else
+        a=$'\033[36m'; b=$'\033[35m'
+    fi
+    r=$'\033[0m'
+    printf '\n'
+    if [ -r "$logo" ]; then
+        sed -e "s/\$1/$a/g" -e "s/\$2/$b/g" -e "s/\$/$r/" "$logo"
+    else
+        printf '   %sH Y P O R A%s\n' "$a" "$r"
+    fi
+    printf '\n'
+}
 
-Next steps:
-  1. Reboot. The Hypora login screen (SDDM) starts the
-     uwsm-managed Hyprland session. Log out and back in for the libvirt and wireshark
-     group memberships, and your new zsh login shell, to take effect.
-  2. Neovim opens with LazyVim; the first start downloads its plugins.
-     If it doesn't come up: Ctrl+Alt+F2, log in, and check 'journalctl -b -u sddm'.
-  3. If the bar doesn't appear, run 'qs' in a terminal to see QML errors.
-     If keybinds don't work, run 'hyprctl configerrors'.
-  4. Test notifications:  notify-send "Test" "Hello"
-     Test polkit:         pkexec true
+banner
 
-Your configs are copies, so this folder can be moved or deleted. To update Hypora later,
-git pull (or clone it again) and re-run ./install.sh. Files you had edited were saved as
-<name>.bak.<timestamp>.
+if [ ${#WARNINGS[@]} -eq 0 ]; then
+    printf '\033[1;32m Hypora was installed successfully.\033[0m\n\n'
+else
+    printf '\033[1;32m Hypora was installed\033[0m, with \033[1;33m%d warning(s)\033[0m:\n\n' "${#WARNINGS[@]}"
+    for w in "${WARNINGS[@]}"; do printf '   \033[1;33m!!\033[0m %s\n' "$w"; done
+    printf '\n'
+fi
+
+cat <<'EOF'
+ Reboot to finish. The Hypora login screen starts the Hyprland session.
+
+   sudo reboot
+
+ Group memberships and your new zsh shell also need that reboot to take effect.
+ If the desktop does not come up, switch to a console with Ctrl+Alt+F2 and run:
+
+   journalctl -b -u sddm      why the login screen failed
+   qs                         QML errors from the shell
+   hyprctl configerrors       problems in hyprland.lua
+   hypora-hardware probe      hardware with no driver, firmware or radio
+
 EOF

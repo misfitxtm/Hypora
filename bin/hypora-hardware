@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""hypora-hardware: find hardware that isn't working, and fix what can be fixed.
+
+    hypora-hardware probe     say what's present and what's wrong (no root)
+    hypora-hardware fix       install missing firmware, load drivers, unblock radios (root)
+
+Written because a laptop install came up with no Wi-Fi and no Bluetooth. On Fedora that is
+almost never one cause: the firmware package may be absent, the driver may have failed to
+bind, or the radio may simply be soft-blocked. Those need different fixes and look identical
+from the desktop, so this separates them.
+
+Everything in `probe` reads sysfs, which answers without privileges. It deliberately does not
+read the kernel log: `kernel.dmesg_restrict` is 1 on Fedora, so firmware errors need root to
+see, and a probe you have to sudo is a probe people don't run.
+
+What it will not do is add a third-party repository. Where a chip needs firmware Fedora can't
+ship — Broadcom's wl being the usual one — it says so and names the package, and leaves the
+decision to you.
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+PCI = Path("/sys/bus/pci/devices")
+USB = Path("/sys/bus/usb/devices")
+
+# PCI class (high byte pair) -> what we call it
+PCI_CLASSES = {
+    "0200": "ethernet",
+    "0280": "wifi",
+    "0300": "gpu",
+    "0302": "gpu",
+    "0d11": "bluetooth",
+}
+
+VENDORS = {
+    "8086": "Intel", "10de": "NVIDIA", "1002": "AMD", "14e4": "Broadcom",
+    "10ec": "Realtek", "168c": "Atheros", "17cb": "Qualcomm", "14c3": "MediaTek",
+    "1814": "Ralink", "0bda": "Realtek", "8087": "Intel", "1d6b": "Linux Foundation",
+}
+
+# Fedora splits linux-firmware into per-vendor packages; this is which one covers what.
+# Only packages Fedora actually ships — nothing here pulls in a third-party repo.
+FIRMWARE = {
+    ("wifi", "8086"): "iwlwifi-mvm-firmware",
+    ("wifi", "14e4"): "brcmfmac-firmware",
+    ("wifi", "168c"): "atheros-firmware",
+    ("wifi", "17cb"): "atheros-firmware",
+    ("wifi", "10ec"): "realtek-firmware",
+    ("wifi", "0bda"): "realtek-firmware",
+    ("wifi", "14c3"): "mt7xxx-firmware",
+    ("bluetooth", "8087"): "iwlbluetooth-firmware",
+    ("bluetooth", "8086"): "iwlbluetooth-firmware",
+    ("bluetooth", "0bda"): "realtek-firmware",
+    ("bluetooth", "14e4"): "brcmfmac-firmware",
+    ("bluetooth", "14c3"): "mt7xxx-firmware",
+    ("gpu", "10de"): "nvidia-gpu-firmware",
+    ("gpu", "1002"): "amd-gpu-firmware",
+    ("gpu", "8086"): "intel-gpu-firmware",
+    ("ethernet", "10ec"): "realtek-firmware",
+}
+
+# Chips whose firmware or driver Fedora cannot ship. Reported, never installed.
+NEEDS_THIRD_PARTY = {
+    "14e4": ("Broadcom", "Most BCM43xx Wi-Fi needs the 'broadcom-wl' driver from RPM Fusion; "
+                         "Fedora can only ship brcmfmac, which covers some models and not others."),
+}
+
+
+def run(cmd, timeout=120):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        return 1, str(e)
+
+
+def read(path, default=""):
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return default
+
+
+def pkg_installed(name):
+    return run(["rpm", "-q", name])[0] == 0
+
+
+def resolve_module(modalias):
+    """The module udev would pick for this device, or "" if the kernel has none."""
+    if not modalias:
+        return ""
+    rc, out = run(["modprobe", "-R", modalias], timeout=10)
+    return out.splitlines()[0].strip() if rc == 0 and out else ""
+
+
+def module_loaded(mod):
+    want = mod.replace("-", "_")
+    try:
+        for line in Path("/proc/modules").read_text().splitlines():
+            if line.split(" ", 1)[0].replace("-", "_") == want:
+                return True
+    except OSError:
+        pass
+    # Built into the kernel rather than a module
+    return Path(f"/sys/module/{want}").is_dir()
+
+
+# ---------- probing ----------
+
+def pci_devices():
+    out = []
+    if not PCI.is_dir():
+        return out
+    for dev in sorted(PCI.iterdir()):
+        cls = read(dev / "class")[2:6]          # 0x030000 -> "0300"
+        kind = PCI_CLASSES.get(cls)
+        if not kind:
+            continue
+        out.append({
+            "bus": "pci",
+            "slot": dev.name,
+            "kind": kind,
+            "vendor": read(dev / "vendor")[2:],
+            "device": read(dev / "device")[2:],
+            "driver": Path(os.readlink(dev / "driver")).name if (dev / "driver").is_symlink() else "",
+            "modalias": read(dev / "modalias"),
+        })
+    return out
+
+
+def usb_devices():
+    """USB interfaces we care about: Bluetooth (class e0/01/01) and UVC cameras (class 0e)."""
+    out = []
+    if not USB.is_dir():
+        return out
+    for iface in sorted(USB.iterdir()):
+        cls = read(iface / "bInterfaceClass")
+        if cls not in ("e0", "0e"):
+            continue
+        if cls == "e0" and read(iface / "bInterfaceProtocol") != "01":
+            continue                              # wireless but not Bluetooth
+        parent = iface.parent / iface.name.split(":")[0]
+        kind = "bluetooth" if cls == "e0" else "camera"
+        entry = {
+            "bus": "usb",
+            "slot": iface.name,
+            "kind": kind,
+            "vendor": read(parent / "idVendor"),
+            "device": read(parent / "idProduct"),
+            "driver": Path(os.readlink(iface / "driver")).name if (iface / "driver").is_symlink() else "",
+            "modalias": read(iface / "modalias"),
+            "name": read(parent / "product"),
+        }
+        # One interface per function; a Bluetooth adapter shows several
+        if not any(d["kind"] == kind and d["vendor"] == entry["vendor"]
+                   and d["device"] == entry["device"] for d in out):
+            out.append(entry)
+    return out
+
+
+def rfkill():
+    """Soft/hard block per radio type — the reason a working driver still has no network."""
+    out = {}
+    base = Path("/sys/class/rfkill")
+    if not base.is_dir():
+        return out
+    for r in base.iterdir():
+        t = read(r / "type")
+        out.setdefault(t, {"soft": False, "hard": False})
+        if read(r / "soft") == "1":
+            out[t]["soft"] = True
+        if read(r / "hard") == "1":
+            out[t]["hard"] = True
+    return out
+
+
+def assess():
+    devices = pci_devices() + usb_devices()
+    blocks = rfkill()
+    for d in devices:
+        d["vendorName"] = VENDORS.get(d["vendor"], d["vendor"])
+        d["firmware"] = FIRMWARE.get((d["kind"], d["vendor"]), "")
+        d["firmwareInstalled"] = pkg_installed(d["firmware"]) if d["firmware"] else None
+        d["wouldUse"] = resolve_module(d["modalias"]) if not d["driver"] else d["driver"]
+        d["issues"] = []
+
+        if not d["driver"]:
+            if d["wouldUse"]:
+                d["issues"].append(("driver-not-loaded",
+                                    f"No driver bound, but the kernel has {d['wouldUse']} for it."))
+            else:
+                d["issues"].append(("no-driver",
+                                    "No driver bound and the kernel has none for this device."))
+        if d["firmware"] and d["firmwareInstalled"] is False:
+            d["issues"].append(("firmware-missing", f"{d['firmware']} is not installed."))
+        if d["vendor"] in NEEDS_THIRD_PARTY and not d["driver"]:
+            d["issues"].append(("third-party", NEEDS_THIRD_PARTY[d["vendor"]][1]))
+
+        rk = blocks.get("wlan" if d["kind"] == "wifi" else d["kind"], {})
+        if rk.get("hard"):
+            d["issues"].append(("rfkill-hard", "Blocked by a hardware switch or the BIOS."))
+        elif rk.get("soft"):
+            d["issues"].append(("rfkill-soft", "The radio is switched off (soft rfkill)."))
+
+        # Hypora can turn the camera off itself; say so rather than blaming the hardware
+        if d["kind"] == "camera" and not module_loaded("uvcvideo"):
+            d["issues"].append(("camera-off",
+                                "uvcvideo isn't loaded — Menu > Security may have disabled it."))
+    return devices
+
+
+# ---------- output ----------
+
+C = {"b": "\033[1m", "d": "\033[2m", "r": "\033[31m", "g": "\033[32m",
+     "y": "\033[33m", "x": "\033[0m"}
+if not sys.stdout.isatty():
+    C = {k: "" for k in C}
+
+ORDER = ["wifi", "bluetooth", "ethernet", "gpu", "camera"]
+
+
+def probe(devices):
+    print(f"{C['b']}Hardware{C['x']}")
+    seen = False
+    for kind in ORDER:
+        for d in [x for x in devices if x["kind"] == kind]:
+            seen = True
+            label = d.get("name") or f"{d['vendorName']} {d['device']}"
+            ok = not d["issues"]
+            mark = f"{C['g']}ok{C['x']}" if ok else f"{C['y']}!{C['x']} "
+            print(f"\n  [{mark}] {C['b']}{kind}{C['x']}  {label}  "
+                  f"{C['d']}({d['vendor']}:{d['device']}, {d['bus']}){C['x']}")
+            print(f"        driver: {d['driver'] or C['y'] + 'none' + C['x']}", end="")
+            if d["firmware"]:
+                state = "installed" if d["firmwareInstalled"] else C['y'] + "MISSING" + C['x']
+                print(f"   firmware: {d['firmware']} ({state})", end="")
+            print()
+            for _, msg in d["issues"]:
+                print(f"        {C['y']}- {msg}{C['x']}")
+
+            if kind == "gpu" and d["vendor"] == "10de":
+                print(f"        {C['d']}NVIDIA: Hypora uses nouveau, the in-tree open driver, with")
+                print(f"        Fedora's nvidia-gpu-firmware. NVIDIA's own driver needs RPM Fusion,")
+                print(f"        which Hypora does not add for you.{C['x']}")
+    if not seen:
+        print("  Nothing to report.")
+
+    todo = [d for d in devices if d["issues"]]
+    print()
+    if not todo:
+        print(f"{C['g']}Everything found has a driver and its firmware.{C['x']}")
+    else:
+        fixable = [d for d in todo
+                   if any(t in ("firmware-missing", "driver-not-loaded", "rfkill-soft")
+                          for t, _ in d["issues"])]
+        print(f"{len(todo)} device(s) need attention"
+              + (f"; {len(fixable)} can be fixed automatically:" if fixable else ":"))
+        if fixable:
+            print(f"    sudo hypora-hardware fix")
+    return 0
+
+
+def fix(devices):
+    if os.geteuid() != 0:
+        sys.exit("This installs packages and loads modules, so it needs root:\n"
+                 "    sudo hypora-hardware fix")
+
+    did = False
+
+    # 1. firmware Fedora ships
+    want = sorted({d["firmware"] for d in devices
+                   if d["firmware"] and d["firmwareInstalled"] is False})
+    if want:
+        did = True
+        print(f"{C['b']}Installing firmware:{C['x']} {' '.join(want)}")
+        rc, out = run(["dnf", "install", "-y", "linux-firmware"] + want)
+        print(out[-1500:] if rc != 0 else "  done")
+
+    # 2. drivers the kernel has but nothing bound
+    for d in devices:
+        mod = d["wouldUse"]
+        if d["driver"] or not mod:
+            continue
+        did = True
+        print(f"{C['b']}Loading {mod}{C['x']} for {d['kind']} {d['vendor']}:{d['device']}")
+        rc, out = run(["modprobe", mod], timeout=30)
+        print("  done" if rc == 0 else f"  {C['r']}failed: {out}{C['x']}")
+
+    # 3. radios switched off in software
+    blocks = rfkill()
+    for t in ("wlan", "bluetooth"):
+        b = blocks.get(t, {})
+        if b.get("soft") and not b.get("hard"):
+            did = True
+            print(f"{C['b']}Unblocking {t}{C['x']}")
+            rc, out = run(["rfkill", "unblock", t], timeout=10)
+            print("  done" if rc == 0 else f"  {C['r']}failed: {out}{C['x']}")
+
+    if not did:
+        print("Nothing to do — everything already has its driver and firmware.")
+        return 0
+    print("\nRe-run `hypora-hardware probe` to confirm. Some firmware only takes effect "
+          "after a reboot.")
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "probe"
+    if cmd in ("-h", "--help"):
+        print(__doc__, file=sys.stderr)
+        return 0
+    if cmd not in ("probe", "fix"):
+        print(__doc__, file=sys.stderr)
+        return 2
+    devices = assess()
+    return probe(devices) if cmd == "probe" else fix(devices)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

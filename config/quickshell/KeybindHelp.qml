@@ -82,13 +82,25 @@ Scope {
 
             function keyFor(action, fallback) { return overrides[action] || fallback }
 
-            // Every key currently in use, to catch two actions wanting the same one
-            function clashWith(action, key) {
+            // Every chord more than one action now wants. A duplicate is allowed — refusing
+            // the edit made it impossible to swap two shortcuts, since whichever you set
+            // first collided with the other — but Hyprland keeps only the last bind for a
+            // chord, so the earlier one silently stops working. Hence saying so, loudly and
+            // for as long as it's true, rather than a notice that fades after two seconds.
+            readonly property var clashes: {
+                const byKey = {}
                 for (const g of groups)
-                    for (const it of g.items)
-                        if (it.action !== action && keyFor(it.action, it.def) === key) return it.label
-                return ""
+                    for (const it of g.items) {
+                        const k = keyFor(it.action, it.def)
+                        if (!byKey[k]) byKey[k] = []
+                        byKey[k].push(it.label)
+                    }
+                const out = []
+                for (const k in byKey)
+                    if (byKey[k].length > 1) out.push({ key: k, labels: byKey[k] })
+                return out
             }
+            readonly property var clashKeys: clashes.map(c => c.key)
 
             function setKey(action, key, deflt) {
                 const next = Object.assign({}, overrides)
@@ -189,13 +201,7 @@ Scope {
                     const name = win.keyName(event)
                     if (name === "") return
                     const item = win.groups.reduce((f, g) => f || g.items.find(i => i.action === win.capturing), null)
-                    const clash = win.clashWith(win.capturing, name)
-                    if (clash !== "") {
-                        win.notice = `${name} is already used by ${clash}.`
-                        clearNotice.restart()
-                        win.capturing = ""
-                        return
-                    }
+                    // Taken keys are accepted; the banner below reports the overlap
                     win.setKey(win.capturing, name, item ? item.def : "")
                     win.capturing = ""
                 }
@@ -242,8 +248,49 @@ Scope {
                             : win.capturing !== "" ? "Press the new key combination, or Esc to cancel."
                             : "Click a shortcut to change it."
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
-                        color: win.notice.indexOf("already used") !== -1 ? Theme.error
-                             : win.capturing !== "" ? Theme.accent : Theme.dim
+                        color: win.capturing !== "" ? Theme.accent : Theme.dim
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 4
+                        visible: win.clashes.length > 0
+                        implicitHeight: clashCol.implicitHeight + 24
+                        radius: 10
+                        color: Qt.rgba(Theme.error.r, Theme.error.g, Theme.error.b, 0.12)
+                        border.width: 1
+                        border.color: Theme.error
+
+                        Column {
+                            id: clashCol
+                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                            spacing: 4
+                            Text {
+                                text: win.clashes.length === 1 ? "One shortcut is used twice"
+                                                               : `${win.clashes.length} shortcuts are used twice`
+                                font.family: Theme.font; font.pixelSize: Theme.fontSize - 1; font.bold: true
+                                color: Theme.error
+                            }
+                            Repeater {
+                                model: win.clashes
+                                Text {
+                                    required property var modelData
+                                    width: clashCol.width
+                                    wrapMode: Text.Wrap
+                                    text: `${modelData.key} — ${modelData.labels.join(", ")}`
+                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
+                                    color: Theme.fg
+                                }
+                            }
+                            Text {
+                                width: clashCol.width
+                                wrapMode: Text.Wrap
+                                text: "Hyprland keeps only the last binding for a chord, so the others "
+                                    + "won't fire until you change one of them."
+                                font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                color: Theme.dim
+                            }
+                        }
                     }
 
                     Flickable {
@@ -283,6 +330,7 @@ Scope {
                                             readonly property bool active: win.capturing === modelData.action
                                             readonly property string key: win.keyFor(modelData.action, modelData.def)
                                             readonly property bool changed: key !== modelData.def
+                                            readonly property bool clashing: win.clashKeys.indexOf(key) !== -1
 
                                             Layout.fillWidth: true
                                             implicitHeight: 38
@@ -302,14 +350,15 @@ Scope {
                                                 implicitHeight: 26
                                                 radius: 6
                                                 color: row.active ? Theme.accent : Theme.surface
-                                                border.width: row.changed && !row.active ? 1 : 0
-                                                border.color: Theme.accent
+                                                border.width: row.active ? 0 : (row.clashing || row.changed ? 1 : 0)
+                                                border.color: row.clashing ? Theme.error : Theme.accent
                                                 Text {
                                                     id: keyText
                                                     anchors.centerIn: parent
                                                     text: row.active ? "Press a key…" : row.key
                                                     font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
-                                                    color: row.active ? Theme.bg : Theme.fg
+                                                    color: row.active ? Theme.bg
+                                                         : row.clashing ? Theme.error : Theme.fg
                                                 }
                                             }
                                             MouseArea {
