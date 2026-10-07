@@ -33,6 +33,7 @@ Scope {
             onClosed: ShellState.securitySettingsOpen = false
 
             property var info: null
+            property var firmwareInfo: null     // fetched once; see firmwareProbe
             property bool loading: true
             property string notice: ""
 
@@ -60,7 +61,9 @@ Scope {
 
             Process {
                 id: probe
-                command: [win.helper, "status"]
+                // --no-firmware: everything here answers without authenticating, so this can
+                // be polled freely. The firmware block is fetched separately, once.
+                command: [win.helper, "status", "--no-firmware"]
                 stdout: StdioCollector {
                     onStreamFinished: {
                         try { win.info = JSON.parse(text) } catch (e) { win.info = null }
@@ -69,9 +72,30 @@ Scope {
                 }
                 onExited: code => { if (code !== 0 && win.info === null) win.loading = false }
             }
+
+            // `fwupdmgr security` reads BIOS settings, which polkit guards with
+            // auth_admin_keep — so this is the one reading that raises a password prompt.
+            // It runs once when the window opens and never on the poll: folding it into the
+            // 15-second refresh meant a fresh prompt every 15 seconds, stacking up.
+            Process {
+                id: firmwareProbe
+                command: [win.helper, "firmware"]
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        try { win.firmwareInfo = JSON.parse(text) } catch (e) {
+                            win.firmwareInfo = { available: false, note: "Could not read the firmware checks." }
+                        }
+                    }
+                }
+                onExited: code => {
+                    if (code !== 0 && win.firmwareInfo === null)
+                        win.firmwareInfo = { available: false, note: "The firmware check did not complete." }
+                }
+            }
+
             Timer { id: recheck; interval: 1500; onTriggered: win.refresh() }
             Timer { running: true; repeat: true; interval: 15000; onTriggered: win.refresh() }
-            Component.onCompleted: refresh()
+            Component.onCompleted: { refresh(); firmwareProbe.running = true }
 
             Rectangle {
                 id: page
@@ -165,19 +189,47 @@ Scope {
                             }
 
                             StatusRow {
-                                readonly property var fw: win.info ? win.info.firmware : null
-                                visible: fw !== null
+                                readonly property var fw: win.firmwareInfo
                                 icon: !fw || !fw.available ? "shield"
                                     : fw.failed.length === 0 ? "shield-check" : "shield-alert"
                                 tone: !fw || !fw.available ? Theme.dim
                                     : fw.failed.length === 0 ? Theme.accent : Theme.warn
                                 title: "Firmware checks"
-                                value: !fw ? "" : !fw.available ? "Unavailable"
+                                value: !fw ? "Checking…" : !fw.available ? "Unavailable"
                                      : `${fw.passed} of ${fw.total} passed` + (fw.hsi ? `  ·  ${fw.hsi}` : "")
-                                detail: !fw ? "" : !fw.available ? fw.note
+                                detail: !fw ? "fwupd reads these through a privileged call, so this is the one check that asks for your password."
+                                      : !fw.available ? fw.note
                                       : fw.failed.length === 0
                                         ? "Every check fwupd knows about passed."
                                         : "Not passing: " + fw.failed.map(f => `${f.name} (${f.result})`).join(", ")
+                            }
+
+                            // Firmware updates are the one thing here that writes to the
+                            // hardware, so they're a button rather than anything automatic.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.topMargin: 2
+                                Layout.bottomMargin: 10
+                                spacing: 10
+                                Pill {
+                                    text: "Check for firmware updates"
+                                    small: true
+                                    onClicked: {
+                                        win.notice = "Firmware updater opened."
+                                        // Apps.run, not Apps.inTerminal: the script waits for a
+                                        // keypress itself on every path, so inTerminal's
+                                        // hold-on-error would ask a second time after a failure.
+                                        Apps.run([Theme.terminal, "-e", "hypora-firmware"])
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Opens a terminal. Checks fwupd.org, then installs what applies."
+                                    wrapMode: Text.Wrap
+                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                    color: Theme.dim
+                                }
                             }
 
                             // ---------- Network ----------

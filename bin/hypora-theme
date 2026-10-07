@@ -68,6 +68,19 @@ for tpl in "$TEMPLATES"/*.tpl; do
     fi
     mv "$out.new" "$out"
 done
+# Boot screen images. The .plymouth file is rendered by the template loop above, but the
+# passphrase field, bullets, padlock and watermark are PNGs, so they get drawn per palette.
+# Prefer the copy next to this script: during install.sh ~/.local/bin may not be on PATH yet
+PLYGEN=$(command -v hypora-plymouth 2>/dev/null || true)
+[ -n "$PLYGEN" ] || PLYGEN="$(dirname "$(readlink -f "$0")")/hypora-plymouth"
+if [ -x "$PLYGEN" ]; then
+    rm -rf "$OUT/plymouth"
+    "$PLYGEN" "$OUT/plymouth" \
+        --bg "$(value background)" --surface "$(value surface)" --fg "$(value foreground)" \
+        --dim "$(value dim)" --accent "$(value accent)" \
+        || echo "warning: could not draw the boot screen images" >&2
+fi
+
 # Wallpapers: the shell shows current/backgrounds/; a new theme starts at its first one
 [ "$(current)" = "$NAME" ] || rm -f "$OUT/wallpaper"
 mkdir -p "$THEMES/$NAME/backgrounds"
@@ -117,6 +130,29 @@ if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CO
     fi
     cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF" \
         || echo "Couldn't update the login screen colors; run: sudo install -m644 $OUT/sddm-theme.conf $SDDM_CONF" >&2
+fi
+
+# Boot screen. Root-owned like the login screen, and with the same rule: update it when we
+# can already ask for privileges (a terminal, or install.sh), and leave it alone when the
+# theme is switched from the GUI picker. The copy that actually renders at boot lives in the
+# initramfs, so it only changes after dracut runs — which is slow enough not to do here
+# behind your back.
+PLY_DIR=/usr/share/plymouth/themes/hypora
+if [ -d "$PLY_DIR" ] && [ -f "$OUT/plymouth.plymouth" ]; then
+    if ! cmp -s "$OUT/plymouth.plymouth" "$PLY_DIR/hypora.plymouth"; then
+        if [ -w "$PLY_DIR" ]; then
+            cp "$OUT/plymouth.plymouth" "$PLY_DIR/hypora.plymouth"
+            [ -d "$OUT/plymouth" ] && cp "$OUT"/plymouth/*.png "$PLY_DIR/"
+        elif [ -t 0 ]; then
+            sudo install -m644 "$OUT/plymouth.plymouth" "$PLY_DIR/hypora.plymouth" || true
+            [ -d "$OUT/plymouth" ] && sudo install -m644 "$OUT"/plymouth/*.png "$PLY_DIR/" || true
+        fi
+        if cmp -s "$OUT/plymouth.plymouth" "$PLY_DIR/hypora.plymouth"; then
+            echo "Boot screen updated. It changes on screen after: sudo dracut -f"
+        else
+            echo "Couldn't update the boot screen; run: sudo hypora-theme $NAME" >&2
+        fi
+    fi
 fi
 
 echo "Theme set to $NAME. Already-open GTK and Qt apps pick it up when restarted."

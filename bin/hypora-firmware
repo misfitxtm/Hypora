@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# hypora-firmware: check for firmware updates and install the ones that apply.
+#
+# Opened from Menu > Security > "Check for firmware updates", which runs this in a floating,
+# pinned terminal (the window rule in hyprland.lua matches the title set below).
+#
+# Firmware is the one kind of update Hypora can't apply quietly in the background: it is
+# written to the hardware, some of it only takes effect after a reboot, and a failure part
+# way through a motherboard update is how machines get bricked. So this is a thing you ask
+# for, in a window you can read, rather than something dnf-automatic does at 6am.
+#
+# fwupd asks polkit for authorisation before writing anything, so Hypora's polkit prompt
+# appears before any device is touched.
+set -uo pipefail
+
+# The Hyprland window rule floats and pins on this title. It's an escape sequence rather
+# than a terminal flag so it works whichever terminal Theme.terminal names.
+printf '\033]0;Firmware Update\007'
+
+bold=$'\033[1m'; dim=$'\033[2m'; red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; off=$'\033[0m'
+
+say()  { printf '%s\n' "$*"; }
+head() { printf '\n%s%s%s\n' "$bold" "$*" "$off"; }
+note() { printf '%s%s%s\n' "$dim" "$*" "$off"; }
+warn() { printf '%s%s%s\n' "$yellow" "$*" "$off"; }
+fail() { printf '%s%s%s\n' "$red" "$*" "$off"; }
+good() { printf '%s%s%s\n' "$green" "$*" "$off"; }
+
+finish() {
+    printf '\n'
+    note "Press any key to close this window."
+    read -rsn1 || true
+    exit "${1:-0}"
+}
+
+# fwupdmgr returns 2 for "ran fine, nothing to do" and 3 for "not found". Treating those as
+# failures is what makes a machine with no pending firmware look broken.
+run_tolerant() {
+    "$@"
+    local rc=$?
+    case $rc in
+        0|2|3) return 0 ;;
+        *)     return $rc ;;
+    esac
+}
+
+if ! command -v fwupdmgr >/dev/null 2>&1; then
+    fail "fwupd is not installed, so firmware can't be checked or updated."
+    note "Install it with:  sudo dnf install fwupd"
+    finish 1
+fi
+
+head "Firmware updates"
+note "Updates come from the Linux Vendor Firmware Service (fwupd.org), which your vendor"
+note "publishes to. Checking contacts that service — it is the one part of Hypora that"
+note "talks to an outside server without you typing something in first."
+
+head "1/3  Refreshing the update list"
+if ! run_tolerant fwupdmgr refresh --force; then
+    warn "Could not refresh from LVFS. Carrying on with whatever metadata is already here."
+fi
+
+head "2/3  Checking which devices have updates"
+updates_output=$(fwupdmgr get-updates --no-unreported-check 2>&1)
+updates_rc=$?
+printf '%s\n' "$updates_output"
+if [ "$updates_rc" -eq 2 ]; then
+    head "Nothing to do"
+    good "Every device fwupd can see is already on its latest firmware."
+    note "Devices your vendor doesn't publish to LVFS won't appear here at all; those are"
+    note "updated from the vendor's own tool or the UEFI setup screen."
+    finish 0
+fi
+if [ "$updates_rc" -ne 0 ]; then
+    fail "fwupd couldn't list updates (exit $updates_rc)."
+    finish "$updates_rc"
+fi
+
+head "3/3  Installing"
+warn "Do not power the machine off while this runs."
+note "Hypora's polkit prompt will ask for your password before anything is written."
+if run_tolerant fwupdmgr update -y --no-reboot-check; then
+    head "Done"
+    good "Firmware installed."
+    note "Some devices only switch to the new firmware after a restart — if the output above"
+    note "mentions a reboot, that device is still on the old version until you do."
+    note "Menu > Security shows the firmware checks again once fwupd has caught up."
+    finish 0
+else
+    rc=$?
+    head "Finished with errors"
+    fail "Some updates did not install (exit $rc)."
+    note "The output above says which device failed. A device that refuses an update is"
+    note "usually still running its old firmware safely; check the vendor's notes before"
+    note "retrying or forcing it."
+    finish "$rc"
+fi

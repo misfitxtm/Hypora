@@ -38,9 +38,9 @@ Privacy here means specific things, not a slogan:
 
 | Component | What it does |
 |---|---|
-| Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, workspaces 1-9, clock, tray and status icons (network, volume, battery, Do Not Disturb) |
-| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound, plus any control panels installed), **Security**, **Tools** (Terminal, Claude Code, region screenshot) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
-| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, whether this system is on an encrypted volume (and whether any swap is unencrypted), and fwupd's firmware checks (the HSI level, how many passed, and which didn't). **Network**: whether DNS is encrypted (and in which mode, and to which resolver), whether each card is presenting a randomized MAC address, and whether the firewall is running in a closed zone. **Updates**: whether system packages and flatpaks update on their own, and what the package timer is allowed to install. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
+| Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, that monitor's own workspaces, clock, tray and status icons (network, volume, battery, Do Not Disturb). See [Workspaces and monitors](#workspaces-and-monitors) |
+| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound — Hypora's own windows, not the system's control panels), **Security**, **Tools** (Terminal, Claude Code, region screenshot) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, whether this system is on an encrypted volume (and whether any swap is unencrypted), and fwupd's firmware checks (the HSI level, how many passed, and which didn't), with **Check for firmware updates** to install any your vendor has published — see [Firmware updates](#firmware-updates). **Network**: whether DNS is encrypted (and in which mode, and to which resolver), whether each card is presenting a randomized MAC address, and whether the firewall is running in a closed zone. **Updates**: whether system packages and flatpaks update on their own, and what the package timer is allowed to install. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
 | Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
@@ -53,7 +53,7 @@ Privacy here means specific things, not a slogan:
 | Network (`NetworkSettings.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed |
 | Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
 | Display Settings (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live and revert after 15 seconds unless you keep them; kept settings go to `~/.config/hypr/monitors.lua` |
-| Workspaces | Click to switch; highlights the focused workspace and dims empty ones |
+| Workspaces | Click to switch; highlights the one active on that monitor and dims empty ones |
 | Volume (`Volume.qml`) | PipeWire volume icon in the bar. Scroll over it to change the volume |
 | Network (`Network.qml`, `Net.qml`) | Wi-Fi (with signal strength) / Ethernet icon from NetworkManager; updates live via `nmcli monitor`. The Wi-Fi tile's arrow opens the Network window |
 | Tray (`Tray.qml`) | System tray: left click activates, middle click secondary action, right click menu |
@@ -149,7 +149,7 @@ The installer is safe to re-run. It:
 6. Enables NetworkManager, upower, bluetooth and power profiles, points DNS at systemd-resolved with DNS-over-TLS, randomizes MAC addresses, enables `firewalld` in the closed `public` zone, turns on automatic security updates for packages and flatpaks, and sets the default boot target to graphical
 7. Installs the theme palettes and templates into `~/.config/hypora/` and applies the chosen theme with `hypora-theme`
 8. **Copies** `config/hypr/hyprland.lua`, `config/quickshell/`, the GTK settings and the themes into `~/.config/`, and `applications/*.desktop` (e.g. Display Settings) into `~/.local/share/applications/`
-9. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM
+9. Installs the SDDM login theme (colors generated from the chosen theme), disables GDM/LightDM/greetd and enables SDDM, and installs the Plymouth boot theme — the slowest step, because it rebuilds the initramfs
 10. Copies the scripts in `bin/` (such as `hypora-theme`) into `~/.local/bin/`
 
 Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
@@ -183,8 +183,8 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | SUPER + P | Pseudo-tile |
 | SUPER + S / SUPER + ALT + S | Show scratchpad / move window to it |
 | SUPER + arrows | Move focus |
-| SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace |
-| SUPER + scroll | Cycle workspaces |
+| SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace, on the monitor you're using |
+| SUPER + scroll | Cycle this monitor's workspaces |
 | SUPER + drag (left / right mouse) | Move / resize window |
 | Volume / brightness / media keys | As labelled on the keyboard |
 
@@ -228,6 +228,8 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-theme        # applies a theme everywhere
 │   ├── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
+│   ├── hypora-firmware     # checks LVFS and installs firmware updates, in a terminal
+│   ├── hypora-plymouth     # draws the boot screen's images in the current palette
 │   ├── hypora-security     # security status as JSON, and the root actions behind it
 │   │                       # (installed root-owned to /usr/local/bin, not ~/.local/bin)
 │   └── hypora-weather      # place search and forecast via Open-Meteo
@@ -237,6 +239,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── TokyoNight/colors.toml
 │   ├── CatppuccinMocha/colors.toml
 │   └── templates/          # one per app; {{ key }} is filled from colors.toml
+│                           # (includes plymouth.plymouth.tpl, the boot screen)
 ├── system/
 │   ├── fontconfig/         # system font defaults -> /etc/fonts/conf.d/
 │   ├── yum.repos.d/        # Claude Code repository -> /etc/yum.repos.d/
@@ -260,10 +263,12 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Terminal and TUIs launched by widgets:** `terminal`, `mixer`, `network` and `bluetooth` in `themes/templates/Theme.qml.tpl`
 - **Autostart, keybinds:** `config/hypr/hyprland.lua`
 - **Monitors:** Display Settings, or edit `~/.config/hypr/monitors.lua` (loaded by `hyprland.lua`)
+- **Workspaces per monitor:** `WS_STATIC` and `WS_STRIDE` at the top of the workspace section in `config/hypr/hyprland.lua` (see [Workspaces and monitors](#workspaces-and-monitors))
 - **Bar contents:** `Bar.qml` (the right-hand `Row` holds the tray and the control center button)
 - **Control center:** `ControlPanel.qml` (tiles are `Tile {}` items in the `GridLayout`)
 - **Menu sections:** the `pages` list in `AppMenuPanel.qml`
 - **Security:** menu > Security; anything needing root asks through the polkit prompt
+- **Boot screen:** `themes/templates/plymouth.plymouth.tpl` for layout, `bin/hypora-plymouth` for the images (see [Boot screen](#boot-screen))
 - **DNS resolver:** `system/systemd/resolved.conf.d/hypora-dns.conf`, then re-run `./install.sh` (see [DNS](#dns))
 - **MAC randomization:** `system/NetworkManager/conf.d/hypora-mac.conf`, or per network with `nmcli connection modify` (see [MAC addresses](#mac-addresses))
 - **What updates on its own:** `system/dnf/automatic.conf` (see [Automatic updates](#automatic-updates))
@@ -271,6 +276,76 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
 - **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
 - **System usage readings:** click the widget in the bar, or edit `~/.config/hypora/sysinfo.json`
+
+## Firmware updates
+
+**Menu > Security > Check for firmware updates** opens a floating, pinned terminal running `bin/hypora-firmware`, which refreshes from the [Linux Vendor Firmware Service](https://fwupd.org) and installs whatever applies to the machine:
+
+```
+fwupdmgr refresh --force
+fwupdmgr get-updates --no-unreported-check
+fwupdmgr update -y --no-reboot-check
+```
+
+This is a button rather than part of the automatic updates on purpose. Firmware is written to the hardware itself, some of it only takes effect after a restart, and a motherboard update interrupted half way is how machines get bricked — so it happens when you ask, in a window you can watch. fwupd asks polkit before touching any device, so Hypora's password prompt appears before anything is written.
+
+The window is `float` + `pin` so it stays in front and remains visible if you change workspace mid-update. It's matched on its title, which the script sets with an escape sequence rather than a terminal flag, so it works whichever terminal `Theme.terminal` names.
+
+Two things worth knowing:
+
+- **Checking contacts fwupd.org.** It's the one part of Hypora that reaches an outside server without you typing something first, which is why it isn't done in the background. Devices whose vendors don't publish to LVFS never appear — those update from the vendor's own tool or the UEFI setup screen.
+- **"No updates" is a success, not a failure.** `fwupdmgr` exits 2 for "ran fine, nothing to do" and 3 for "not found". The script treats both as success; reading them as errors is what would make a fully-updated machine look broken.
+
+## Workspaces and monitors
+
+Every monitor has its own independent set of workspaces. Workspace 1 exists on each screen at the same time, SUPER + 1 switches the monitor you're pointing at, and sending a window to the other screen leaves it on the workspace you sent it to rather than dropping it wherever that screen happened to be.
+
+**Five per monitor are permanent**, so they're always there to switch to and the bar can always show them. **Numbers 6 to 0 are made when you first use them** and disappear again once they're empty.
+
+Hyprland numbers workspaces globally — a workspace belongs to one monitor at a time — so a per-monitor set is built by giving each monitor a block of ten numbers:
+
+| monitor | permanent | on demand |
+|---|---|---|
+| 0 | 1–5 | 6–10 |
+| 1 | 11–15 | 16–20 |
+| 2 | 21–25 | 26–30 |
+
+Every number in a block is pinned to its monitor with a `hl.workspace_rule`, and the first five of each are `persistent`. The bar subtracts the block's base before drawing, which is why each screen shows its own `1 2 3 4 5`. To change how many: `WS_STATIC` and `WS_STRIDE` at the top of the workspace section in `config/hypr/hyprland.lua` — keep `WS_STRIDE` at least as large as the number of keys you bind, or two monitors' blocks will overlap.
+
+The workspace keybinds are Lua functions rather than plain dispatchers, because the target depends on which monitor has focus when you press them. Two things that caused this to be written carefully, both worth knowing if you edit it:
+
+- `hl.get_active_monitor()` is only meaningful **inside** the callback. Called while the config is being read it returns nil, and it is never re-evaluated ([#14878](https://github.com/hyprwm/Hyprland/discussions/14878)).
+- `hl.dsp.*` builds an object and does nothing on its own; it has to be handed to `hl.dispatch()`. Returning it from a bind callback silently does nothing ([#14282](https://github.com/hyprwm/Hyprland/discussions/14282)).
+
+The rules are applied from the `hyprland.start` hook rather than at the top level, because `hl.get_monitors()` is still empty while the config is being read, and again on `monitor.added` so a screen plugged in later gets its own set.
+
+## Boot screen
+
+The boot splash and the **LUKS passphrase prompt** are the same screen: `systemd-cryptsetup` asks through `systemd-ask-password`, and Plymouth draws it. So theming the unlock prompt means shipping a Plymouth theme, which Hypora generates from the active palette like everything else.
+
+Two halves:
+
+- `themes/templates/plymouth.plymouth.tpl` → `/usr/share/plymouth/themes/hypora/hypora.plymouth`. It uses `two-step`, the module Fedora's own themes are built on, and takes the background and progress-bar colours straight from the palette.
+- `bin/hypora-plymouth` draws `entry.png`, `bullet.png`, `lock.png`, `capslock.png` and `watermark.png` in the palette's colours. Everything the module doesn't colour itself is a PNG, so the images have to be generated per theme. It uses signed distance fields and the standard library only — no Pillow, no ImageMagick — because this has to work on a machine mid-install.
+
+The padlock is the same geometry as the shell's `lock` icon, and the watermark is the same hexagon mark as the bar and the login screen. The mark keeps its own gradient in every palette, matching `Logo.qml`.
+
+**It lives in the initramfs.** Plymouth runs before the root filesystem is mounted, so the theme is copied into the initramfs by dracut. That has two consequences:
+
+- Switching themes updates `/usr/share/plymouth/themes/hypora/` but **not** what renders at boot until `sudo dracut -f`. `hypora-theme` prints this rather than running it, because a dracut rebuild takes 20–30 seconds and needs root — too much to do silently behind a theme switch.
+- The font is handled for you: `plymouth-populate-initrd` runs `fc-match` on the `Font=` line and copies the matching file in. JetBrainsMono Nerd Font is installed to `/usr/local/share/fonts`, system-wide, so root's fontconfig finds it.
+
+**What can't be themed.** `two-step` has no key for the prompt text's colour — it always draws it white. Fine for the three dark palettes here; a light palette would need the `script` module instead (`plymouth-plugin-script`), which replaces the ini with a real script at the cost of debugging failures in early boot.
+
+Preview it without rebooting, which is worth doing before trusting it on an encrypted disk:
+
+```bash
+sudo plymouthd --debug --tty=/dev/tty2 ; sudo plymouth --show-splash
+sudo plymouth ask-for-password          # the prompt, on tty2
+sudo plymouth quit
+```
+
+If the theme ever fails to render on a machine that needs a passphrase, **Esc** drops Plymouth to the plain text prompt. The installer also refuses to switch to the theme unless `entry.png` and `bullet.png` are actually on disk, so a half-generated theme can't lock you out.
 
 ## DNS
 
