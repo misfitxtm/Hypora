@@ -31,6 +31,10 @@ All shown in **Nord**; every theme drives the same widgets from its own palette.
 <img src="docs/images/menu-settings.png" alt="The menu's Settings section" width="330">
 </p>
 
+**The theme picker** (`ThemePicker.qml`), **SUPER + ALT + T**. The centred card is the one Enter applies; neighbours sit back and dim. Previews are generated from each theme's `colors.toml`, not screenshots.
+
+<img src="docs/images/theme-picker.png" alt="The Hypora theme picker, sliding between themes" width="800">
+
 **The Security window** (`SecuritySettings.qml`), Menu > Security — shown with the deeper checks already run, so the firmware attributes and the firewall's zone are filled in. What each row reads is in the components table below.
 
 <img src="docs/images/security.png" alt="The Hypora Security window" width="620">
@@ -65,7 +69,7 @@ All shown in **Nord**; every theme drives the same widgets from its own palette.
 
 The shell itself is never run as root, and shouldn't be. Quickshell is a single process — the Security window is not separable from the bar, launcher and notification daemon — and it loads its QML from `~/.config/quickshell/`, which you can write. Privileged code must not sit on a path its own user can edit, which is why `hypora-security` is root-owned in `/usr/local/bin` and reached through pkexec. `hypora-security deep` deliberately re-reads none of your per-user settings, so running it as root can't substitute root's configuration for yours; it reads firewalld's zone from `/etc/firewalld` directly rather than over D-Bus, so that half can't raise a second prompt. **Network**: whether DNS is encrypted (and in which mode, and to which resolver), whether each card is presenting a randomized MAC address, and whether the firewall is running in a closed zone. **Updates**: whether system packages and flatpaks update on their own, and what the package timer is allowed to install. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
 | Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
-| Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Settings > Theme): a card per installed theme with its wallpaper, a miniature desktop in its colors and its palette. Arrows to choose, Enter or click to apply |
+| Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Style > Theme): a full-screen carousel, one theme at a time with its neighbours peeking in. Each card is a live preview — the theme's own wallpaper under a miniature desktop drawn in that theme's colours, plus its palette. Left/Right or scroll to slide, Enter or click to apply, Esc to close; start typing to filter |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Weather (`Weather.qml`) | To the right of the clock: current conditions and a three-day forecast. Pick your city by name — there is no IP geolocation, and nothing is requested until you choose a place. Data from [Open-Meteo](https://open-meteo.com), which needs no account or API key. Your choice lives in `~/.config/hypora/weather.json`; `bin/hypora-weather` does the lookups and can be run on its own |
 | Sound (`AudioSettings.qml`) | Menu > Settings > Sound, or the mixer button in the control centre: output and input devices with their own volume and mute, a picker when there's more than one, and a row per application that's playing. Talks to PipeWire through Quickshell — no pavucontrol. `wiremix` is behind "Advanced" for routing and profiles |
@@ -206,6 +210,7 @@ Without the login screen, start it from a text console (TTY) with `uwsm start hy
 | SUPER + P | Pseudo-tile |
 | SUPER + S / SUPER + ALT + S | Show scratchpad / move window to it |
 | SUPER + arrows | Move focus |
+| SUPER + SHIFT + left / right | Send the focused window to the next monitor over |
 | SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace, on the monitor you're using |
 | SUPER + scroll | Cycle this monitor's workspaces |
 | SUPER + drag (left / right mouse) | Move / resize window |

@@ -159,6 +159,8 @@ local keys = {
     focusRight  = mainMod .. " + right",
     focusUp     = mainMod .. " + up",
     focusDown   = mainMod .. " + down",
+    monitorLeft  = mainMod .. " + SHIFT + left",
+    monitorRight = mainMod .. " + SHIFT + right",
 }
 
 do
@@ -198,6 +200,18 @@ hl.bind(keys.focusLeft,  hl.dsp.focus({ direction = "left" }))
 hl.bind(keys.focusRight, hl.dsp.focus({ direction = "right" }))
 hl.bind(keys.focusUp,    hl.dsp.focus({ direction = "up" }))
 hl.bind(keys.focusDown,  hl.dsp.focus({ direction = "down" }))
+
+-- Throw the focused window at the next monitor over. It lands on whatever workspace that
+-- screen is showing, which with the per-monitor blocks above is that monitor's own.
+--
+-- `monitor` is the move-to-a-monitor form, not the move-within-the-layout one: since 0.54 a
+-- plain directional move stops at the edge of the current screen instead of crossing over.
+-- It also takes a name, an index or "relative:+1" if a direction isn't what you want.
+--
+-- Focus deliberately stays put, matching what SUPER + SHIFT + [0-9] does when it sends a
+-- window to another workspace. Add follow = true to both of these to go with the window.
+hl.bind(keys.monitorLeft,  hl.dsp.window.move({ monitor = "l" }))
+hl.bind(keys.monitorRight, hl.dsp.window.move({ monitor = "r" }))
 
 -- Workspaces: SUPER + [0-9] to switch, SUPER + SHIFT + [0-9] to move window.
 --

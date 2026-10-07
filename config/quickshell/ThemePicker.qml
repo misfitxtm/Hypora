@@ -5,9 +5,14 @@ import Quickshell.Wayland
 import QtQuick
 import Qt.labs.folderlistmodel
 
-// Theme picker (SUPER + ALT + T, or menu > Settings > Theme). Each card previews a theme
-// with its first wallpaper, a miniature desktop in its colors and its palette.
-// Arrows to choose, Enter or click to apply (runs hypora-theme), Esc to close.
+// Theme picker (SUPER + ALT + T, or menu > Style > Theme), as a sliding carousel: one theme
+// at a time, centred and large, with its neighbours peeking in at either side.
+//
+// Each card is a live preview rather than a screenshot — the theme's own first wallpaper
+// behind a miniature desktop drawn in that theme's colours, so what you see is generated
+// from the same colors.toml that hypora-theme will apply.
+//
+// Left/Right or scroll to slide, Enter or click to apply, Esc to close. Typing filters.
 // Also:  qs ipc call themes toggle
 Scope {
     id: root
@@ -47,9 +52,19 @@ Scope {
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
             WlrLayershell.namespace: "hypora-themes"
-            color: "#99000000"
+            color: "#d0000000"
 
-            FileView { id: currentName; path: root.home + "/.config/hypora/current/name"; blockLoading: true; printErrors: false }
+            property string filterText: ""      // not on the Text below: it has `text` already
+            readonly property int cardWidth: 620
+            readonly property int cardHeight: 390
+
+            FileView {
+                id: currentName
+                path: root.home + "/.config/hypora/current/name"
+                blockLoading: true
+                printErrors: false
+            }
+            readonly property string active: currentName.text().trim()
 
             FolderListModel {
                 id: themes
@@ -59,75 +74,147 @@ Scope {
                 sortField: FolderListModel.Name
             }
 
+            // FolderListModel can't filter on a typed string, so the carousel runs off a
+            // plain list built from it — which also makes "no match" easy to show.
+            readonly property var allNames: {
+                const out = []
+                for (let i = 0; i < themes.count; i++) out.push(themes.get(i, "fileName"))
+                return out
+            }
+            readonly property var shown: {
+                const q = win.filterText.trim().toLowerCase()
+                return q === "" ? allNames : allNames.filter(n => n.toLowerCase().indexOf(q) >= 0)
+            }
+            readonly property string focused: carousel.currentIndex >= 0
+                                               && carousel.currentIndex < shown.length
+                                               ? shown[carousel.currentIndex] : ""
+
+            // Land on the theme in use the first time the list arrives
+            property bool positioned: false
+            onShownChanged: {
+                if (!positioned && shown.length > 0) {
+                    const i = shown.indexOf(active)
+                    carousel.currentIndex = i >= 0 ? i : 0
+                    carousel.positionViewAtIndex(carousel.currentIndex, ListView.Center)
+                    positioned = true
+                } else if (carousel.currentIndex >= shown.length) {
+                    carousel.currentIndex = Math.max(0, shown.length - 1)
+                }
+            }
+
             MouseArea {
                 anchors.fill: parent
                 onClicked: ShellState.themePickerOpen = false
             }
 
-            Rectangle {
-                id: panel
+            // ---------- keys ----------
+            Item {
+                anchors.fill: parent
+                focus: true
+                Component.onCompleted: forceActiveFocus()
+                Keys.onLeftPressed: carousel.decrementCurrentIndex()
+                Keys.onRightPressed: carousel.incrementCurrentIndex()
+                Keys.onEscapePressed: ShellState.themePickerOpen = false
+                Keys.onReturnPressed: if (win.focused !== "") root.apply(win.focused)
+                Keys.onEnterPressed: if (win.focused !== "") root.apply(win.focused)
+                // Anything else goes to the filter, so you can just start typing
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Backspace) { win.filterText = win.filterText.slice(0, -1); event.accepted = true }
+                    else if (event.text.length === 1 && event.text >= " ") { win.filterText += event.text; event.accepted = true }
+                }
+            }
+
+            Column {
                 anchors.centerIn: parent
-                width: grid.cellWidth * Math.min(Math.max(grid.count, 1), 3) + 48
-                height: header.height + grid.cellHeight * Math.min(Math.ceil(grid.count / 3), 2) + 56
-                radius: 18
-                color: Theme.bg
-                border.width: 1
-                border.color: Theme.surface
+                spacing: 0
 
-                MouseArea { anchors.fill: parent }   // swallow clicks inside the panel
-
-                Column {
-                    id: header
-                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
-                    spacing: 2
+                // ---------- heading ----------
+                Item {
+                    width: win.cardWidth
+                    height: 56
                     Text {
+                        anchors { left: parent.left; verticalCenter: parent.verticalCenter }
                         text: "Themes"
-                        font.family: Theme.font; font.pixelSize: Theme.fontSize + 7; font.bold: true
+                        font.family: Theme.font; font.pixelSize: Theme.fontSize + 9; font.bold: true
                         color: Theme.fg
                     }
-                    Text {
-                        text: "Arrows to choose, Enter to apply, Esc to close"
-                        font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
-                        color: Theme.dim
+                    // The filter doubles as the hint line until you type into it
+                    Rectangle {
+                        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                        width: 228; height: 32; radius: 16
+                        color: win.filterText === "" ? "transparent" : Theme.surface
+                        border.width: 1
+                        border.color: win.filterText === "" ? "transparent" : Theme.accent
+                        Icon {
+                            id: fIcon
+                            anchors { left: parent.left; leftMargin: 11; verticalCenter: parent.verticalCenter }
+                            visible: win.filterText !== ""
+                            name: "search"; size: 13; color: Theme.dim
+                        }
+                        Text {
+                            id: filter
+                            anchors {
+                                left: win.filterText === "" ? parent.left : fIcon.right
+                                leftMargin: win.filterText === "" ? 0 : 9
+                                right: parent.right; rightMargin: 12
+                                verticalCenter: parent.verticalCenter
+                            }
+                            horizontalAlignment: win.filterText === "" ? Text.AlignRight : Text.AlignLeft
+                            elide: Text.ElideRight
+                            text: win.filterText === "" ? "Type to filter  ·  Enter to apply" : win.filterText
+                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
+                            color: win.filterText === "" ? Theme.dim : Theme.fg
+                        }
                     }
                 }
 
-                GridView {
-                    id: grid
-                    anchors { left: parent.left; right: parent.right; top: header.bottom; bottom: parent.bottom; margins: 24; topMargin: 16 }
-                    cellWidth: 344
-                    cellHeight: 286
-                    clip: true
-                    model: themes
-                    focus: true
-                    keyNavigationEnabled: true
-                    highlightFollowsCurrentItem: false
+                // ---------- the carousel ----------
+                ListView {
+                    id: carousel
+                    width: win.width
+                    height: win.cardHeight + 24
+                    x: -(win.width - win.cardWidth) / 2      // bleed past the column so neighbours show
+
+                    orientation: ListView.Horizontal
+                    model: win.shown
+                    spacing: 26
+                    clip: false
+                    // Snap the current card to the middle; this is what makes it slide
+                    // rather than scroll, and it keeps keyboard and wheel in agreement.
+                    snapMode: ListView.SnapOneItem
+                    highlightRangeMode: ListView.StrictlyEnforceRange
+                    preferredHighlightBegin: (width - win.cardWidth) / 2
+                    preferredHighlightEnd: (width + win.cardWidth) / 2
+                    highlightMoveDuration: 260
+                    highlightMoveVelocity: -1
                     boundsBehavior: Flickable.StopAtBounds
-                    Component.onCompleted: forceActiveFocus()
-
-                    Keys.onReturnPressed: if (currentItem) root.apply(currentItem.name)
-                    Keys.onEnterPressed: if (currentItem) root.apply(currentItem.name)
-                    Keys.onEscapePressed: ShellState.themePickerOpen = false
-
-                    // Start on the theme in use
-                    onCountChanged: {
-                        for (let i = 0; i < count; i++)
-                            if (themes.get(i, "fileName") === currentName.text().trim()) currentIndex = i
-                    }
+                    // Only the visible cards plus one either side get built
+                    cacheBuffer: win.cardWidth * 2
 
                     delegate: Item {
                         id: card
-                        required property string fileName
+                        required property string modelData
                         required property int index
-                        readonly property string name: fileName
+                        readonly property string name: modelData
                         readonly property var c: root.parse(colors.text())
-                        readonly property bool isCurrent: name === currentName.text().trim()
-                        readonly property bool selected: GridView.isCurrentItem
+                        readonly property bool isCurrent: name === win.active
+                        readonly property bool selected: index === carousel.currentIndex
 
-                        width: grid.cellWidth
-                        height: grid.cellHeight
+                        width: win.cardWidth
+                        height: carousel.height
 
-                        FileView { id: colors; path: `${root.themesDir}/${card.name}/colors.toml`; blockLoading: true; printErrors: false }
+                        // Neighbours sit back and dim, so the centre card reads as the subject
+                        scale: selected ? 1 : 0.9
+                        opacity: selected ? 1 : 0.45
+                        Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                        Behavior on opacity { NumberAnimation { duration: 220 } }
+
+                        FileView {
+                            id: colors
+                            path: `${root.themesDir}/${card.name}/colors.toml`
+                            blockLoading: true
+                            printErrors: false
+                        }
                         FolderListModel {
                             id: walls
                             folder: `file://${root.themesDir}/${card.name}/backgrounds`
@@ -137,74 +224,84 @@ Scope {
                         }
 
                         Rectangle {
-                            anchors { fill: parent; margins: 6 }
-                            radius: 14
-                            color: card.selected ? Theme.surface : "transparent"
+                            anchors.fill: parent
+                            radius: 18
+                            color: Theme.bg
                             border.width: 2
-                            border.color: card.selected ? Theme.accent : "transparent"
+                            border.color: card.selected ? Theme.accent : Theme.surface
 
-                            // ---- preview: wallpaper + a miniature desktop in the theme's colors ----
-                            Rectangle {
+                            // ---- live preview: the theme's wallpaper under a miniature desktop ----
+                            Item {
                                 id: preview
-                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 8 }
-                                height: 180
+                                anchors { fill: parent; margins: 10 }
+                                anchors.bottomMargin: 74
                                 clip: true
-                                color: card.c.background ?? "#000000"
 
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 10
+                                    color: card.c.background ?? "#000000"
+                                }
                                 Image {
                                     anchors.fill: parent
                                     visible: walls.count > 0
                                     source: walls.count > 0 ? walls.get(0, "fileUrl") : ""
                                     fillMode: Image.PreserveAspectCrop
-                                    sourceSize: Qt.size(640, 360)
+                                    sourceSize: Qt.size(win.cardWidth, 320)
                                     asynchronous: true
+                                    layer.enabled: true
+                                    layer.effect: null
                                 }
 
                                 // Bar
                                 Rectangle {
                                     anchors { left: parent.left; right: parent.right; top: parent.top }
-                                    height: 14
+                                    height: 22
                                     color: card.c.background ?? "#000"
                                     Row {
-                                        anchors { left: parent.left; leftMargin: 6; verticalCenter: parent.verticalCenter }
-                                        spacing: 3
-                                        Rectangle { width: 6; height: 6; radius: 3; color: card.c.accent ?? "#888" }
+                                        anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
+                                        spacing: 5
+                                        Rectangle { width: 9; height: 9; radius: 4.5; color: card.c.accent ?? "#888" }
                                         Repeater {
-                                            model: 4
+                                            model: 5
                                             Rectangle {
                                                 required property int index
-                                                width: 6; height: 4; radius: 1
+                                                width: 9; height: 6; radius: 2
                                                 color: index === 0 ? (card.c.accent ?? "#888") : (card.c.dim ?? "#666")
                                             }
                                         }
                                     }
-                                    Rectangle { anchors.centerIn: parent; width: 36; height: 3; radius: 1; color: card.c.foreground ?? "#ccc" }
                                     Rectangle {
-                                        anchors { right: parent.right; rightMargin: 6; verticalCenter: parent.verticalCenter }
-                                        width: 22; height: 6; radius: 3; color: card.c.surface ?? "#333"
+                                        anchors.centerIn: parent
+                                        width: 54; height: 5; radius: 2
+                                        color: card.c.foreground ?? "#ccc"
+                                    }
+                                    Rectangle {
+                                        anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                                        width: 34; height: 9; radius: 4.5; color: card.c.surface ?? "#333"
                                     }
                                 }
 
-                                // A terminal window
+                                // A focused terminal
                                 Rectangle {
-                                    x: 22; y: 30
-                                    width: 158; height: 120
-                                    radius: 5
+                                    x: 38; y: 52
+                                    width: 268; height: 186
+                                    radius: 8
                                     color: card.c.background ?? "#000"
-                                    border.width: 1.5
+                                    border.width: 2
                                     border.color: card.c.accent ?? "#888"
                                     Column {
-                                        anchors { left: parent.left; top: parent.top; margins: 9 }
-                                        spacing: 6
+                                        anchors { left: parent.left; top: parent.top; margins: 14 }
+                                        spacing: 10
                                         Repeater {
                                             model: ["green", "blue", "magenta", "yellow", "foreground", "red"]
                                             Row {
                                                 required property string modelData
                                                 required property int index
-                                                spacing: 4
-                                                Rectangle { width: 6; height: 4; radius: 1; color: card.c.green ?? "#8a8" }
+                                                spacing: 6
+                                                Rectangle { width: 10; height: 6; radius: 2; color: card.c.green ?? "#8a8" }
                                                 Rectangle {
-                                                    width: 30 + (index * 37) % 70; height: 4; radius: 1
+                                                    width: 48 + (index * 37) % 110; height: 6; radius: 2
                                                     color: card.c[modelData] ?? "#ccc"
                                                 }
                                             }
@@ -212,63 +309,64 @@ Scope {
                                     }
                                 }
 
-                                // A second window (unfocused)
+                                // An unfocused window beside it
                                 Rectangle {
-                                    x: 190; y: 30
-                                    width: 112; height: 120
-                                    radius: 5
+                                    x: 320; y: 52
+                                    width: 194; height: 186
+                                    radius: 8
                                     color: card.c.surface ?? "#222"
-                                    border.width: 1.5
+                                    border.width: 2
                                     border.color: card.c.muted ?? "#444"
                                     Column {
-                                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 9 }
-                                        spacing: 7
-                                        Rectangle { width: parent.width * 0.6; height: 5; radius: 2; color: card.c.foreground ?? "#ccc" }
+                                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                                        spacing: 11
+                                        Rectangle { width: parent.width * 0.6; height: 8; radius: 3; color: card.c.foreground ?? "#ccc" }
                                         Repeater {
                                             model: 4
                                             Rectangle {
                                                 required property int index
-                                                width: parent.width * (0.9 - index * 0.15); height: 3; radius: 1
+                                                width: parent.width * (0.92 - index * 0.14); height: 5; radius: 2
                                                 color: card.c.dim ?? "#666"
                                             }
                                         }
-                                        Rectangle { width: 40; height: 12; radius: 6; color: card.c.accent ?? "#888" }
+                                        Rectangle { width: 66; height: 20; radius: 10; color: card.c.accent ?? "#888" }
                                     }
                                 }
                             }
 
-                            // ---- name, "current" tag and palette ----
+                            // ---- name, "in use" tag, palette ----
                             Row {
-                                id: title
-                                anchors { left: preview.left; top: preview.bottom; topMargin: 12 }
-                                spacing: 8
+                                anchors { left: parent.left; leftMargin: 20; bottom: parent.bottom; bottomMargin: 22 }
+                                spacing: 10
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
                                     text: root.pretty(card.name)
-                                    font.family: Theme.font; font.pixelSize: Theme.fontSize + 1; font.bold: true
+                                    font.family: Theme.font; font.pixelSize: Theme.fontSize + 3; font.bold: true
                                     color: card.selected ? Theme.accent : Theme.fg
                                 }
                                 Rectangle {
-                                    visible: card.isCurrent
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: tag.implicitWidth + 14; height: 18; radius: 9
+                                    visible: card.isCurrent
+                                    width: tag.implicitWidth + 16; height: 20; radius: 10
                                     color: Theme.accent
                                     Text {
                                         id: tag
                                         anchors.centerIn: parent
-                                        text: "Current"
+                                        text: "In use"
                                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 4; font.bold: true
                                         color: Theme.bg
                                     }
                                 }
                             }
                             Row {
-                                anchors { left: preview.left; top: title.bottom; topMargin: 10 }
-                                spacing: 6
+                                anchors { right: parent.right; rightMargin: 20; bottom: parent.bottom; bottomMargin: 22 }
+                                spacing: 7
                                 Repeater {
                                     model: ["background", "surface", "accent", "red", "green", "yellow", "blue", "magenta", "cyan"]
                                     Rectangle {
                                         required property string modelData
-                                        width: 18; height: 18; radius: 9
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 20; height: 20; radius: 10
                                         color: card.c[modelData] ?? "transparent"
                                         border.width: 1
                                         border.color: Qt.rgba(1, 1, 1, 0.15)
@@ -280,10 +378,39 @@ Scope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onEntered: grid.currentIndex = card.index
-                                onClicked: root.apply(card.name)
+                                // Click a neighbour to bring it in; click the centre one to apply it
+                                onClicked: card.selected ? root.apply(card.name)
+                                                         : carousel.currentIndex = card.index
                             }
                         }
+                    }
+                }
+
+                // ---------- position dots ----------
+                Item {
+                    width: win.cardWidth
+                    height: 40
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: 8
+                        visible: win.shown.length > 1
+                        Repeater {
+                            model: win.shown.length
+                            Rectangle {
+                                required property int index
+                                width: index === carousel.currentIndex ? 20 : 7
+                                height: 7; radius: 3.5
+                                color: index === carousel.currentIndex ? Theme.accent : Theme.surface
+                                Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        visible: win.shown.length === 0
+                        text: `Nothing matches "${win.filterText}"`
+                        font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
+                        color: Theme.dim
                     }
                 }
             }

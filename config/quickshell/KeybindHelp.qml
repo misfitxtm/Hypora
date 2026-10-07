@@ -49,7 +49,9 @@ Scope {
                     { action: "focusLeft",   label: "Focus left",      def: "SUPER + left" },
                     { action: "focusRight",  label: "Focus right",     def: "SUPER + right" },
                     { action: "focusUp",     label: "Focus up",        def: "SUPER + up" },
-                    { action: "focusDown",   label: "Focus down",      def: "SUPER + down" }
+                    { action: "focusDown",   label: "Focus down",      def: "SUPER + down" },
+                    { action: "monitorLeft",  label: "Send to left monitor",  def: "SUPER + SHIFT + left" },
+                    { action: "monitorRight", label: "Send to right monitor", def: "SUPER + SHIFT + right" }
                 ]},
                 { title: "Scratchpad", items: [
                     { action: "scratchpad",       label: "Show / hide scratchpad", def: "SUPER + S" },
