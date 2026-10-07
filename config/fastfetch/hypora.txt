@@ -1,17 +1,18 @@
-           $1▄▄███████$2█████▄▄
-       $1▄▄███████████$2█████████▄▄
-   $1▄▄███████████████$2█████████████▄▄
-  $1██████████████████$2████████████████
-  $1█████████    █████$2███    █████████
-  $1█████████    █████$2███    █████████
-  $1█████████    █████$2███    █████████
-  $1█████████    █████$2███    █████████
-  $1█████████                $2█████████
-  $1█████████    █████$2███    █████████
-  $1█████████    █████$2███    █████████
-  $1█████████    █████$2███    █████████
-  $1█████████    █████$2███    █████████
-  $1██████████████████$2████████████████
-   $1▀▀███████████████$2█████████████▀▀
-       $1▀▀███████████$2█████████▀▀
-           $1▀▀███████$2█████▀▀
+$1             ..:cc:..
+$1          .:cccccccccc:.
+$1       .:cccccccccccccccc:.
+$1   ..:cccccccccccccccccccccc:..
+$1 .ccccccc$2oWW.$1cccccccc$2.WWo$1ccccccc.
+$1 :ccccccc$2MMMx$1cccccccc$2xMMM$1ccccccc:
+$1 :ccccccc$2MMMWWoo$1ccccc$2xMMM$1ccccccc:
+$1 :ccccccc$2MMMMMMMMo$1ccc$2xMMM$1ccccccc:
+$1 :ccccccc$2MMMMxxMMMo$1cc$2xMMM$1ccccccc:
+$1 :ccccccc$2MMMx$1cc$2xMMMooMMMM$1ccccccc:
+$1 :ccccccc$2MMMx$1ccc$2xMMMMMMMM$1ccccccc:
+$1 :ccccccc$2MMMx$1ccccc$2xxWWMMM$1ccccccc:
+$1 :ccccccc$2MMMx$1cccccccc$2xMMM$1ccccccc:
+$1 'ccccccc$2xWW'$1cccccccc$2'WWx$1ccccccc'
+$1   '':cccccccccccccccccccccc:''
+$1       ':cccccccccccccccc:'
+$1          ':cccccccccc:'
+$1             '':cc:''

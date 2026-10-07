@@ -9,6 +9,9 @@
     hypora-security selinux-boot <enforcing|permissive|disabled>   change it for next boot
     hypora-security camera <on|off>             load or unload the webcam driver
     hypora-security location <on|off>           unmask or mask geoclue
+    hypora-security encrypt-swap [--break-hibernate]
+                                                put any plaintext swap behind dm-crypt,
+                                                re-keyed from /dev/urandom every boot
 
 Only `status` and `firmware` run unprivileged; the rest need root and are meant to be run
 with pkexec, which puts the request through Hypora's polkit prompt. Run `status` yourself to
@@ -26,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SB_GUID = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
@@ -108,6 +112,57 @@ def firmware_checks():
     }
 
 
+def hibernation():
+    """Is the system set up to hibernate into swap?
+
+    This matters because random-key encrypted swap cannot be resumed from: the key is
+    thrown away at power-off by design. Read from the running kernel's command line, which
+    is what actually decides it, rather than from a bootloader config that may not be live.
+    """
+    try:
+        cmdline = Path("/proc/cmdline").read_text()
+    except OSError:
+        return {"configured": False, "device": ""}
+    m = re.search(r"\bresume=(\S+)", cmdline)
+    return {"configured": bool(m), "device": m.group(1) if m else ""}
+
+
+def crypttab_random_keyed():
+    """Mapper names in /etc/crypttab that take a fresh key from /dev/urandom each boot."""
+    names = set()
+    try:
+        text = Path("/etc/crypttab").read_text()
+    except OSError:
+        return names
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] in ("/dev/urandom", "/dev/random"):
+            names.add(parts[0])
+    return names
+
+
+def swap_files():
+    """Swap that lives in a file rather than on its own device.
+
+    lsblk reports the device holding the file, not the file, so these never show up in the
+    tree walk below. A swapfile on an encrypted root is already covered by that encryption;
+    one on a plaintext root is the least of that system's problems.
+    """
+    out = []
+    try:
+        lines = Path("/proc/swaps").read_text().splitlines()[1:]
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "file":
+            out.append(parts[0])
+    return out
+
+
 def encryption():
     """Is / on an encrypted volume, and does any swap reach the disk unencrypted?
 
@@ -115,9 +170,10 @@ def encryption():
     encrypted if a LUKS/crypt layer sits somewhere above it. zram swap lives in RAM, so it
     never reaches the disk and isn't a leak.
     """
-    rc, out = run(["lsblk", "-J", "-o", "NAME,TYPE,FSTYPE,MOUNTPOINTS"])
+    cols = "NAME,PATH,TYPE,FSTYPE,UUID,PARTUUID,MOUNTPOINTS"
+    rc, out = run(["lsblk", "-J", "-o", cols])
     if rc != 0 or not out:
-        rc, out = run(["lsblk", "-J", "-o", "NAME,TYPE,FSTYPE,MOUNTPOINT"])
+        rc, out = run(["lsblk", "-J", "-o", cols.replace("MOUNTPOINTS", "MOUNTPOINT")])
     if rc != 0 or not out:
         return {"available": False, "note": "lsblk did not report the disk layout."}
     try:
@@ -127,6 +183,7 @@ def encryption():
 
     root = None
     swaps = []
+    random_keyed = crypttab_random_keyed()
 
     def mounts(node):
         mp = node.get("mountpoints")
@@ -144,22 +201,36 @@ def encryption():
                     root = {"device": n["name"], "encrypted": "crypt" in kinds}
                 elif m == "[SWAP]":
                     zram = n["name"].startswith("zram")
+                    crypt = "crypt" in kinds
                     swaps.append({
                         "name": n["name"],
+                        "path": n.get("path") or f"/dev/{n['name']}",
+                        "uuid": n.get("uuid") or "",
+                        "partuuid": n.get("partuuid") or "",
                         "kind": "zram" if zram else (n.get("type") or "device"),
                         # zram is RAM-backed, so nothing is written to the disk
-                        "safe": zram or "crypt" in kinds,
+                        "safe": zram or crypt,
+                        "encrypted": crypt,
+                        # A LUKS swap keeps its key across boots; a plain random-key one
+                        # is unreadable the moment the machine powers off.
+                        "randomKey": crypt and n["name"] in random_keyed,
                     })
             walk(n.get("children") or [], here)
 
     walk(tree, [])
-    exposed = [s["name"] for s in swaps if not s["safe"]]
+    exposed = [s for s in swaps if not s["safe"]]
+    files = swap_files()
     return {
         "available": root is not None,
         "rootEncrypted": bool(root and root["encrypted"]),
         "rootDevice": root["device"] if root else "",
         "swap": swaps,
-        "unencryptedSwap": exposed,
+        "unencryptedSwap": [s["name"] for s in exposed],
+        "swapFiles": files,
+        "hibernation": hibernation(),
+        # The window only offers the button when there is something to act on and the tool
+        # to do it with; this keeps that decision in one place.
+        "canEncryptSwap": bool(exposed) and shutil.which("cryptsetup") is not None,
     }
 
 
@@ -545,6 +616,178 @@ def set_location(state):
     sys.exit(rc)
 
 
+# ---------- encrypted swap ----------
+#
+# Swap holds whatever was in memory, so a plaintext swap partition on an otherwise
+# encrypted machine is a hole straight through the encryption. The fix is a plain dm-crypt
+# layer keyed from /dev/urandom: a new key every boot, never written anywhere, so the
+# contents are unrecoverable the moment the machine powers off. That also means hibernation
+# can never work, which is the one real cost and why this asks first.
+
+SWAP_CIPHER = "aes-xts-plain64"
+SWAP_KEY_BITS = "512"          # aes-xts splits this into two 256-bit keys
+FSTAB = Path("/etc/fstab")
+CRYPTTAB = Path("/etc/crypttab")
+
+
+def _backup(path):
+    """Timestamped copy of a file the boot depends on, before touching it."""
+    if not path.exists():
+        return None
+    dest = path.with_name(path.name + time.strftime(".hypora-%Y%m%d-%H%M%S"))
+    shutil.copy2(path, dest)
+    return dest
+
+
+def _stable_ref(swap):
+    """A way to name a swap device that survives being encrypted.
+
+    Deliberately not UUID=. Encrypting the device overwrites its swap signature, so the UUID
+    that identifies it right now stops existing the moment this runs -- a crypttab or fstab
+    entry pointing at it would fail at the next boot, which is exactly the sort of mistake
+    that ends in an emergency shell. A partition's PARTUUID lives in the partition table, and
+    an LVM volume's /dev/mapper path is assigned by LVM, so both outlive the contents.
+
+    Takes the entry from encryption()'s own lsblk walk rather than asking lsblk again: the
+    data is already there, and one source for it means one thing to keep right.
+    """
+    if swap.get("partuuid"):
+        return f"PARTUUID={swap['partuuid']}"
+    if swap.get("kind") == "lvm":
+        return swap.get("path") or f"/dev/mapper/{swap['name']}"
+    return None
+
+
+def _comment_swap_lines(text, keys):
+    """Comment out any fstab line that activates one of `keys` as swap."""
+    lower = {k.lower() for k in keys}
+    out, hit = [], []
+    for line in text.splitlines():
+        s = line.strip()
+        if s and not s.startswith("#"):
+            f = s.split()
+            if len(f) >= 3 and f[2] == "swap" and f[0].lower() in lower:
+                hit.append(s)
+                out.append("# replaced by Hypora's encrypted swap:")
+                out.append("# " + line)
+                continue
+        out.append(line)
+    return "\n".join(out) + "\n", hit
+
+
+def _mapper_name(name):
+    safe = re.sub(r"[^A-Za-z0-9_-]", "-", name)
+    return f"cryptswap-{safe}"
+
+
+def encrypt_swap(arg=""):
+    need_root()
+    allow_hibernate_loss = arg in ("--break-hibernate", "force")
+
+    info = encryption()
+    if not info.get("available"):
+        sys.exit(info.get("note", "Could not read the disk layout."))
+
+    targets = [s for s in info["swap"] if not s["safe"]]
+    if not targets:
+        print("Nothing to do: no swap is reaching the disk unencrypted.")
+        return
+    if shutil.which("cryptsetup") is None:
+        sys.exit("cryptsetup is not installed.")
+
+    hib = info["hibernation"]
+    if hib["configured"] and not allow_hibernate_loss:
+        sys.exit(
+            f"Hibernation is configured (resume={hib['device']}). Encrypted swap takes a new "
+            "random key every boot, so a hibernated image could never be resumed -- the key "
+            "it was written with is gone. Remove the resume= kernel argument first, or "
+            "re-run with --break-hibernate."
+        )
+
+    _backup(FSTAB)
+    _backup(CRYPTTAB)
+    fstab = FSTAB.read_text() if FSTAB.exists() else ""
+    crypttab = CRYPTTAB.read_text() if CRYPTTAB.exists() else ""
+    done = []
+
+    for s in targets:
+        dev, name, uuid = s["path"], s["name"], s["uuid"]
+        mapper = _mapper_name(name)
+        ref = _stable_ref(s)
+        if not ref:
+            print(f"skipping {name}: it is neither a partition nor an LVM volume, so there "
+                  "is no name for it that survives being encrypted", file=sys.stderr)
+            continue
+
+        def restore(why):
+            """Put the plaintext swap back exactly as it was, UUID included."""
+            run(["cryptsetup", "close", mapper])
+            if uuid:
+                run(["mkswap", "-U", uuid, dev])
+            else:
+                run(["mkswap", dev])
+            run(["swapon", dev])
+            print(f"skipping {name}: {why}", file=sys.stderr)
+
+        # Prove it works on the live system before writing anything that affects the boot.
+        rc, _ = run(["swapoff", dev], timeout=60)
+        if rc != 0:
+            print(f"skipping {name}: could not swapoff {dev}", file=sys.stderr)
+            continue
+
+        rc, _ = run(["cryptsetup", "open", "--type", "plain",
+                     "--key-file", "/dev/urandom", "--key-size", SWAP_KEY_BITS,
+                     "--cipher", SWAP_CIPHER, dev, mapper], timeout=60)
+        if rc != 0:
+            # Nothing has been written to the device yet, so the old swap is still intact
+            run(["swapon", dev])
+            print(f"skipping {name}: cryptsetup could not open {dev}", file=sys.stderr)
+            continue
+
+        target = f"/dev/mapper/{mapper}"
+        rc, _ = run(["mkswap", target], timeout=60)
+        if rc != 0:
+            restore("mkswap failed on the encrypted device")
+            continue
+        rc, _ = run(["swapon", target], timeout=60)
+        if rc != 0:
+            restore("the encrypted device would not activate as swap")
+            continue
+
+        # It is live and working; now make it survive a reboot.
+        if not re.search(rf"^\s*{re.escape(mapper)}\s", crypttab, re.M):
+            if crypttab and not crypttab.endswith("\n"):
+                crypttab += "\n"
+            crypttab += (f"# Hypora: swap re-keyed from /dev/urandom every boot\n"
+                         f"{mapper} {ref} /dev/urandom "
+                         f"swap,cipher={SWAP_CIPHER},size={SWAP_KEY_BITS}\n")
+
+        keys = {dev, f"/dev/{name}"}
+        if uuid:
+            keys |= {f"UUID={uuid}", f"/dev/disk/by-uuid/{uuid}"}
+        fstab, replaced = _comment_swap_lines(fstab, keys)
+        if not re.search(rf"^\s*{re.escape(target)}\s", fstab, re.M):
+            if fstab and not fstab.endswith("\n"):
+                fstab += "\n"
+            # nofail so that a swap that fails to come up cannot hold up the boot
+            fstab += f"{target} none swap defaults,nofail 0 0\n"
+        done.append({"device": dev, "mapper": mapper, "ref": ref, "replaced": replaced})
+
+    if not done:
+        sys.exit("No swap was changed.")
+
+    CRYPTTAB.write_text(crypttab)
+    FSTAB.write_text(fstab)
+    run(["systemctl", "daemon-reload"])
+
+    for d in done:
+        print(f"{d['device']} is now encrypted swap at /dev/mapper/{d['mapper']} "
+              f"(keyed from /dev/urandom, referenced as {d['ref']})")
+    if hib["configured"]:
+        print("Hibernation will no longer work. Remove resume= from the kernel command line "
+              "to stop the boot waiting for it.", file=sys.stderr)
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] == "status":
         print(json.dumps(status(deep="--deep" in argv), indent=2))
@@ -561,6 +804,7 @@ def main(argv):
         "selinux-boot": set_selinux_boot,
         "camera": set_camera,
         "location": set_location,
+        "encrypt-swap": encrypt_swap,
     }
     if cmd not in actions:
         print(__doc__, file=sys.stderr)

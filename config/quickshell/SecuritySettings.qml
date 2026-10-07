@@ -63,15 +63,82 @@ Scope {
             // the helper validates each value against a fixed list anyway.
             readonly property string helper: "/usr/local/bin/hypora-security"
 
-            function admin(args, what) {
-                notice = what
-                Quickshell.execDetached(["pkexec", helper].concat(args))
-                recheck.restart()
+            // What the user just asked for, before the system has caught up. A row shows
+            // this in preference to the last reading, so a switch moves under the cursor
+            // instead of sitting still until the next poll. Cleared by the next reading, or
+            // rolled back if the command fails -- so it is a head start, never a lie.
+            property var pending: ({})
+
+            function setPending(key, value) {
+                pending = Object.assign({}, pending, { [key]: value })
+            }
+            function dropPending(keys) {
+                const p = Object.assign({}, pending)
+                for (const k of keys) delete p[k]
+                pending = p
+            }
+            // Rows call this instead of reading the status object directly
+            function shown(key, actual) {
+                return pending[key] === undefined ? actual : pending[key]
             }
 
-            function gsettingsSet(key, value) {
-                Quickshell.execDetached(["gsettings", "set", "org.gnome.desktop.privacy", key, value])
-                recheck.restart()
+            // One process for changes, so the refresh happens the moment the change is
+            // actually done. The old version fired and forgot, then re-read on a 1.5s
+            // timer -- which is where the lag came from: the work took milliseconds and
+            // the window waited anyway.
+            Process {
+                id: action
+                property var keys: []
+                property string label: ""
+                stderr: StdioCollector { id: actionErr }
+                onExited: code => {
+                    if (code === 0) {
+                        win.notice = ""
+                    } else {
+                        // It didn't happen, so stop claiming it did
+                        win.dropPending(action.keys)
+                        const why = actionErr.text.trim()
+                        win.notice = code === 126 ? "Authentication cancelled."
+                                   : why !== "" ? why
+                                   : action.label + " did not work."
+                    }
+                    win.refresh()
+                }
+            }
+
+            // `key`/`optimistic` are optional: pass them for a row whose own control should
+            // move straight away, leave them off for an action with no switch of its own.
+            function admin(args, what, key, optimistic) {
+                if (action.running) return
+                notice = what
+                action.keys = key === undefined ? [] : [key]
+                if (key !== undefined) setPending(key, optimistic)
+                action.label = what
+                action.command = ["pkexec", helper].concat(args)
+                action.running = true
+            }
+
+            // Same shape as admin(), without pkexec: these are the user's own settings.
+            Process {
+                id: userAction
+                property var keys: []
+                onExited: code => {
+                    if (code !== 0) win.dropPending(userAction.keys)
+                    win.refresh()
+                }
+            }
+
+            function userRun(args, key, optimistic) {
+                if (userAction.running) return
+                userAction.keys = key === undefined ? [] : [key]
+                if (key !== undefined) setPending(key, optimistic)
+                userAction.command = args
+                userAction.running = true
+            }
+
+            function gsettingsSet(key, value, pendingKey, optimistic) {
+                userRun(["gsettings", "set", "org.gnome.desktop.privacy", key, value],
+                        pendingKey, optimistic)
             }
 
             // Plain `status` makes no call that can reach polkit, so this is safe to run
@@ -84,6 +151,10 @@ Scope {
                     onStreamFinished: {
                         try { win.info = JSON.parse(text) } catch (e) { win.info = null }
                         win.loading = false
+                        // This reading is now the truth, so the optimistic state has done
+                        // its job. Not while a change is still running: that reading would
+                        // predate it and would flip the control back under the cursor.
+                        if (!action.running && !userAction.running) win.pending = ({})
                     }
                 }
                 onExited: code => { if (code !== 0 && win.info === null) win.loading = false }
@@ -122,9 +193,9 @@ Scope {
             }
 
             // There is no periodic refresh on purpose. Re-reading on a timer is what turned a
-            // single password prompt into one every fifteen seconds; the window now reloads
-            // when it opens and after you change something here.
-            Timer { id: recheck; interval: 1500; onTriggered: win.refresh() }
+            // single password prompt into one every fifteen seconds; the window reloads when
+            // it opens and when a change it made has finished, which it now knows about
+            // because it waits on the process rather than guessing at a delay.
             Component.onCompleted: refresh()
 
             Rectangle {
@@ -231,8 +302,10 @@ Scope {
                                 }
                             }
 
-                            // ---------- Device security ----------
-                            Heading { text: "Device Security" }
+                            // ---------- Security ----------
+                            // Everything about the state of the machine. The things that are
+                            // about you rather than it are under Privacy, further down.
+                            Heading { text: "Security" }
 
                             StatusRow {
                                 readonly property var sb: win.info ? win.info.secureBoot : null
@@ -264,13 +337,135 @@ Scope {
                                     const e = win.info ? win.info.encryption : null
                                     if (!e) return ""
                                     if (!e.available) return e.note || ""
-                                    const swap = e.unencryptedSwap.length > 0
-                                        ? ` Swap on ${e.unencryptedSwap.join(", ")} is not encrypted, so memory can reach the disk in the clear.`
+                                    let swap = ""
+                                    if (e.unencryptedSwap.length > 0) {
+                                        swap = ` Swap on ${e.unencryptedSwap.join(", ")} is not encrypted, `
+                                             + "so memory can reach the disk in the clear."
+                                    } else {
+                                        const rand = (e.swap || []).filter(s => s.randomKey)
+                                        if (rand.length > 0)
+                                            swap = ` Swap on ${rand.map(s => s.name).join(", ")} is encrypted with `
+                                                 + "a key taken from /dev/urandom at boot, so it cannot be read back "
+                                                 + "once the machine is off."
+                                    }
+                                    const files = (e.swapFiles || []).length > 0 && !e.rootEncrypted
+                                        ? ` Swap is also in a file (${e.swapFiles.join(", ")}) on an unencrypted filesystem.`
                                         : ""
                                     return (e.rootEncrypted
                                         ? `This system is on an encrypted volume (${e.rootDevice}).`
                                         : "This system is not encrypted, so anyone holding the drive can read it. "
-                                          + "Encryption can only be turned on when Fedora is installed.") + swap
+                                          + "Encryption can only be turned on when Fedora is installed.") + swap + files
+                                }
+                            }
+
+                            // Swap holds whatever was in memory, so plaintext swap is a hole
+                            // straight through disk encryption. Offered only when there is
+                            // actually exposed swap and cryptsetup to fix it with, and behind
+                            // a confirmation because it edits fstab and crypttab.
+                            ColumnLayout {
+                                id: swapFix
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 12
+                                Layout.topMargin: 2
+                                Layout.bottomMargin: 10
+                                spacing: 8
+                                visible: win.info !== null && win.info.encryption
+                                         && win.info.encryption.canEncryptSwap === true
+
+                                property bool confirming: false
+                                readonly property var enc: win.info ? win.info.encryption : null
+                                readonly property bool losesHibernate:
+                                    enc && enc.hibernation && enc.hibernation.configured === true
+                                readonly property string devices:
+                                    enc && enc.unencryptedSwap ? enc.unencryptedSwap.join(", ") : ""
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+                                    visible: !swapFix.confirming
+                                    Pill {
+                                        text: "Encrypt swap"
+                                        small: true
+                                        onClicked: swapFix.confirming = true
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Puts swap behind dm-crypt with a key taken from /dev/urandom, "
+                                            + "fresh on every boot."
+                                        wrapMode: Text.Wrap
+                                        font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                        color: Theme.dim
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    visible: swapFix.confirming
+                                    implicitHeight: confirmCol.implicitHeight + 26
+                                    radius: 10
+                                    color: Qt.rgba(Theme.warn.r, Theme.warn.g, Theme.warn.b, 0.10)
+                                    border.width: 1
+                                    border.color: Theme.warn
+
+                                    ColumnLayout {
+                                        id: confirmCol
+                                        anchors { fill: parent; margins: 13 }
+                                        spacing: 6
+
+                                        Text {
+                                            text: "Encrypt swap on " + swapFix.devices + "?"
+                                            font.family: Theme.font
+                                            font.pixelSize: Theme.fontSize
+                                            font.bold: true
+                                            color: Theme.fg
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Swap is switched off, re-made inside dm-crypt and switched back on. "
+                                                + "Anything already written there becomes unreadable, including a "
+                                                + "suspended session's pages. /etc/fstab and /etc/crypttab are copied "
+                                                + "first and the old entry is commented out rather than deleted."
+                                            wrapMode: Text.Wrap
+                                            font.family: Theme.font
+                                            font.pixelSize: Theme.fontSize - 3
+                                            color: Theme.dim
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            visible: swapFix.losesHibernate
+                                            text: "This machine is set up to hibernate (resume="
+                                                + (swapFix.enc && swapFix.enc.hibernation
+                                                   ? swapFix.enc.hibernation.device : "")
+                                                + "). A key that is thrown away at power-off cannot be resumed from, "
+                                                + "so hibernating will stop working. Suspend is unaffected."
+                                            wrapMode: Text.Wrap
+                                            font.family: Theme.font
+                                            font.pixelSize: Theme.fontSize - 3
+                                            color: Theme.warn
+                                        }
+                                        RowLayout {
+                                            Layout.topMargin: 2
+                                            spacing: 8
+                                            Pill {
+                                                text: "Encrypt swap"
+                                                current: true
+                                                small: true
+                                                onClicked: {
+                                                    swapFix.confirming = false
+                                                    win.admin(swapFix.losesHibernate
+                                                              ? ["encrypt-swap", "--break-hibernate"]
+                                                              : ["encrypt-swap"],
+                                                              "Encrypting swap…")
+                                                }
+                                            }
+                                            Pill {
+                                                text: "Cancel"
+                                                small: true
+                                                onClicked: swapFix.confirming = false
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                        }
+                                    }
                                 }
                             }
 
@@ -322,9 +517,6 @@ Scope {
                                     color: Theme.dim
                                 }
                             }
-
-                            // ---------- Network ----------
-                            Heading { text: "Network" }
 
                             StatusRow {
                                 readonly property var dns: win.info ? win.info.dns : null
@@ -425,9 +617,6 @@ Scope {
                                 }
                             }
 
-                            // ---------- Updates ----------
-                            Heading { text: "Updates" }
-
                             StatusRow {
                                 readonly property var up: win.info ? win.info.updates : null
                                 readonly property bool good: up && up.packagesEnabled && up.packagesApply
@@ -465,9 +654,6 @@ Scope {
                                           + "enable hypora-flatpak-update.timer."
                             }
 
-                            // ---------- SELinux ----------
-                            Heading { text: "SELinux" }
-
                             StatusRow {
                                 readonly property var se: win.info ? win.info.selinux : null
                                 icon: !se || !se.available ? "shield"
@@ -475,7 +661,9 @@ Scope {
                                 tone: !se || !se.available ? Theme.dim
                                     : se.mode === "enforcing" ? Theme.accent
                                     : se.mode === "permissive" ? Theme.warn : Theme.error
-                                title: "Mode"
+                                // "Mode" on its own meant nothing once the SELinux heading
+                                // above it went away
+                                title: "SELinux"
                                 value: !se ? "" : !se.available ? "Not installed"
                                      : se.mode.charAt(0).toUpperCase() + se.mode.slice(1)
                                 detail: {
@@ -508,8 +696,10 @@ Scope {
                                         text: modelData
                                         // Changing the running mode only works if SELinux is already on
                                         enabled: win.info && win.info.selinux.mode !== "disabled"
-                                        current: win.info && win.info.selinux.mode === want
-                                        onClicked: win.admin(["selinux", want], `Switching to ${want}…`)
+                                        current: win.shown("selinux",
+                                                    win.info ? win.info.selinux.mode : "") === want
+                                        onClicked: win.admin(["selinux", want], `Switching to ${want}…`,
+                                                             "selinux", want)
                                     }
                                 }
                                 Item { Layout.fillWidth: true }
@@ -540,32 +730,58 @@ Scope {
                                         readonly property string want: modelData.toLowerCase()
                                         text: modelData
                                         small: true
-                                        current: win.info && win.info.selinux.boot === want
+                                        current: win.shown("selinuxBoot",
+                                                    win.info ? win.info.selinux.boot : "") === want
                                         onClicked: win.admin(["selinux-boot", want],
                                             want === "disabled" ? "Will be off after a reboot…"
-                                                                : "Will relabel on the next boot…")
+                                                                : "Will relabel on the next boot…",
+                                            "selinuxBoot", want)
                                     }
                                 }
                             }
 
-                            // ---------- Hardware ----------
-                            Heading { text: "Hardware" }
+                            // ---------- Privacy ----------
+                            // The sensors that can observe you, and the record of what you
+                            // opened. Grouped by who the subject is, not by what kind of
+                            // component it happens to be -- a camera and a microphone belong
+                            // with location services, not with the disk and the firewall.
+                            Heading { text: "Privacy" }
+
+                            ToggleRow {
+                                readonly property var loc: win.info ? win.info.location : null
+                                icon: "map-pin"
+                                title: "Location Services"
+                                available: loc !== null && loc.available
+                                checked: win.shown("location",
+                                                   loc !== null && loc.available && loc.enabled)
+                                detail: !loc ? ""
+                                      : !loc.available ? loc.note
+                                      : loc.enabled
+                                        ? "GeoClue may give your approximate location to apps that ask."
+                                        : "GeoClue is masked, so nothing can start it."
+                                onToggled: win.admin(["location", checked ? "off" : "on"],
+                                                     checked ? "Masking GeoClue…" : "Unmasking GeoClue…",
+                                                     "location", !checked)
+                            }
 
                             ToggleRow {
                                 readonly property var cam: win.info ? win.info.camera : null
                                 icon: "camera"
                                 title: "Camera"
                                 available: cam !== null && cam.present
-                                checked: cam !== null && cam.enabled
+                                checked: win.shown("camera", cam !== null && cam.enabled)
                                 detail: !cam ? ""
                                       : !cam.present ? "No camera found on this machine."
                                       : cam.enabled
                                         ? `Available to apps (${cam.devices.join(", ")}). Turning this off unloads the ${cam.driver || "camera"} driver.`
                                         : "The camera driver is unloaded, so no app can open it."
                                 onToggled: win.admin(["camera", checked ? "off" : "on"],
-                                                     checked ? "Unloading the camera driver…" : "Loading the camera driver…")
+                                                     checked ? "Unloading the camera driver…" : "Loading the camera driver…",
+                                                     "camera", !checked)
                             }
 
+                            // Already instant: this sets a PipeWire property directly rather
+                            // than shelling out, so there is nothing to be optimistic about.
                             ToggleRow {
                                 icon: win.micAudio && win.micAudio.muted ? "mic-off" : "mic"
                                 title: "Microphone"
@@ -578,35 +794,19 @@ Scope {
                                 onToggled: if (win.micAudio) win.micAudio.muted = !win.micAudio.muted
                             }
 
-                            // ---------- Privacy ----------
-                            Heading { text: "Privacy" }
-
-                            ToggleRow {
-                                readonly property var loc: win.info ? win.info.location : null
-                                icon: "map-pin"
-                                title: "Location Services"
-                                available: loc !== null && loc.available
-                                checked: loc !== null && loc.available && loc.enabled
-                                detail: !loc ? ""
-                                      : !loc.available ? loc.note
-                                      : loc.enabled
-                                        ? "GeoClue may give your approximate location to apps that ask."
-                                        : "GeoClue is masked, so nothing can start it."
-                                onToggled: win.admin(["location", checked ? "off" : "on"],
-                                                     checked ? "Masking GeoClue…" : "Unmasking GeoClue…")
-                            }
-
                             ToggleRow {
                                 readonly property var fh: win.info ? win.info.fileHistory : null
                                 icon: "history"
                                 title: "File History"
                                 available: fh !== null && fh.available
-                                checked: fh !== null && fh.remember === true
+                                checked: win.shown("fileHistory", fh !== null && fh.remember === true)
                                 detail: !fh ? ""
                                       : !fh.available ? fh.note
                                       : `${fh.entries} recently-opened file${fh.entries === 1 ? "" : "s"} remembered. `
                                         + "Applies to GTK apps, which is where this list is kept."
-                                onToggled: win.gsettingsSet("remember-recent-files", checked ? "false" : "true")
+                                onToggled: win.gsettingsSet("remember-recent-files",
+                                                            checked ? "false" : "true",
+                                                            "fileHistory", !checked)
                             }
 
                             RowLayout {
@@ -618,10 +818,9 @@ Scope {
                                     text: "Clear file history"
                                     small: true
                                     onClicked: {
-                                        Quickshell.execDetached(["sh", "-c",
-                                            'rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/recently-used.xbel"'])
                                         win.notice = "File history cleared."
-                                        recheck.restart()
+                                        win.userRun(["sh", "-c",
+                                            'rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/recently-used.xbel"'])
                                     }
                                 }
                                 Item { Layout.fillWidth: true }

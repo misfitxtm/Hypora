@@ -65,9 +65,9 @@ All shown in **Nord**; every theme drives the same widgets from its own palette.
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, that monitor's own workspaces, clock, tray and status icons (network, volume, battery, Do Not Disturb). See [Workspaces and monitors](#workspaces-and-monitors) |
 | Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound — Hypora's own windows, not the system's control panels), **Security**, **Tools** (Terminal, region screenshot, and Claude Code only when it's installed) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
-| Security (`SecuritySettings.qml`) | Menu > Security. **Device Security**: whether Secure Boot is on, whether this system is on an encrypted volume (and whether any swap is unencrypted), and fwupd's firmware checks, with **Check for firmware updates** to install any your vendor has published — see [Firmware updates](#firmware-updates). **Opening this window never asks for a password.** The two readings that need root — fwupd's host security attributes and firewalld's zone — sit behind **Run the deeper checks**, which is a single `pkexec hypora-security deep`: one prompt, not one per service. There is no periodic refresh, because re-reading on a timer turned one prompt into one every fifteen seconds.
+| Security (`SecuritySettings.qml`) | Menu > Security, in two sections. **Security** — whether Secure Boot is on; whether this system is on an encrypted volume, and whether any swap is reaching the disk unencrypted, with **Encrypt swap** to put it behind dm-crypt (see [Encrypted swap](#encrypted-swap)); fwupd's firmware checks, with **Check for firmware updates** to install any your vendor has published — see [Firmware updates](#firmware-updates); whether DNS is encrypted (and in which mode, and to which resolver); whether each card is presenting a randomized MAC address; whether the firewall is running in a closed zone; whether system packages and flatpaks update on their own; and SELinux's running mode and the one set for next boot. **Privacy** — location (masks GeoClue), camera (unloads the `uvcvideo` driver), microphone (mutes it in PipeWire) and GTK file history, with a Clear button. Grouped by subject rather than by component: a camera and a microphone are about you, a firewall is about the machine. **Opening this window never asks for a password.** The two readings that need root — fwupd's host security attributes and firewalld's zone — sit behind **Run the deeper checks**, which is a single `pkexec hypora-security deep`: one prompt, not one per service. There is no periodic refresh, because re-reading on a timer turned one prompt into one every fifteen seconds; instead a change moves its own switch straight away and the window re-reads the moment the change finishes |
 
-The shell itself is never run as root, and shouldn't be. Quickshell is a single process — the Security window is not separable from the bar, launcher and notification daemon — and it loads its QML from `~/.config/quickshell/`, which you can write. Privileged code must not sit on a path its own user can edit, which is why `hypora-security` is root-owned in `/usr/local/bin` and reached through pkexec. `hypora-security deep` deliberately re-reads none of your per-user settings, so running it as root can't substitute root's configuration for yours; it reads firewalld's zone from `/etc/firewalld` directly rather than over D-Bus, so that half can't raise a second prompt. **Network**: whether DNS is encrypted (and in which mode, and to which resolver), whether each card is presenting a randomized MAC address, and whether the firewall is running in a closed zone. **Updates**: whether system packages and flatpaks update on their own, and what the package timer is allowed to install. **SELinux**: the running mode and the one set for next boot, switchable between Enforcing and Permissive. **Hardware**: camera (unloads the `uvcvideo` driver) and microphone (mutes it in PipeWire). **Privacy**: location (masks GeoClue) and GTK file history, with a Clear button. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
+The shell itself is never run as root, and shouldn't be. Quickshell is a single process — the Security window is not separable from the bar, launcher and notification daemon — and it loads its QML from `~/.config/quickshell/`, which you can write. Privileged code must not sit on a path its own user can edit, which is why `hypora-security` is root-owned in `/usr/local/bin` and reached through pkexec. `hypora-security deep` deliberately re-reads none of your per-user settings, so running it as root can't substitute root's configuration for yours; it reads firewalld's zone from `/etc/firewalld` directly rather than over D-Bus, so that half can't raise a second prompt. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
 | Keyboard shortcuts (`KeybindHelp.qml`) | Menu > Help > Keybindings: every shortcut, grouped, and click one to rebind it — press the new combination and it's saved. A chord already in use is **accepted**, not refused: a standing banner names the overlapping actions and the affected rows turn red, because refusing it made swapping two shortcuts impossible. Hyprland keeps only the last binding for a chord, so the others stop firing until you resolve it. Changes go to `~/.config/hypr/keybinds.lua`, which `hyprland.lua` merges over its defaults, then Hyprland reloads. Delete that file (or use **Reset all**) to go back to stock |
 | Theme picker (`ThemePicker.qml`) | **SUPER + ALT + T** (or menu > Style > Theme): a full-screen carousel, one theme at a time with its neighbours peeking in. Each card is a live preview — the theme's own wallpaper under a miniature desktop drawn in that theme's colours, plus its palette. Left/Right or scroll to slide, Enter or click to apply, Esc to close; start typing to filter |
 | Wallpaper (`Wallpaper.qml`) | Draws the wallpaper on every monitor, cross-fading between images. Each theme has three; cycle with menu > Settings > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
@@ -268,6 +268,8 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   │                       # (installed root-owned to /usr/local/bin, not ~/.local/bin)
 │   └── hypora-weather      # place search and forecast via Open-Meteo
 ├── docs/images/            # the screenshots used in this readme
+├── tools/
+│   └── gen-ascii-logo.py   # regenerates the fastfetch ASCII logo from the mark
 ├── applications/           # .desktop entries copied into ~/.local/share/applications
 ├── themes/
 │   ├── Nord/colors.toml    # palette (UI, terminal ANSI colors, GTK/icon theme)
@@ -311,7 +313,7 @@ Not created yet: `packages/` and `install/` (see [Status](#status)).
 - **What updates on its own:** `system/dnf/automatic.conf` (see [Automatic updates](#automatic-updates))
 - **Keybinds:** menu > Help > Keybindings, or the `keys` table at the top of the keybindings section in `config/hypr/hyprland.lua`
 - **Shell:** `~/.zshrc.local` for your own zsh settings; `config/zsh/zshrc` for Hypora's
-- **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt`
+- **fetch readout:** `config/fastfetch/config.jsonc`, with the logo in `hypora.txt` — that logo is generated from the same geometry the shell draws, so edit `tools/gen-ascii-logo.py` and re-run it rather than editing the art by hand
 - **System usage readings:** click the widget in the bar, or edit `~/.config/hypora/sysinfo.json`
 
 ## Hardware, drivers and firmware
@@ -336,6 +338,26 @@ It reads sysfs rather than the kernel log, because `kernel.dmesg_restrict` is 1 
 **NVIDIA** gets nouveau, the in-tree open driver, together with Fedora's own `nvidia-gpu-firmware` (the GSP firmware modern cards need). That is the open-source driver and it needs no third-party repo. NVIDIA's own driver — including their "open kernel modules" flavour, which is still a proprietary userspace — lives in RPM Fusion, and Hypora doesn't add it for you. If you want it, that's a deliberate step you take.
 
 One cross-check worth knowing: if a camera is present but `uvcvideo` isn't loaded, the probe points at **Menu > Security**, since Hypora's own camera toggle unloads that module.
+
+## Encrypted swap
+
+Swap holds whatever was in memory. A plaintext swap partition on an otherwise encrypted machine is therefore a hole straight through the encryption: anything the kernel paged out — keys, messages, documents — sits on the disk in the clear, and stays there after the machine is off.
+
+**Menu > Security** reports this on the Disk encryption row, and offers **Encrypt swap** when there is something to fix. It runs `hypora-security encrypt-swap`, which puts a plain dm-crypt layer over the swap device with its key read from `/dev/urandom`:
+
+```
+cryptswap-nvme0n1p4 PARTUUID=2724fe58-… /dev/urandom swap,cipher=aes-xts-plain64,size=512
+```
+
+A new random key every boot, never written anywhere. There is nothing to back up and nothing to type, and last boot's swap is unreadable by anyone including you.
+
+Three details that matter:
+
+- **Hibernation stops working, permanently.** Resuming means decrypting last boot's swap, and that key is gone by design. Suspend-to-RAM is unaffected. If `resume=` is on the kernel command line the script refuses to run unless you pass `--break-hibernate`, and the window says so before you confirm.
+- **The device is referenced by `PARTUUID`, not `UUID`.** Encrypting it overwrites the swap signature, so the UUID identifying it today stops existing the moment this runs — an fstab entry pointing at a UUID would fail at the next boot, which is how a machine ends up in an emergency shell. A partition's PARTUUID lives in the partition table and an LVM volume's `/dev/mapper` path is assigned by LVM, so both outlive the contents. Swap on a whole disk or an md array has neither and is skipped rather than guessed at.
+- **It proves itself before it persists anything.** The swap is taken offline, encrypted, re-made and switched back on first; `/etc/fstab` and `/etc/crypttab` are only written once that worked. Both are copied to `.hypora-<timestamp>` first and the old entry is commented out rather than deleted, and the new one carries `nofail` so a swap that doesn't come up can't hold up a boot. If a step fails it puts the plaintext swap back, UUID included.
+
+zram swap needs none of this — it lives in RAM and never reaches a disk, so Hypora leaves it alone. A swapfile is reported but not converted: on an encrypted root it is already covered, and on a plaintext root it isn't that system's biggest problem.
 
 ## Firmware updates
 
