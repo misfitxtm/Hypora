@@ -124,6 +124,19 @@ pin_clone() {
 # of it is required and none of it is enforced — this is a report, not a gate — but two of
 # the three cannot be added afterwards without reinstalling, so it is worth saying now rather
 # than when someone goes looking for the feature that isn't there.
+# Is this mountpoint backed by a dm-crypt layer? Asks lsblk what the mounted source *is*
+# rather than walking the tree: a LUKS volume is mounted from /dev/mapper/..., whose type
+# lsblk reports as "crypt". The bracket strip is for btrfs, which reports its source as
+# /dev/x[/subvol].
+is_encrypted() {
+    local src type
+    src=$(findmnt -fno SOURCE "$1" 2>/dev/null) || return 1
+    [ -n "$src" ] || return 1
+    src=${src%%[*}
+    type=$(lsblk -no TYPE "$src" 2>/dev/null | head -1)
+    [ "$type" = crypt ]
+}
+
 baseline_note() {
     local missing=0
     # -f is --first-only throughout: a path can have more than one mount entry (bind mounts,
@@ -133,10 +146,23 @@ baseline_note() {
         warn "/ is not btrfs, so there will be no snapshots (cannot be converted later)"
         missing=1
     fi
-    # A crypt layer anywhere above / is what counts; the Security window does the same walk
-    if ! lsblk -no TYPE,MOUNTPOINTS 2>/dev/null | grep -q crypt; then
-        warn "No LUKS layer found, so the disk is unencrypted (cannot be added later)"
+    # Encryption, judged on where your files actually are. If /home is its own encrypted
+    # volume then user data is protected whatever / is doing, and calling such a machine
+    # "unencrypted" is just wrong. So /home decides the warning and / gets a note.
+    if [ "$(findmnt -fno TARGET /home 2>/dev/null)" = /home ]; then
+        if ! is_encrypted /home; then
+            warn "/home is not encrypted, so your files can be read by anyone holding the drive"
+            missing=1
+        fi
+    elif ! is_encrypted /; then
+        # No separate /home, so / is the volume holding everything
+        warn "The disk is not encrypted, so your files can be read by anyone holding the drive"
         missing=1
+    fi
+    if ! is_encrypted /; then
+        log "  note: / is not encrypted. /etc (where NetworkManager keeps Wi-Fi keys) and"
+        log "  /var/log stay readable, and the system can be modified by someone with the"
+        log "  drive — weaker than full-disk encryption, but not nothing."
     fi
     if rpm -q gnome-shell >/dev/null 2>&1; then
         warn "gnome-shell is installed; Hypora will use its own session but GNOME stays on disk"
