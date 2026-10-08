@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import QtQuick
 import QtQuick.Layouts
 
@@ -91,33 +92,40 @@ Scope {
             // ---------- holding the keyboard while we wait for a chord ----------
             //
             // Hyprland handles binds itself, before any client is offered the key. So while
-            // this window waited for a new chord, every combination that was already bound
-            // ran its action instead of reaching us: pressing SUPER + Q to rebind "Close
+            // this window waits for a new chord, every combination that is already bound
+            // runs its action instead of reaching us: pressing SUPER + Q to rebind "Close
             // window" closed the window, and SUPER + Q was never captured.
             //
-            // Switching to a submap with no binds defined in it is Hyprland's own answer --
-            // nothing matches, so every key falls through to the focused client. `reset`
-            // returns to the normal map. This needs nothing in hyprland.lua; the submap does
-            // not have to exist to be switched to, which is exactly why it is empty.
-            readonly property string grabSubmap: "hypora-rebind"
+            // keyboard-shortcuts-inhibit is the Wayland protocol built for precisely this —
+            // a client asks the compositor to stop acting on its own shortcuts while this
+            // surface has keyboard focus. Two things make it the right tool rather than the
+            // `hyprctl dispatch submap` trick that was here before:
+            //
+            //   * `active` reports whether the compositor actually agreed. The submap call
+            //     had no return path at all, so when Hyprland ignored it — which it did,
+            //     because the submap was never defined anywhere — nothing said so and the
+            //     binds simply kept firing.
+            //   * The inhibition is tied to this surface. When the window closes, or the
+            //     shell exits, or it crashes, the compositor drops it and shortcuts come
+            //     back on their own. The submap was global state that had to be unwound by
+            //     hand, and anything that killed the shell mid-capture left a desktop with
+            //     no working keys.
+            ShortcutInhibitor {
+                id: inhibitor
+                window: win
+                enabled: win.capturing !== ""
 
-            function grabKeyboard(on) {
-                Quickshell.execDetached(["hyprctl", "dispatch", "submap",
-                                         on ? grabSubmap : "reset"])
+                // The compositor can revoke it; say so rather than silently capturing the
+                // action a key is bound to.
+                onCancelled: {
+                    win.capturing = ""
+                    win.notice = "The compositor took the keyboard back, so nothing changed."
+                    clearNotice.restart()
+                }
             }
 
-            // One hook covers every way capture can end: a chord landing, Escape, clicking
-            // another row, or the timeout below. Anything that clears `capturing` releases.
-            onCapturingChanged: grabKeyboard(capturing !== "")
-
-            // Nothing may leave the submap engaged, or the machine has no shortcuts at all
-            // and no obvious way back. Belt and braces, in order of how bad the path is:
-            Component.onDestruction: grabKeyboard(false)
-            // ...and a reset on the way in, in case something earlier died mid-capture
-            Component.onCompleted: grabKeyboard(false)
-
             // A chord takes a moment to press, not a quarter of an hour. If capture is still
-            // open after this, assume it was forgotten and give the keyboard back.
+            // open after this, assume it was forgotten and release the keyboard.
             Timer {
                 id: captureTimeout
                 interval: 15000
@@ -291,13 +299,21 @@ Scope {
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
+                        // When capture is armed the text reports whether the compositor
+                        // actually handed the keyboard over. If it didn't, saying so beats
+                        // letting you discover it by having a window close under you.
                         text: win.notice !== "" ? win.notice
-                            : win.capturing !== "" ? "Press the new key combination, or Esc to cancel. "
-                                                   + "Your shortcuts are paused until you do, so the one "
-                                                   + "you press can be read instead of firing."
-                            : "Click a shortcut to change it."
+                            : win.capturing === "" ? "Click a shortcut to change it."
+                            : inhibitor.active
+                              ? "Press the new key combination, or Esc to cancel. Your shortcuts "
+                                + "are paused until you do, so the one you press is read instead "
+                                + "of firing."
+                              : "Press the new key combination, or Esc to cancel. The compositor "
+                                + "did not pause shortcuts, so a combination already in use will "
+                                + "run its action instead of being captured."
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
-                        color: win.capturing !== "" ? Theme.accent : Theme.dim
+                        color: win.capturing === "" ? Theme.dim
+                             : inhibitor.active ? Theme.accent : Theme.warn
                     }
 
                     Rectangle {

@@ -535,6 +535,64 @@ for dm in gdm lightdm greetd; do
 done
 sudo systemctl enable sddm
 
+# Keyring auto-unlock.
+#
+# gnome-keyring keeps its secrets in a file encrypted with a password, so something has to
+# supply that password. Left alone you are asked for it separately, the first time anything
+# wants a secret — a second password prompt for the same person who just logged in. This
+# hands the login password over at login instead, which is exactly what GDM does: the same
+# three lines are in /etc/pam.d/gdm-password on any Fedora Workstation.
+#
+# Three lines, not one, and each earns its place:
+#   auth      captures the password you just typed
+#   session   uses it to unlock the keyring, and starts the daemon
+#   password  re-keys the keyring when you change your account password — without it,
+#             changing your password orphans the keyring behind a password you no longer
+#             know, and the only way out is to delete it and lose its contents
+#
+# Appended, not inserted. PAM keeps a separate stack per module type and runs each in file
+# order, so a line at the end of the file joins the end of its own type's stack. That means
+# this does not have to know what Fedora put in the file and cannot reorder any of it.
+#
+# Both guards matter, because this edits the file that decides whether you can log in at all:
+# `-` skips the line silently if the module is missing, and `optional` makes PAM ignore its
+# result either way. Neither can turn a working login into a failing one. The original is
+# backed up regardless, and KEYRING_AUTOUNLOCK=no skips the whole thing.
+keyring_pam_module() {
+    local p
+    for p in /usr/lib64/security /usr/lib/security /lib64/security /lib/security; do
+        [ -e "$p/pam_gnome_keyring.so" ] && return 0
+    done
+    return 1
+}
+
+PAM_SDDM=/etc/pam.d/sddm
+if [ "${KEYRING_AUTOUNLOCK:-yes}" = no ]; then
+    log "Skipping keyring auto-unlock (KEYRING_AUTOUNLOCK=no)"
+elif [ ! -f "$PAM_SDDM" ]; then
+    warn "No $PAM_SDDM, so keyring auto-unlock was not set up"
+elif ! keyring_pam_module; then
+    warn "pam_gnome_keyring.so not found, so keyring auto-unlock was not set up"
+elif grep -q pam_gnome_keyring "$PAM_SDDM"; then
+    log "Keyring auto-unlock already configured"
+else
+    log "Enabling keyring auto-unlock"
+    pam_backup="$PAM_SDDM.hypora-$(date +%Y%m%d-%H%M%S)"
+    if sudo cp -a "$PAM_SDDM" "$pam_backup"; then
+        sudo tee -a "$PAM_SDDM" >/dev/null <<'PAMEOF'
+
+# Added by Hypora: unlock the login keyring with the login password, so there is no second
+# prompt. Delete these three lines to go back to a separate keyring password.
+-auth      optional  pam_gnome_keyring.so
+-password  optional  pam_gnome_keyring.so use_authtok
+-session   optional  pam_gnome_keyring.so auto_start
+PAMEOF
+        printf '   original saved as %s\n' "$pam_backup"
+    else
+        warn "Could not back up $PAM_SDDM, so it was left alone"
+    fi
+fi
+
 # ---------- terminal and session environment ----------
 log "Installing kitty, uwsm, zsh, fastfetch and Neovim settings"
 put "$REPO/config/kitty/kitty.conf" "$CONF/kitty/kitty.conf"
