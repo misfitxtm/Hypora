@@ -14,10 +14,25 @@ import QtQuick
 Scope {
     id: root
 
-    readonly property var dev: UPower.displayDevice
-    readonly property bool isBattery: dev && dev.isLaptopBattery
-    readonly property bool discharging: dev && dev.state === UPowerDeviceState.Discharging
-    readonly property real charge: dev ? dev.percentage : 1.0
+    // UPower's DisplayDevice is a composite it synthesises. Prefer a real battery from
+    // UPower.devices when there is one and fall back to the composite, because a composite
+    // that has not been populated still answers questions — with defaults.
+    readonly property var dev: {
+        const real = (UPower.devices?.values ?? []).find(d => d && d.isLaptopBattery && d.ready)
+        return real ?? UPower.displayDevice
+    }
+
+    // `ready` is the difference between a reading and a placeholder. Without it an
+    // unpopulated device reports 0 or 1 and we present that as the charge — which is how
+    // a bar can sit at 100% while the battery is visibly draining.
+    readonly property bool valid: dev !== null && dev !== undefined
+                                  && dev.ready === true && dev.isLaptopBattery === true
+    readonly property bool isBattery: valid
+    readonly property bool discharging: valid && dev.state === UPowerDeviceState.Discharging
+    // No numeric fallback on purpose. There is no safe number to invent here: 1.0 means a
+    // failed read looks like a full battery and nothing ever warns, 0.0 means it suspends
+    // the machine. Everything below is gated on `valid` instead.
+    readonly property real charge: valid ? dev.percentage : -1
 
     // Fractions, not percentages, to match UPower's own scale
     readonly property real warnAt: 0.20
@@ -56,6 +71,7 @@ Scope {
             return
         }
 
+        if (charge < 0) return          // no usable reading; say nothing
         const pct = Math.round(charge * 100)
 
         if (charge <= suspendAt && !suspending) {
@@ -77,7 +93,11 @@ Scope {
     Timer {
         id: suspendSoon
         interval: 8000
-        onTriggered: if (root.discharging && root.charge <= root.suspendAt)
+        // Re-checked at fire time, and `valid` is part of it: suspending a machine on the
+        // strength of a reading that went away in the meantime is the one mistake here
+        // that cannot be undone by the user noticing.
+        onTriggered: if (root.valid && root.discharging && root.charge >= 0
+                         && root.charge <= root.suspendAt)
                          Quickshell.execDetached(["systemctl", "suspend"])
     }
 }
