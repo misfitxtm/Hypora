@@ -173,6 +173,26 @@ baseline_note() {
 }
 baseline_note
 
+# ---------- machine type ----------
+# Decided once, here, so that every laptop-specific step below asks the same question and
+# gets the same answer. `hypora-power is-laptop` is the authority rather than a test
+# written out again: it reads the SMBIOS chassis type, which is a different question from
+# "is there a battery" — a desktop with a UPS has one, and so does a paired wireless mouse.
+#
+# Set IS_LAPTOP=yes or =no to override, for a machine whose firmware reports nonsense.
+if [ -n "${IS_LAPTOP:-}" ]; then
+    machine_kind="forced by IS_LAPTOP=$IS_LAPTOP"
+elif machine_kind=$("$REPO/bin/hypora-power" is-laptop 2>/dev/null); then
+    IS_LAPTOP=yes
+else
+    IS_LAPTOP=no
+fi
+if [ "$IS_LAPTOP" = yes ]; then
+    log "Laptop: $machine_kind — battery, backlight and charger handling will be set up"
+else
+    log "Desktop: $machine_kind — skipping battery, backlight and charger handling"
+fi
+
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
 
@@ -233,7 +253,7 @@ REQUIRED=(
 )
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
-    hyprsunset brightnessctl
+    hyprsunset
     # Wi-Fi power save, which tuned's empty [net] section does not touch
     iw
     pamixer playerctl
@@ -261,6 +281,14 @@ for p in "${OPTIONAL[@]}"; do
 done
 # 'install' leaves an already-installed (possibly old) Hyprland alone
 sudo dnf upgrade -y hyprland uwsm || true
+
+# ---------- laptop-only packages ----------
+# brightnessctl drives a backlight, so there is nothing for it to do on a machine with no
+# panel to dim. upower deliberately stays in REQUIRED rather than moving here: it also
+# reports the batteries in wireless mice and keyboards, which desktops very much have.
+if [ "$IS_LAPTOP" = yes ] && available brightnessctl; then
+    sudo dnf install -y brightnessctl || warn "Skipped brightnessctl (brightness keys will not work)"
+fi
 
 # Power modes: Fedora's default is tuned-ppd (same D-Bus API as power-profiles-daemon).
 # Keep power-profiles-daemon if it's already there; the two conflict.
@@ -891,16 +919,13 @@ fi
 # shell, so without it a laptop sits in `balanced` on battery indefinitely — and tuned's
 # own powersave profile leaves PCIe ASPM, USB autosuspend and PCI runtime power management
 # untouched. hypora-power covers both and installs a udev rule so it follows the charger.
-# `hypora-power is-laptop` rather than a battery test written out again here. "Has a
-# battery" is not the same question — a desktop with a UPS, or one paired with a wireless
-# mouse, has one — and two copies of that distinction would eventually disagree. The script
-# refuses to install on a desktop anyway; this just keeps the installer quiet about it.
-if "$REPO/bin/hypora-power" is-laptop >/dev/null 2>&1; then
+# Uses the decision made at the top rather than asking again. hypora-power refuses to
+# install on a desktop regardless, so this is belt and braces — but it also keeps the two
+# answers from ever disagreeing, which is the point of deciding once.
+if [ "$IS_LAPTOP" = yes ]; then
     log "Setting up laptop power management"
     sudo /usr/local/bin/hypora-power install \
         || warn "Could not set up automatic power switching"
-else
-    log "Power management skipped: $("$REPO/bin/hypora-power" is-laptop)"
 fi
 
 # ---------- wallpapers ----------
@@ -967,6 +992,18 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY"
     else
         warn "Boot screen images are missing; leaving the existing boot theme alone"
     fi
+
+    # Hold the splash on screen until the login screen paints over it.
+    #
+    # Plymouth draws into its own buffer, so when it exits the framebuffer underneath is
+    # still whatever was there before — on a themed setup, the GRUB menu. That is why the
+    # menu reappears for a moment between the splash ending and SDDM arriving. It is not
+    # GRUB being redrawn; it is GRUB never having been painted over.
+    sudo install -d /etc/systemd/system/plymouth-quit.service.d
+    sudo install -m644 \
+        "$REPO/system/systemd/plymouth-quit.service.d/10-hypora-retain-splash.conf" \
+        /etc/systemd/system/plymouth-quit.service.d/10-hypora-retain-splash.conf
+    sudo systemctl daemon-reload
 else
     warn "Plymouth is not installed; the boot screen stays as it is"
 fi
