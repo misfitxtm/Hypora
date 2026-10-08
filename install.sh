@@ -119,6 +119,34 @@ pin_clone() {
 }
 
 # ---------- repos ----------
+# ---------- baseline ----------
+# Hypora's tested baseline is a Fedora Everything netinstall with encryption and btrfs. None
+# of it is required and none of it is enforced — this is a report, not a gate — but two of
+# the three cannot be added afterwards without reinstalling, so it is worth saying now rather
+# than when someone goes looking for the feature that isn't there.
+baseline_note() {
+    local missing=0
+    # -f is --first-only throughout: a path can have more than one mount entry (bind mounts,
+    # overlays, a sandbox), and without it the substitution returns several lines and every
+    # comparison below quietly fails.
+    if [ "$(findmnt -fno FSTYPE / 2>/dev/null)" != btrfs ]; then
+        warn "/ is not btrfs, so there will be no snapshots (cannot be converted later)"
+        missing=1
+    fi
+    # A crypt layer anywhere above / is what counts; the Security window does the same walk
+    if ! lsblk -no TYPE,MOUNTPOINTS 2>/dev/null | grep -q crypt; then
+        warn "No LUKS layer found, so the disk is unencrypted (cannot be added later)"
+        missing=1
+    fi
+    if rpm -q gnome-shell >/dev/null 2>&1; then
+        warn "gnome-shell is installed; Hypora will use its own session but GNOME stays on disk"
+        missing=1
+    fi
+    [ "$missing" -eq 0 ] && log "Baseline looks right: btrfs, encrypted, no competing desktop"
+    return 0
+}
+baseline_note
+
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
 
@@ -223,6 +251,146 @@ sudo rm -f /usr/local/bin/impala /usr/local/bin/bluetui
 hypr_ver=$(Hyprland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 if [ -n "$hypr_ver" ] && [ "$(printf '%s\n' 0.55.0 "$hypr_ver" | sort -V | head -1)" != 0.55.0 ]; then
     die "Hyprland $hypr_ver is too old for hyprland.lua (need 0.55+). Run: sudo dnf upgrade --refresh hyprland"
+fi
+
+# ---------- snapshots (btrfs only) ----------
+# snapper rather than Timeshift, and only where there is btrfs to snapshot.
+#
+# Timeshift was the obvious choice and is the wrong one here: its BTRFS mode requires the
+# Ubuntu-style subvolume layout, with / on a subvolume literally named `@`. Fedora's
+# installer creates `root` and `home`, so on a stock Fedora btrfs install Timeshift silently
+# offers only its RSYNC mode — copying files, not snapshotting. snapper does not care what
+# the subvolumes are called, which on Fedora is the difference between real snapshots and a
+# slow file copy.
+#
+# What this does not get you, because there is no honest way to: automatic snapshots around
+# a manual `dnf upgrade`. python3-dnf-plugin-snapper is a dnf4 plugin and Fedora now runs
+# dnf5, which has no snapper plugin at all, so installing it would hook nothing. The
+# unattended updates Hypora enables are covered instead by a drop-in further down, and the
+# readme says plainly that a manual upgrade is yours to snapshot.
+has_btrfs() {
+    findmnt -nt btrfs >/dev/null 2>&1 && return 0
+    lsblk -no FSTYPE 2>/dev/null | grep -qx btrfs
+}
+
+# Set KEY="value" in a shell-style config, whether or not the key is already there.
+# Both snapper's configs and btrfsmaintenance's sysconfig are this shape.
+kv_set() {
+    local f=$1 key=$2 val=$3
+    [ -f "$f" ] || return 0
+    if sudo grep -q "^${key}=" "$f"; then
+        sudo sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$f"
+    else
+        printf '%s="%s"\n' "$key" "$val" | sudo tee -a "$f" >/dev/null
+    fi
+}
+
+snapper_set() { kv_set "/etc/snapper/configs/$1" "$2" "$3"; }
+
+# create-config, then limits that won't quietly eat the disk. snapper's defaults keep ten
+# hourly, ten monthly and ten yearly snapshots per config, which on a laptop is a lot of
+# retained extents for very little benefit.
+snapper_setup() {
+    local name=$1 path=$2
+    if [ -f "/etc/snapper/configs/$name" ]; then
+        log "  snapper config '$name' already exists, leaving it alone"
+    elif sudo snapper -c "$name" create-config "$path"; then
+        log "  snapper config '$name' created for $path"
+    else
+        warn "Could not create a snapper config for $path"
+        return 1
+    fi
+    snapper_set "$name" TIMELINE_CREATE yes
+    snapper_set "$name" TIMELINE_LIMIT_HOURLY 5
+    snapper_set "$name" TIMELINE_LIMIT_DAILY 7
+    snapper_set "$name" TIMELINE_LIMIT_WEEKLY 4
+    snapper_set "$name" TIMELINE_LIMIT_MONTHLY 2
+    snapper_set "$name" TIMELINE_LIMIT_YEARLY 0
+    snapper_set "$name" NUMBER_LIMIT 10
+    snapper_set "$name" NUMBER_LIMIT_IMPORTANT 5
+}
+
+if ! has_btrfs; then
+    log "No btrfs filesystem, so snapshots were not set up"
+elif ! available snapper; then
+    warn "No snapper package for this Fedora release, so snapshots were not set up"
+else
+    log "Installing snapper (btrfs filesystem found)"
+    if ! sudo dnf install -y snapper; then
+        warn "Could not install snapper"
+    else
+        snapper_any=0
+        # / first, which is what an update can break
+        if [ "$(findmnt -fno FSTYPE / 2>/dev/null)" = btrfs ]; then
+            snapper_setup root / && snapper_any=1
+        else
+            log "  / is not btrfs, so there is no config for it"
+        fi
+        # /home separately: it is usually its own subvolume, and the snapshots people
+        # actually reach for are of their own files
+        if [ "$(findmnt -fno FSTYPE /home 2>/dev/null)" = btrfs ] \
+           && [ "$(findmnt -fno TARGET /home 2>/dev/null)" = /home ]; then
+            snapper_setup home /home && snapper_any=1
+        fi
+
+        if [ "$snapper_any" -eq 1 ]; then
+            sudo systemctl enable --now snapper-timeline.timer snapper-cleanup.timer \
+                2>/dev/null || warn "Could not enable the snapper timers"
+            log "  timeline and cleanup timers enabled"
+        else
+            warn "snapper is installed but no config could be created, so nothing is snapshotted"
+        fi
+
+        # A GUI for it. snapper is CLI-only, and browsing snapshots to find the one you want
+        # is the part that genuinely wants a list you can click. This is the thing Timeshift
+        # was better at, and btrfs-assistant closes it.
+        if available btrfs-assistant; then
+            sudo dnf install -y btrfs-assistant \
+                || warn "Could not install btrfs-assistant (snapshots stay command-line only)"
+        else
+            warn "No btrfs-assistant package; snapshots are command-line only"
+        fi
+    fi
+fi
+
+# ---------- btrfs housekeeping ----------
+# Nothing on a stock Fedora runs these, and btrfs wants them:
+#   scrub    reads every block and checks it against its checksum. This is how bit rot is
+#            found — and finding it matters more with snapshots, because a corrupted extent
+#            is shared by every snapshot referencing it.
+#   balance  reclaims chunks that are allocated but mostly empty, which is the usual cause
+#            of "no space left" on a filesystem that df says is half free.
+#
+# Two periods are deliberately left off:
+#   trim     Fedora already enables fstrim.timer, so this would be the second thing doing it.
+#   defrag   defragmenting a filesystem with snapshots *unshares* the extents snapshots have
+#            in common, so it can multiply disk usage instead of tidying it. Wrong tool here.
+if has_btrfs && available btrfsmaintenance; then
+    log "Setting up btrfs scrub and balance"
+    if sudo dnf install -y btrfsmaintenance; then
+        for cfg in /etc/sysconfig/btrfsmaintenance /etc/default/btrfsmaintenance; do
+            [ -f "$cfg" ] || continue
+            kv_set "$cfg" BTRFS_SCRUB_PERIOD monthly
+            kv_set "$cfg" BTRFS_BALANCE_PERIOD monthly
+            kv_set "$cfg" BTRFS_TRIM_PERIOD none
+            kv_set "$cfg" BTRFS_DEFRAG_PERIOD none
+        done
+        # The package's own refresh unit reads that config and enables exactly the timers it
+        # describes. Preferred over enabling timers directly, which would then disagree with
+        # the config the next time anything ran the refresh.
+        if systemctl cat btrfsmaintenance-refresh.service >/dev/null 2>&1; then
+            sudo systemctl enable --now btrfsmaintenance-refresh.service \
+                || warn "Could not apply the btrfsmaintenance schedule"
+        else
+            for t in btrfs-scrub btrfs-balance; do
+                systemctl cat "$t.timer" >/dev/null 2>&1 \
+                    && sudo systemctl enable --now "$t.timer" 2>/dev/null \
+                    || true
+            done
+        fi
+    else
+        warn "Could not install btrfsmaintenance (no scheduled scrub or balance)"
+    fi
 fi
 
 # ---------- fonts ----------
@@ -441,6 +609,35 @@ if command -v dnf-automatic >/dev/null 2>&1; then
     sudo systemctl enable dnf5-automatic.timer 2>/dev/null \
         || sudo systemctl enable dnf-automatic.timer 2>/dev/null \
         || warn "Could not enable the automatic update timer"
+
+    # Snapshot before an unattended update, when there is a snapper config for /.
+    #
+    # This is the gap left by there being no dnf5 snapper plugin: nothing hooks a dnf
+    # transaction, so an update that installs itself overnight does so with no way back. A
+    # drop-in on the service that performs it is the one place to catch that — and it is the
+    # case that matters most, because it is the one you were not watching.
+    #
+    # ExecStartPre is prefixed with `-` so a failing snapshot cannot stop security updates
+    # from installing. An update that applied is worth more than a snapshot that didn't.
+    if [ -f /etc/snapper/configs/root ]; then
+        for unit in dnf5-automatic dnf-automatic; do
+            if systemctl cat "$unit.service" >/dev/null 2>&1; then
+                sudo install -d "/etc/systemd/system/$unit.service.d"
+                sudo tee "/etc/systemd/system/$unit.service.d/10-hypora-snapshot.conf" \
+                    >/dev/null <<'DROPIN'
+# Added by Hypora: take a btrfs snapshot of / before an unattended update, so an update
+# that breaks something can be undone. Harmless if snapper is removed — the `-` prefix
+# means a failure here is ignored rather than cancelling the update.
+[Service]
+ExecStartPre=-/usr/bin/snapper -c root create --type single \
+    --cleanup-algorithm number --description "before automatic update"
+DROPIN
+                sudo systemctl daemon-reload
+                log "  snapshotting / before each unattended update ($unit)"
+                break
+            fi
+        done
+    fi
 else
     warn "dnf-automatic is not available; system updates stay manual"
 fi
@@ -630,10 +827,12 @@ done
 #                     command line, so a tampered copy is a boot-integrity problem
 #   hypora-hardware   documented as `sudo hypora-hardware fix`; it installs packages and
 #                     loads kernel modules
+#   hypora-grub       documented as `sudo hypora-grub apply`; it writes /etc/default/grub
+#                     and regenerates grub.cfg, so a tampered copy decides how you boot
 #
 # The test is simply "does anything tell you to run this under sudo", which is why these
-# three and not the others — the rest never need more than your own privileges.
-ROOT_OWNED=(hypora-security hypora-console hypora-hardware)
+# four and not the others — the rest never need more than your own privileges.
+ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub)
 
 for name in "${ROOT_OWNED[@]}"; do
     log "Installing $name to /usr/local/bin (root-owned)"
@@ -721,6 +920,25 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY"
     fi
 else
     warn "Plymouth is not installed; the boot screen stays as it is"
+fi
+
+# Boot menu. The GRUB menu is the one screen before Plymouth, and Fedora leaves it as white
+# text on black in 80x25 text mode — GRUB_TERMINAL_OUTPUT="console". hypora-grub writes a
+# theme from the active palette and switches GRUB to graphics mode so the theme is actually
+# shown; see bin/hypora-grub for why those two have to happen together.
+#
+# Skipped silently where there is no GRUB: a system booting with systemd-boot or straight
+# from UEFI has nothing here to theme, and that is not a problem worth a warning.
+if [ -d /boot/grub2 ] || [ -d /boot/grub ]; then
+    if command -v grub2-mkconfig >/dev/null 2>&1; then
+        log "Theming the boot menu"
+        sudo /usr/local/bin/hypora-grub apply \
+            || warn "Could not theme the boot menu; GRUB is unchanged"
+    else
+        warn "grub2-mkconfig is missing, so the boot menu was left alone"
+    fi
+else
+    log "No GRUB found, so the boot menu was left alone"
 fi
 
 # ---------- bookkeeping ----------

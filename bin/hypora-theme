@@ -161,4 +161,15 @@ if grep -q "vt.default_red=" /proc/cmdline 2>/dev/null; then
     echo "Text console is still on the previous theme's colours; run: sudo hypora-console apply"
 fi
 
+# Boot menu, same reasoning: re-theming GRUB means regenerating grub.cfg as root, which is
+# far too much to do behind a theme switch. Compared rather than assumed stale — switching
+# between two themes and back would otherwise keep nagging about a menu already correct.
+# `print` prefixes a "# theme:" line, hence the tail.
+GRUB_THEME_FILE=/boot/grub2/themes/hypora/theme.txt
+if [ -f "$GRUB_THEME_FILE" ] && command -v hypora-grub >/dev/null 2>&1; then
+    if ! hypora-grub print 2>/dev/null | tail -n +2 | cmp -s - "$GRUB_THEME_FILE"; then
+        echo "Boot menu is still on the previous theme's colours; run: sudo hypora-grub apply"
+    fi
+fi
+
 echo "Theme set to $NAME. Already-open GTK and Qt apps pick it up when restarted."
