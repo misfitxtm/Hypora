@@ -2,6 +2,7 @@
 """hypora-hardware: find hardware that isn't working, and fix what can be fixed.
 
     hypora-hardware probe     say what's present and what's wrong (no root)
+    hypora-hardware fingerprint  list fingerprint readers (exit 0 if one is present)
     hypora-hardware fix       install missing firmware, load drivers, unblock radios (root)
 
 Written because a laptop install came up with no Wi-Fi and no Bluetooth. On Fedora that is
@@ -34,6 +35,14 @@ PCI_CLASSES = {
     "0300": "gpu",
     "0302": "gpu",
     "0d11": "bluetooth",
+}
+
+# Fingerprint readers present as vendor-specific USB (class ff), so unlike Bluetooth and
+# UVC there is no interface class to match on — the vendor id is the only signal. These are
+# the vendors libfprint has drivers for; a match means "worth trying", not "guaranteed".
+FINGERPRINT_VENDORS = {
+    "06cb": "Synaptics", "138a": "Validity", "04f3": "Elan",
+    "27c6": "Goodix", "147e": "Upek", "08ff": "AuthenTec", "1c7a": "LighTuning",
 }
 
 VENDORS = {
@@ -128,6 +137,44 @@ def pci_devices():
             "device": read(dev / "device")[2:],
             "driver": Path(os.readlink(dev / "driver")).name if (dev / "driver").is_symlink() else "",
             "modalias": read(dev / "modalias"),
+        })
+    return out
+
+
+def fingerprint_devices():
+    """Readers, found by vendor id rather than interface class.
+
+    Kept separate from usb_devices() because the matching rule is different: these identify
+    themselves as vendor-specific, so there is no class to filter on and the vendor id has
+    to carry it. Matching a whole vendor is looser than matching a class, which is why this
+    only ever reports — it never installs a driver on the strength of it.
+    """
+    out = []
+    if not USB.is_dir():
+        return out
+    for dev in sorted(USB.iterdir()):
+        if ":" in dev.name:                       # interface, not device
+            continue
+        vid = read(dev / "idVendor")
+        if vid not in FINGERPRINT_VENDORS:
+            continue
+        # A vendor makes more than fingerprint readers — Synaptics touchpads and Elan
+        # touchscreens share these ids — so require the device to be vendor-specific
+        # (class ff), which a reader is and an input device is not. Interfaces are listed
+        # flat alongside devices in /sys/bus/usb/devices, the same way usb_devices() reads
+        # them; globbing inside the device directory finds nothing here.
+        classes = {read(USB / n / "bInterfaceClass")
+                   for n in os.listdir(USB) if n.startswith(dev.name + ":")}
+        if classes != {"ff"}:
+            continue
+        out.append({
+            "bus": "usb",
+            "kind": "fingerprint",
+            "slot": dev.name,
+            "vendor": vid,
+            "device": read(dev / "idProduct"),
+            "vendorName": FINGERPRINT_VENDORS[vid],
+            "product": read(dev / "product"),
         })
     return out
 
@@ -308,11 +355,28 @@ def fix(devices):
     return 0
 
 
+def cmd_fingerprint():
+    """List fingerprint readers. Exit 0 if there is one, 1 if not.
+
+    The exit status is the point: install.sh uses it to decide whether installing fprintd
+    is worth doing, so this has to be usable as a test as well as a report.
+    """
+    found = fingerprint_devices()
+    for d in found:
+        name = d["product"] or d["vendorName"]
+        print(f"{d['vendor']}:{d['device']}  {name}")
+    if not found:
+        print("No fingerprint reader found.", file=sys.stderr)
+    return 0 if found else 1
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "probe"
     if cmd in ("-h", "--help"):
         print(__doc__, file=sys.stderr)
         return 0
+    if cmd == "fingerprint":
+        return cmd_fingerprint()
     if cmd not in ("probe", "fix"):
         print(__doc__, file=sys.stderr)
         return 2

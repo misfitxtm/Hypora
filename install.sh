@@ -234,6 +234,8 @@ REQUIRED=(
 # Nice to have; a missing one only produces a warning
 OPTIONAL=(
     hyprsunset brightnessctl
+    # Wi-Fi power save, which tuned's empty [net] section does not touch
+    iw
     pamixer playerctl
     google-noto-emoji-fonts
     # Qt can only decode jpeg, png, gif and svg out of the box. Hypora's own wallpapers are
@@ -758,62 +760,63 @@ for dm in gdm lightdm greetd; do
 done
 sudo systemctl enable sddm
 
-# Keyring auto-unlock.
+# Keyring auto-unlock, and fingerprint login.
 #
-# gnome-keyring keeps its secrets in a file encrypted with a password, so something has to
-# supply that password. Left alone you are asked for it separately, the first time anything
-# wants a secret — a second password prompt for the same person who just logged in. This
-# hands the login password over at login instead, which is exactly what GDM does: the same
-# three lines are in /etc/pam.d/gdm-password on any Fedora Workstation.
+# Both go through authselect, which is how Fedora expects PAM to be changed. An earlier
+# version of this appended three lines to /etc/pam.d/sddm by hand, and that was working
+# around a problem Fedora had already solved: authselect ships `with-pam-gnome-keyring`
+# and `with-fingerprint` as features, writes them into system-auth and password-auth —
+# which sddm's stack includes — and keeps them across package updates. Editing the service
+# file directly also risked overriding a vendor file in /usr/lib/pam.d outright, which
+# would have replaced the whole auth stack with three lines.
 #
-# Three lines, not one, and each earns its place:
-#   auth      captures the password you just typed
-#   session   uses it to unlock the keyring, and starts the daemon
-#   password  re-keys the keyring when you change your account password — without it,
-#             changing your password orphans the keyring behind a password you no longer
-#             know, and the only way out is to delete it and lose its contents
-#
-# Appended, not inserted. PAM keeps a separate stack per module type and runs each in file
-# order, so a line at the end of the file joins the end of its own type's stack. That means
-# this does not have to know what Fedora put in the file and cannot reorder any of it.
-#
-# Both guards matter, because this edits the file that decides whether you can log in at all:
-# `-` skips the line silently if the module is missing, and `optional` makes PAM ignore its
-# result either way. Neither can turn a working login into a failing one. The original is
-# backed up regardless, and KEYRING_AUTOUNLOCK=no skips the whole thing.
-keyring_pam_module() {
-    local p
-    for p in /usr/lib64/security /usr/lib/security /lib64/security /lib/security; do
-        [ -e "$p/pam_gnome_keyring.so" ] && return 0
-    done
+# authselect's keyring feature covers the auth and session lines but not the `password`
+# one, so a password change would otherwise orphan the keyring behind a passphrase nobody
+# knows. That single line is added separately, which is a much smaller edit than the stack.
+enable_authselect_feature() {
+    local feature=$1 what=$2
+    if ! command -v authselect >/dev/null 2>&1; then
+        warn "authselect is not installed, so $what was not enabled"
+        return 1
+    fi
+    if ! authselect current >/dev/null 2>&1; then
+        warn "No authselect profile is selected, so $what was not enabled"
+        return 1
+    fi
+    if authselect current 2>/dev/null | grep -q -- "$feature"; then
+        log "  $what already enabled"
+        return 0
+    fi
+    if sudo authselect enable-feature "$feature" >/dev/null 2>&1; then
+        log "  enabled $feature"
+        return 0
+    fi
+    warn "Could not enable $feature, so $what was not set up"
     return 1
 }
 
-PAM_SDDM=/etc/pam.d/sddm
 if [ "${KEYRING_AUTOUNLOCK:-yes}" = no ]; then
     log "Skipping keyring auto-unlock (KEYRING_AUTOUNLOCK=no)"
-elif [ ! -f "$PAM_SDDM" ]; then
-    warn "No $PAM_SDDM, so keyring auto-unlock was not set up"
-elif ! keyring_pam_module; then
-    warn "pam_gnome_keyring.so not found, so keyring auto-unlock was not set up"
-elif grep -q pam_gnome_keyring "$PAM_SDDM"; then
-    log "Keyring auto-unlock already configured"
 else
     log "Enabling keyring auto-unlock"
-    pam_backup="$PAM_SDDM.hypora-$(date +%Y%m%d-%H%M%S)"
-    if sudo cp -a "$PAM_SDDM" "$pam_backup"; then
-        sudo tee -a "$PAM_SDDM" >/dev/null <<'PAMEOF'
-
-# Added by Hypora: unlock the login keyring with the login password, so there is no second
-# prompt. Delete these three lines to go back to a separate keyring password.
--auth      optional  pam_gnome_keyring.so
--password  optional  pam_gnome_keyring.so use_authtok
--session   optional  pam_gnome_keyring.so auto_start
-PAMEOF
-        printf '   original saved as %s\n' "$pam_backup"
-    else
-        warn "Could not back up $PAM_SDDM, so it was left alone"
+    enable_authselect_feature with-pam-gnome-keyring "keyring auto-unlock" || true
+    # The re-key line authselect's feature leaves out
+    PAM_PW=/etc/pam.d/system-auth
+    if [ -f "$PAM_PW" ] && ! grep -q "pam_gnome_keyring.so use_authtok" "$PAM_PW"; then
+        sudo cp -a "$PAM_PW" "$PAM_PW.hypora-$(date +%Y%m%d-%H%M%S)"
+        printf '%s\n' '-password   optional   pam_gnome_keyring.so use_authtok' \
+            | sudo tee -a "$PAM_PW" >/dev/null
+        log "  added the keyring re-key line to $PAM_PW"
     fi
+fi
+
+# Fingerprint, only where there is a reader libfprint might drive.
+if "$REPO/bin/hypora-hardware" fingerprint >/dev/null 2>&1; then
+    log "Setting up the fingerprint reader"
+    sudo dnf install -y fprintd fprintd-pam \
+        && enable_authselect_feature with-fingerprint "fingerprint login" \
+        && log "  enrol a finger with: fprintd-enroll" \
+        || warn "Could not set up the fingerprint reader"
 fi
 
 # ---------- terminal and session environment ----------
@@ -855,10 +858,12 @@ done
 #                     loads kernel modules
 #   hypora-grub       documented as `sudo hypora-grub apply`; it writes /etc/default/grub
 #                     and regenerates grub.cfg, so a tampered copy decides how you boot
+#   hypora-power      documented as `sudo hypora-power install`; it writes a udev rule and
+#                     sysfs power controls, and udev runs it as root on every AC change
 #
 # The test is simply "does anything tell you to run this under sudo", which is why these
-# four and not the others — the rest never need more than your own privileges.
-ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub)
+# five and not the others — the rest never need more than your own privileges.
+ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub hypora-power)
 
 for name in "${ROOT_OWNED[@]}"; do
     log "Installing $name to /usr/local/bin (root-owned)"
@@ -878,6 +883,20 @@ if [ ${#bin_files[@]} -gt 0 ]; then
         [ -n "$skip" ] && continue        # root-owned, installed above
         put "$f" "$HOME/.local/bin/$name" 755
     done
+fi
+
+# ---------- laptop power ----------
+# Only where there is a battery. The saving comes from two places: nothing on a Hyprland
+# session switches the power profile when the charger comes out — GNOME does that in its
+# shell, so without it a laptop sits in `balanced` on battery indefinitely — and tuned's
+# own powersave profile leaves PCIe ASPM, USB autosuspend and PCI runtime power management
+# untouched. hypora-power covers both and installs a udev rule so it follows the charger.
+if grep -qx Battery /sys/class/power_supply/*/type 2>/dev/null; then
+    log "Setting up laptop power management"
+    sudo /usr/local/bin/hypora-power install \
+        || warn "Could not set up automatic power switching"
+else
+    log "No battery, so laptop power management was skipped"
 fi
 
 # ---------- wallpapers ----------
