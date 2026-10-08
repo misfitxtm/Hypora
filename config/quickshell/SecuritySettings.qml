@@ -93,7 +93,12 @@ Scope {
                 stderr: StdioCollector { id: actionErr }
                 onExited: code => {
                     if (code === 0) {
-                        win.notice = ""
+                        // Show what it said even when it worked. A command can succeed and
+                        // still have something important to report — encrypt-swap removing
+                        // the resume= argument, say — and discarding stderr on success meant
+                        // the one message that mattered went nowhere at all.
+                        const said = actionErr.text.trim()
+                        win.notice = said !== "" ? said.split("\n")[0] : ""
                     } else {
                         // It didn't happen, so stop claiming it did
                         win.dropPending(action.keys)
@@ -322,21 +327,53 @@ Scope {
                                         : "The firmware will run any bootloader. Turn Secure Boot on in your UEFI setup screen."
                             }
 
+                            // Reports / and /home separately, because they answer different
+                            // questions and are commonly not the same answer: encrypting
+                            // only the volume your files live on is a deliberate and
+                            // reasonable layout, and saying "not encrypted" at someone who
+                            // did exactly that is simply wrong.
                             StatusRow {
                                 readonly property var enc: win.info ? win.info.encryption : null
                                 readonly property int exposed: enc && enc.unencryptedSwap ? enc.unencryptedSwap.length : 0
+                                // Your files are the thing worth protecting, so they decide
+                                // the colour; an unencrypted system volume is a warning, not
+                                // a failure.
+                                readonly property bool dataSafe: enc !== null && enc.homeEncrypted
+                                readonly property bool allSafe: dataSafe && enc.rootEncrypted && exposed === 0
+
                                 icon: !enc || !enc.available ? "shield"
-                                    : enc.rootEncrypted && exposed === 0 ? "shield-check" : "shield-alert"
+                                    : allSafe ? "shield-check" : "shield-alert"
                                 tone: !enc || !enc.available ? Theme.dim
-                                    : !enc.rootEncrypted ? Theme.error
-                                    : exposed > 0 ? Theme.warn : Theme.accent
+                                    : !dataSafe ? Theme.error
+                                    : allSafe ? Theme.accent : Theme.warn
                                 title: "Disk encryption"
                                 value: !enc ? "" : !enc.available ? "Unknown"
-                                     : enc.rootEncrypted ? "On" : "Off"
+                                     : enc.rootEncrypted && enc.homeEncrypted ? "On"
+                                     : enc.homeEncrypted ? "Home only"
+                                     : enc.rootEncrypted ? "System only"
+                                     : "Off"
                                 detail: {
                                     const e = win.info ? win.info.encryption : null
                                     if (!e) return ""
                                     if (!e.available) return e.note || ""
+
+                                    let where = ""
+                                    if (e.rootEncrypted && e.homeEncrypted) {
+                                        where = e.homeSeparate
+                                            ? `This system (${e.rootDevice}) and your home directory (${e.homeDevice}) are both on encrypted volumes.`
+                                            : `This system is on an encrypted volume (${e.rootDevice}).`
+                                    } else if (e.homeEncrypted) {
+                                        where = `Your home directory is encrypted (${e.homeDevice}), so your own files are protected. `
+                                              + `The system volume (${e.rootDevice}) is not: /etc — where NetworkManager keeps Wi-Fi keys — `
+                                              + "and /var/log stay readable, and anyone holding the drive can modify the system itself.";
+                                    } else if (e.rootEncrypted) {
+                                        where = `This system is encrypted (${e.rootDevice}), but /home (${e.homeDevice}) is not, `
+                                              + "so your own files are the part that can be read.";
+                                    } else {
+                                        where = "Nothing is encrypted, so anyone holding the drive can read it. "
+                                              + "Encryption can only be turned on when Fedora is installed.";
+                                    }
+
                                     let swap = ""
                                     if (e.unencryptedSwap.length > 0) {
                                         swap = ` Swap on ${e.unencryptedSwap.join(", ")} is not encrypted, `
@@ -351,10 +388,7 @@ Scope {
                                     const files = (e.swapFiles || []).length > 0 && !e.rootEncrypted
                                         ? ` Swap is also in a file (${e.swapFiles.join(", ")}) on an unencrypted filesystem.`
                                         : ""
-                                    return (e.rootEncrypted
-                                        ? `This system is on an encrypted volume (${e.rootDevice}).`
-                                        : "This system is not encrypted, so anyone holding the drive can read it. "
-                                          + "Encryption can only be turned on when Fedora is installed.") + swap + files
+                                    return where + swap + files
                                 }
                             }
 
@@ -436,8 +470,10 @@ Scope {
                                             text: "This machine is set up to hibernate (resume="
                                                 + (swapFix.enc && swapFix.enc.hibernation
                                                    ? swapFix.enc.hibernation.device : "")
-                                                + "). A key that is thrown away at power-off cannot be resumed from, "
-                                                + "so hibernating will stop working. Suspend is unaffected."
+                                                + "). A key thrown away at power-off cannot be resumed from, so "
+                                                + "hibernating will stop working and the resume= kernel argument "
+                                                + "will be removed — it has to be, or the next boot waits for a "
+                                                + "swap device that no longer exists. Suspend is unaffected."
                                             wrapMode: Text.Wrap
                                             font.family: Theme.font
                                             font.pixelSize: Theme.fontSize - 3
@@ -768,13 +804,21 @@ Scope {
                                 readonly property var cam: win.info ? win.info.camera : null
                                 icon: "camera"
                                 title: "Camera"
-                                available: cam !== null && cam.present
+                                // present and controllable are separate: a camera that
+                                // exists but isn't a USB one can't be switched off by
+                                // unloading uvcvideo, and a camera that is switched off is
+                                // still present — which is what keeps this switch usable
+                                // once you have used it once.
+                                available: cam !== null && cam.present && cam.controllable
                                 checked: win.shown("camera", cam !== null && cam.enabled)
                                 detail: !cam ? ""
                                       : !cam.present ? "No camera found on this machine."
+                                      : !cam.controllable ? (cam.note || "")
                                       : cam.enabled
                                         ? `Available to apps (${cam.devices.join(", ")}). Turning this off unloads the ${cam.driver || "camera"} driver.`
-                                        : "The camera driver is unloaded, so no app can open it."
+                                        : (cam.uvc && cam.uvc.length > 0
+                                           ? `${cam.uvc.join(", ")} is connected, but the uvcvideo driver is not loaded, so no app can open it.`
+                                           : "The camera driver is unloaded, so no app can open it.")
                                 onToggled: win.admin(["camera", checked ? "off" : "on"],
                                                      checked ? "Unloading the camera driver…" : "Loading the camera driver…",
                                                      "camera", !checked)

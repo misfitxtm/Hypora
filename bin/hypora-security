@@ -182,6 +182,7 @@ def encryption():
         return {"available": False, "note": "Could not read the disk layout."}
 
     root = None
+    home = None
     swaps = []
     random_keyed = crypttab_random_keyed()
 
@@ -192,13 +193,18 @@ def encryption():
         return [m for m in mp if m]
 
     def walk(nodes, chain):
-        nonlocal root
+        nonlocal root, home
         for n in nodes:
             here = chain + [n]
             kinds = {x.get("type") for x in here}
             for m in mounts(n):
                 if m == "/" and root is None:
                     root = {"device": n["name"], "encrypted": "crypt" in kinds}
+                elif m == "/home" and home is None:
+                    # Tracked separately because it is the answer to a different question.
+                    # "Is the system encrypted" and "are my files encrypted" are only the
+                    # same question when /home has no filesystem of its own.
+                    home = {"device": n["name"], "encrypted": "crypt" in kinds}
                 elif m == "[SWAP]":
                     zram = n["name"].startswith("zram")
                     crypt = "crypt" in kinds
@@ -220,10 +226,16 @@ def encryption():
     walk(tree, [])
     exposed = [s for s in swaps if not s["safe"]]
     files = swap_files()
+    # With no separate /home, the home directory lives on / and inherits whatever / has.
+    home_sep = home is not None
+    home_enc = bool(home["encrypted"]) if home_sep else bool(root and root["encrypted"])
     return {
         "available": root is not None,
         "rootEncrypted": bool(root and root["encrypted"]),
         "rootDevice": root["device"] if root else "",
+        "homeSeparate": home_sep,
+        "homeEncrypted": home_enc,
+        "homeDevice": home["device"] if home_sep else (root["device"] if root else ""),
         "swap": swaps,
         "unencryptedSwap": [s["name"] for s in exposed],
         "swapFiles": files,
@@ -488,19 +500,88 @@ def selinux():
     return out
 
 
+# The USB Video Class lives on the *interface*, not the device: a webcam enumerates as a
+# composite device whose bDeviceClass is 0xef (miscellaneous), so reading the device class
+# misses every one of them.
+USB_VIDEO_CLASS = "0e"
+
+# Intel's IPU6 and similar MIPI camera complexes are PCI multimedia controllers driven by
+# intel-ipu6, not uvcvideo. Recent ThinkPads use these, and nothing about uvcvideo applies
+# to them — including this window's off switch.
+PCI_CAMERA_CLASSES = ("0400", "0480")
+
+
+def _sysread(p):
+    try:
+        return p.read_text().strip()
+    except OSError:
+        return ""
+
+
 def camera():
-    devices = sorted(str(p) for p in Path("/dev").glob("video*"))
+    """Is there a camera, is it usable, and can this window actually switch it off?
+
+    Asks sysfs what hardware exists rather than inferring it from whether a driver happens
+    to be loaded. The previous version looked only at /dev/video* and uvcvideo, both of
+    which are *consequences* of the driver being loaded — so turning the camera off made it
+    report "no camera found on this machine", which disabled the very switch that would
+    have turned it back on. A one-way off switch is worse than no switch at all.
+    """
+    nodes = sorted(str(p) for p in Path("/dev").glob("video*"))
     try:
         mods = Path("/proc/modules").read_text()
     except OSError:
         mods = ""
-    driver_loaded = bool(re.search(r"^uvcvideo ", mods, re.M))
-    return {
-        "devices": devices,
-        "present": bool(devices) or driver_loaded,
-        "enabled": bool(devices),
-        "driver": "uvcvideo" if driver_loaded else "",
+    uvc_loaded = bool(re.search(r"^uvcvideo ", mods, re.M))
+
+    # USB cameras. Still listed here with the driver unbound, which is the point.
+    uvc = []
+    usb = Path("/sys/bus/usb/devices")
+    if usb.is_dir():
+        for iface in sorted(usb.glob("*:*")):
+            if _sysread(iface / "bInterfaceClass") != USB_VIDEO_CLASS:
+                continue
+            parent = iface.parent / iface.name.split(":")[0]
+            uvc.append(_sysread(parent / "product")
+                       or _sysread(iface / "interface")
+                       or iface.name)
+
+    # MIPI/IPU camera complexes
+    mipi = []
+    pci = Path("/sys/bus/pci/devices")
+    if pci.is_dir():
+        for dev in sorted(pci.iterdir()):
+            cls = _sysread(dev / "class")            # 0xCCSSPP
+            if len(cls) < 6 or cls[2:6] not in PCI_CAMERA_CLASSES:
+                continue
+            drv = ""
+            if (dev / "driver").is_symlink():
+                drv = Path(os.readlink(dev / "driver")).name
+            # A PCI multimedia controller can equally be a capture card or an audio DSP, so
+            # only count it when something camera-shaped drives it, or nothing does yet.
+            # Guessing more freely would put a camera row on machines that have no camera.
+            if drv and not drv.startswith(("intel-ipu", "ipu")):
+                continue
+            mipi.append(dev.name)
+
+    present = bool(uvc or mipi or nodes or uvc_loaded)
+    # The switch works by unloading uvcvideo, so it only governs a USB camera
+    controllable = bool(uvc) or uvc_loaded
+
+    out = {
+        "devices": nodes,
+        "present": present,
+        "enabled": bool(nodes),
+        "driver": "uvcvideo" if uvc_loaded else "",
+        "uvc": uvc,
+        "mipi": mipi,
+        "controllable": controllable,
     }
+    if present and not controllable:
+        out["note"] = ("The camera on this machine is a MIPI/IPU sensor rather than a USB "
+                       "one, so it is driven by intel-ipu6 and not uvcvideo — this switch "
+                       "cannot turn it off.")
+    return out
 
 
 def location():
@@ -652,7 +733,10 @@ def _stable_ref(swap):
     data is already there, and one source for it means one thing to keep right.
     """
     if swap.get("partuuid"):
-        return f"PARTUUID={swap['partuuid']}"
+        # The explicit symlink, not PARTUUID=. fstab resolves that form, but crypttab's
+        # second field is a device and leaning on it to parse the same spellings is a
+        # needless question mark in a file that decides whether the machine boots.
+        return f"/dev/disk/by-partuuid/{swap['partuuid']}"
     if swap.get("kind") == "lvm":
         return swap.get("path") or f"/dev/mapper/{swap['name']}"
     return None
@@ -678,6 +762,53 @@ def _comment_swap_lines(text, keys):
 def _mapper_name(name):
     safe = re.sub(r"[^A-Za-z0-9_-]", "-", name)
     return f"cryptswap-{safe}"
+
+
+def _remove_resume():
+    """Take resume= (and resume_offset=) off the kernel command line. (ok, detail)
+
+    Three places, because Fedora can carry it in all of them and missing one means it comes
+    back at the next kernel install:
+      * the installed boot entries, via grubby --update-kernel=ALL
+      * /etc/kernel/cmdline, which is where new entries are built from
+      * GRUB_CMDLINE_LINUX in /etc/default/grub, for a grub2-mkconfig regeneration
+    """
+    changed = []
+
+    if shutil.which("grubby"):
+        rc, out = run(["grubby", "--update-kernel=ALL",
+                       "--remove-args=resume resume_offset"], timeout=60)
+        if rc != 0:
+            return False, f"grubby could not remove resume= ({out.strip()[:200]})"
+        changed.append("boot entries")
+    else:
+        return False, "grubby is not installed, so resume= cannot be removed safely"
+
+    cmdline = Path("/etc/kernel/cmdline")
+    if cmdline.is_file():
+        try:
+            text = cmdline.read_text()
+            new = re.sub(r'\s*\bresume(_offset)?=[^\s"]+', "", text).strip() + "\n"
+            if new != text:
+                cmdline.write_text(new)
+                changed.append(str(cmdline))
+        except OSError as e:
+            return False, f"cannot rewrite {cmdline}: {e}"
+
+    default_grub = Path("/etc/default/grub")
+    if default_grub.is_file():
+        try:
+            text = default_grub.read_text()
+            new = re.sub(r'\bresume(_offset)?=[^\s"]+\s*', "", text)
+            if new != text:
+                default_grub.write_text(new)
+                changed.append(str(default_grub))
+        except OSError as e:
+            return False, f"cannot rewrite {default_grub}: {e}"
+
+    # It is still on /proc/cmdline until the next boot; that is expected and harmless,
+    # because the device it names is only looked for at boot.
+    return True, "resume= removed from " + ", ".join(changed)
 
 
 # GPT type GUIDs. systemd-gpt-auto-generator activates a partition marked "Linux swap"
@@ -738,13 +869,28 @@ def encrypt_swap(arg=""):
         sys.exit("cryptsetup is not installed.")
 
     hib = info["hibernation"]
-    if hib["configured"] and not allow_hibernate_loss:
-        sys.exit(
-            f"Hibernation is configured (resume={hib['device']}). Encrypted swap takes a new "
-            "random key every boot, so a hibernated image could never be resumed -- the key "
-            "it was written with is gone. Remove the resume= kernel argument first, or "
-            "re-run with --break-hibernate."
-        )
+    if hib["configured"]:
+        if not allow_hibernate_loss:
+            sys.exit(
+                f"Hibernation is configured (resume={hib['device']}). Encrypted swap takes a "
+                "new random key every boot, so a hibernated image could never be resumed -- "
+                "the key it was written with is gone. Re-run with --break-hibernate to give "
+                "hibernation up and have the resume= argument removed for you."
+            )
+        # resume= must go at the same time, not as advice afterwards.
+        #
+        # This is the bug that made a laptop unbootable: the swap signature the resume=
+        # argument points at is destroyed by encrypting the device, so the next boot waits
+        # for a resume device that cannot exist. Earlier this printed a note suggesting the
+        # argument be removed by hand, which is no use at all -- by the time anyone could
+        # act on it the machine was already not booting. Either both halves happen or
+        # neither does.
+        ok, detail = _remove_resume()
+        if not ok:
+            sys.exit(f"Refusing to continue: {detail}. Encrypting swap while resume= still "
+                     f"points at it would leave the next boot waiting for a device that no "
+                     f"longer exists. Remove resume= yourself and re-run.")
+        print(f"Hibernation given up: {detail}")
 
     _backup(FSTAB)
     _backup(CRYPTTAB)
@@ -800,9 +946,14 @@ def encrypt_swap(arg=""):
         if not re.search(rf"^\s*{re.escape(mapper)}\s", crypttab, re.M):
             if crypttab and not crypttab.endswith("\n"):
                 crypttab += "\n"
+            # nofail matters as much as the cipher does. Without it a swap device that
+            # fails to appear takes cryptsetup.target down with it, and the boot ends at an
+            # emergency prompt over a swap partition nothing was waiting for. The fstab line
+            # below has always had it; this one did not, which was an oversight.
             crypttab += (f"# Hypora: swap re-keyed from /dev/urandom every boot\n"
                          f"{mapper} {ref} /dev/urandom "
-                         f"swap,cipher={SWAP_CIPHER},size={SWAP_KEY_BITS}\n")
+                         f"swap,cipher={SWAP_CIPHER},size={SWAP_KEY_BITS},"
+                         f"nofail,x-systemd.device-timeout=10s\n")
 
         keys = {dev, f"/dev/{name}"}
         if uuid:
@@ -812,7 +963,7 @@ def encrypt_swap(arg=""):
             if fstab and not fstab.endswith("\n"):
                 fstab += "\n"
             # nofail so that a swap that fails to come up cannot hold up the boot
-            fstab += f"{target} none swap defaults,nofail 0 0\n"
+            fstab += f"{target} none swap defaults,nofail,x-systemd.device-timeout=10s 0 0\n"
 
         # Commenting out fstab is not enough on its own: with no fstab entry -- which is how
         # Fedora ships -- the partition is activated purely because its GPT type says
