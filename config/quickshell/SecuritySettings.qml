@@ -26,7 +26,7 @@ Scope {
 
         FloatingWindow {
             id: win
-            title: "Security"
+            title: "Security & Privacy"
             implicitWidth: 620
             implicitHeight: 760
             color: Theme.bg
@@ -211,7 +211,7 @@ Scope {
                         Layout.fillWidth: true
                         Text {
                             Layout.fillWidth: true
-                            text: "Security"
+                            text: "Security & Privacy"
                             font.family: Theme.font; font.pixelSize: Theme.fontSize + 9; font.bold: true
                             color: Theme.fg
                         }

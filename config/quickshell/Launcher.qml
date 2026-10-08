@@ -110,14 +110,25 @@ Scope {
                             source: Quickshell.iconPath(row.modelData.icon, "application-x-executable")
                         }
                         Text {
+                            id: nameText
                             anchors { left: icon.right; leftMargin: 12; verticalCenter: parent.verticalCenter }
+                            // Capped so the description always has room. Without this a long
+                            // one (Comment runs to 140-odd characters) overlapped the name.
+                            width: Math.min(implicitWidth, row.width * 0.55)
+                            elide: Text.ElideRight
                             text: row.modelData.name
                             font.family: Theme.font; font.pixelSize: Theme.fontSize + 1
                             color: row.ListView.isCurrentItem ? Theme.accent : Theme.fg
                         }
                         Text {
-                            anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-                            text: row.modelData.genericName
+                            anchors { left: nameText.right; leftMargin: 12
+                                      right: parent.right; rightMargin: 12
+                                      verticalCenter: parent.verticalCenter }
+                            horizontalAlignment: Text.AlignRight
+                            elide: Text.ElideRight
+                            // Apps.describe, not genericName: most .desktop files don't set
+                            // GenericName, which left this column empty for half the list
+                            text: Apps.describe(row.modelData)
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                             color: Theme.dim
                         }

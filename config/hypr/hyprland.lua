@@ -58,6 +58,11 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
     -- Idle locking (~/.config/hypr/hypridle.conf). Without this nothing ever locks.
     hl.exec_cmd(app("hypridle"))
+    -- Secret storage. GNOME's session starts this; Hyprland starts nothing, and an app that
+    -- asks the Secret Service API for somewhere to keep a token and finds no provider may
+    -- fall back to writing it to disk in the clear. --components excludes the pkcs11 and
+    -- gpg agents, which nothing here uses.
+    hl.exec_cmd("gnome-keyring-daemon --start --components=secrets,ssh")
     -- The monitors exist by now, which they don't when the config is first read
     workspace_rules()
 end)
@@ -161,6 +166,10 @@ local keys = {
     focusDown   = mainMod .. " + down",
     monitorLeft  = mainMod .. " + SHIFT + left",
     monitorRight = mainMod .. " + SHIFT + right",
+    -- For screens stacked rather than side by side. Free chords: SUPER + up/down move
+    -- focus, and SUPER + SHIFT + [0-9] moves to a workspace.
+    monitorUp    = mainMod .. " + SHIFT + up",
+    monitorDown  = mainMod .. " + SHIFT + down",
 }
 
 do
@@ -210,8 +219,50 @@ hl.bind(keys.focusDown,  hl.dsp.focus({ direction = "down" }))
 --
 -- Focus deliberately stays put, matching what SUPER + SHIFT + [0-9] does when it sends a
 -- window to another workspace. Add follow = true to both of these to go with the window.
-hl.bind(keys.monitorLeft,  hl.dsp.window.move({ monitor = "l" }))
-hl.bind(keys.monitorRight, hl.dsp.window.move({ monitor = "r" }))
+-- Guarded, because Hyprland raises an error notification when there is no monitor in the
+-- direction asked for. On a laptop with nothing plugged in that is *every* press, and on two
+-- screens it is every press at the outer edge -- an error covering your work for a keystroke
+-- that could not have done anything in the first place. Nothing to report, so report nothing.
+--
+-- Compares positions rather than counting screens: with two monitors there is still no
+-- monitor to the left of the left one. If a Hyprland build doesn't report the coordinate,
+-- fall back to "is there more than one screen", which still silences the single-monitor case
+-- and is no worse than the unguarded version anywhere else.
+--
+-- Which coordinate each direction cares about, and which way along it counts as "toward".
+-- y grows downwards, so up is the negative direction.
+local MONITOR_AXIS = {
+    l = { "x", -1 }, r = { "x", 1 },
+    u = { "y", -1 }, d = { "y", 1 },
+}
+
+local function monitor_toward(dir)
+    local here = hl.get_active_monitor()
+    local all = hl.get_monitors() or {}
+    local axis = MONITOR_AXIS[dir]
+    if not here or not axis then return #all > 1 end
+    local field, sign = axis[1], axis[2]
+    if here[field] == nil then return #all > 1 end
+    for _, m in ipairs(all) do
+        if m.id ~= here.id and m[field] ~= nil
+           and (m[field] - here[field]) * sign > 0 then
+            return true
+        end
+    end
+    return false
+end
+
+local function throw_to_monitor(dir)
+    return function()
+        if not monitor_toward(dir) then return end
+        hl.dispatch(hl.dsp.window.move({ monitor = dir }))
+    end
+end
+
+hl.bind(keys.monitorLeft,  throw_to_monitor("l"))
+hl.bind(keys.monitorRight, throw_to_monitor("r"))
+hl.bind(keys.monitorUp,    throw_to_monitor("u"))
+hl.bind(keys.monitorDown,  throw_to_monitor("d"))
 
 -- Workspaces: SUPER + [0-9] to switch, SUPER + SHIFT + [0-9] to move window.
 --

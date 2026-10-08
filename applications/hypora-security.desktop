@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Security
+Name=Security & Privacy
 Comment=Secure Boot, SELinux, camera, microphone and privacy
 Exec=qs ipc call security open
 Icon=preferences-system-privacy
