@@ -368,7 +368,10 @@ def unset_keys(text, keys):
         if MARK in line and any(re.match(rf"^\s*{k}=", line) for k in keys):
             continue
         m = re.match(rf"^{re.escape(SAVE)}(.*)$", line)
-        if m:
+        # Only restore a saved line if it belongs to a key being unset. Restoring every
+        # saved line regardless meant unsetting one key resurrected another key's original
+        # alongside the version we had set, leaving two live lines for it.
+        if m and any(re.match(rf"^\s*{k}=", m.group(1)) for k in keys):
             out.append(m.group(1))
             continue
         out.append(line)
@@ -431,13 +434,26 @@ def cmd_apply():
     backup = GRUB_DEFAULT.with_name(GRUB_DEFAULT.name + time.strftime(".hypora-%Y%m%d-%H%M%S"))
     shutil.copy2(GRUB_DEFAULT, backup)
 
+    # GRUB_GFXPAYLOAD_LINUX is deliberately *removed* rather than set.
+    #
+    # An earlier version set it to "keep", on the reasoning that handing GRUB's graphics
+    # mode to the kernel would avoid a flash back to text. What "keep" actually does is
+    # hand over the framebuffer with GRUB's last frame still in it — so that image sits in
+    # memory and resurfaces every time nothing else is drawing: once between GRUB and
+    # Plymouth, and again between Plymouth quitting and the login screen appearing. The
+    # menu looked like it was coming back twice, because it was.
+    #
+    # Without it GRUB tears its mode down on the way out, the screen goes black, and the
+    # kernel brings up a fresh framebuffer. Fedora does not set this key either. The
+    # removal is active rather than passive so that a machine which already has our old
+    # line gets it taken back out on the next apply.
+    text = unset_keys(text, ["GRUB_GFXPAYLOAD_LINUX"])
+
     new = set_keys(text, {
         "GRUB_THEME": str(dest / "theme.txt"),
         # The one that actually matters: a theme in console mode is invisible
         "GRUB_TERMINAL_OUTPUT": '"gfxterm"',
         "GRUB_GFXMODE": "auto",
-        # Hand the mode to the kernel so the handover doesn't flash back to text
-        "GRUB_GFXPAYLOAD_LINUX": "keep",
     })
     GRUB_DEFAULT.write_text(new)
 
