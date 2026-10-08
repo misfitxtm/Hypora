@@ -62,6 +62,11 @@ hl.on("hyprland.start", function()
     -- asks the Secret Service API for somewhere to keep a token and finds no provider may
     -- fall back to writing it to disk in the clear. --components excludes the pkcs11 and
     -- gpg agents, which nothing here uses.
+    --
+    -- Still wanted even though install.sh sets up PAM auto-unlock, which also starts the
+    -- daemon: `--start` attaches to a running daemon and brings up any component that isn't
+    -- up yet, so this is the belt to that braces. It also covers the cases PAM can't --
+    -- auto-unlock declined, module missing, or a session that didn't come through SDDM.
     hl.exec_cmd("gnome-keyring-daemon --start --components=secrets,ssh")
     -- The monitors exist by now, which they don't when the config is first read
     workspace_rules()
