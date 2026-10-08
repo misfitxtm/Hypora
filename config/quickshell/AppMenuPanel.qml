@@ -55,7 +55,11 @@ Rectangle {
                   "fprintd-enroll; printf '\\nPress Enter to close. '; read _") }
         ],
         "Help": [
-            { icon: "sliders", label: "Keybindings", run: () => ShellState.keybindHelpOpen = true }
+            { icon: "sliders", label: "Keybindings", run: () => ShellState.keybindHelpOpen = true },
+            // xdg-open rather than a hardcoded browser: Hypora's own browser default is a
+            // flatpak, and someone who has changed theirs should get the one they chose.
+            { icon: "message", label: "Report a bug",
+              run: () => Apps.run(["xdg-open", "https://github.com/misfitxtm/Hypora/issues/new"]) }
         ]
     })
 
