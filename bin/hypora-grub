@@ -304,9 +304,17 @@ def make_fonts(dest):
 
 # ---------- helpers ----------
 
-def run(cmd):
+def run(cmd, timeout=120):
+    """(returncode, output) — never raises.
+
+    The timeout is a parameter rather than a constant so callers can say what they expect:
+    grub2-mkconfig on a machine with several kernels is legitimately slow, grubby is not.
+    This signature matches the run() in the other hypora-* helpers, which is what it should
+    have been from the start — writing _kernel_args against the other one's signature is
+    exactly how it came to be called with an argument this did not accept.
+    """
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except (OSError, subprocess.SubprocessError) as e:
         return 1, str(e)
