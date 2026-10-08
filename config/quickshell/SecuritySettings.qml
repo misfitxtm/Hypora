@@ -94,9 +94,9 @@ Scope {
                 onExited: code => {
                     if (code === 0) {
                         // Show what it said even when it worked. A command can succeed and
-                        // still have something important to report — encrypt-swap removing
-                        // the resume= argument, say — and discarding stderr on success meant
-                        // the one message that mattered went nowhere at all.
+                        // still have something worth reading, and discarding stderr on
+                        // success once meant the single message that mattered — a warning
+                        // that the next boot would hang — went nowhere at all.
                         const said = actionErr.text.trim()
                         win.notice = said !== "" ? said.split("\n")[0] : ""
                     } else {
@@ -392,10 +392,15 @@ Scope {
                                 }
                             }
 
-                            // Swap holds whatever was in memory, so plaintext swap is a hole
-                            // straight through disk encryption. Offered only when there is
-                            // actually exposed swap and cryptsetup to fix it with, and behind
-                            // a confirmation because it edits fstab and crypttab.
+                            // Swap holds whatever was in memory, so plaintext swap is a
+                            // hole straight through disk encryption. The fix offered here
+                            // is a swapfile on the encrypted root rather than encrypting a
+                            // swap partition in place: the latter needed a crypttab entry,
+                            // a GPT type change and the removal of resume=, three pieces of
+                            // boot-critical state, and getting them wrong left a machine
+                            // unbootable. A swapfile inside the encrypted root is encrypted
+                            // because of where it lives, and the only persistent change is
+                            // one fstab line carrying nofail.
                             ColumnLayout {
                                 id: swapFix
                                 Layout.fillWidth: true
@@ -403,29 +408,51 @@ Scope {
                                 Layout.topMargin: 2
                                 Layout.bottomMargin: 10
                                 spacing: 8
-                                visible: win.info !== null && win.info.encryption
-                                         && win.info.encryption.canEncryptSwap === true
 
-                                property bool confirming: false
                                 readonly property var enc: win.info ? win.info.encryption : null
-                                readonly property bool losesHibernate:
-                                    enc && enc.hibernation && enc.hibernation.configured === true
-                                readonly property string devices:
+                                readonly property var sf: enc ? enc.swapfile : null
+                                readonly property bool canAdd:
+                                    sf !== null && !sf.exists && sf.rootEncrypted && sf.supported
+                                readonly property bool haveFile: sf !== null && sf.exists
+                                readonly property string exposed:
                                     enc && enc.unencryptedSwap ? enc.unencryptedSwap.join(", ") : ""
+
+                                visible: canAdd || haveFile || exposed !== ""
+                                property bool confirming: false
+
+                                // Plaintext swap partitions are reported, not offered a fix.
+                                // Removing a partition is destructive and belongs in an
+                                // installer, not behind a button in a settings window.
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: swapFix.exposed !== ""
+                                    text: `Swap on ${swapFix.exposed} is a partition outside the encrypted volume. `
+                                        + "The clean fix is to stop using it — remove it at your next install and let "
+                                        + "zram handle swap, adding a swapfile here if you ever need more."
+                                    wrapMode: Text.Wrap
+                                    font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                    color: Theme.warn
+                                }
 
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 10
-                                    visible: !swapFix.confirming
+                                    visible: !swapFix.confirming && (swapFix.canAdd || swapFix.haveFile)
                                     Pill {
-                                        text: "Encrypt swap"
+                                        text: swapFix.haveFile ? "Remove swapfile" : "Add swapfile"
                                         small: true
-                                        onClicked: swapFix.confirming = true
+                                        onClicked: {
+                                            if (swapFix.haveFile)
+                                                win.admin(["remove-swapfile"], "Removing the swapfile…")
+                                            else
+                                                swapFix.confirming = true
+                                        }
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: "Puts swap behind dm-crypt with a key taken from /dev/urandom, "
-                                            + "fresh on every boot."
+                                        text: swapFix.haveFile
+                                            ? `${swapFix.sf.path} is in use. It lives inside the encrypted root, so it is encrypted with everything else.`
+                                            : "Adds a 4 GB swapfile inside the encrypted root, for when zram is not enough."
                                         wrapMode: Text.Wrap
                                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
                                         color: Theme.dim
@@ -437,9 +464,9 @@ Scope {
                                     visible: swapFix.confirming
                                     implicitHeight: confirmCol.implicitHeight + 26
                                     radius: 10
-                                    color: Qt.rgba(Theme.warn.r, Theme.warn.g, Theme.warn.b, 0.10)
+                                    color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.10)
                                     border.width: 1
-                                    border.color: Theme.warn
+                                    border.color: Theme.accent
 
                                     ColumnLayout {
                                         id: confirmCol
@@ -447,7 +474,7 @@ Scope {
                                         spacing: 6
 
                                         Text {
-                                            text: "Encrypt swap on " + swapFix.devices + "?"
+                                            text: "Add a 4 GB swapfile?"
                                             font.family: Theme.font
                                             font.pixelSize: Theme.fontSize
                                             font.bold: true
@@ -455,43 +482,26 @@ Scope {
                                         }
                                         Text {
                                             Layout.fillWidth: true
-                                            text: "Swap is switched off, re-made inside dm-crypt and switched back on. "
-                                                + "Anything already written there becomes unreadable, including a "
-                                                + "suspended session's pages. /etc/fstab and /etc/crypttab are copied "
-                                                + "first and the old entry is commented out rather than deleted."
+                                            text: `Creates ${swapFix.sf ? swapFix.sf.path : "/swap/swapfile"} and switches it on. `
+                                                + "On btrfs it goes in a subvolume of its own so snapshots never capture it — "
+                                                + "a swapfile caught in a snapshot pins its full size for as long as that "
+                                                + "snapshot lives. Nothing else on disk changes except one line in /etc/fstab, "
+                                                + "which is backed up first and carries nofail."
                                             wrapMode: Text.Wrap
                                             font.family: Theme.font
                                             font.pixelSize: Theme.fontSize - 3
                                             color: Theme.dim
                                         }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            visible: swapFix.losesHibernate
-                                            text: "This machine is set up to hibernate (resume="
-                                                + (swapFix.enc && swapFix.enc.hibernation
-                                                   ? swapFix.enc.hibernation.device : "")
-                                                + "). A key thrown away at power-off cannot be resumed from, so "
-                                                + "hibernating will stop working and the resume= kernel argument "
-                                                + "will be removed — it has to be, or the next boot waits for a "
-                                                + "swap device that no longer exists. Suspend is unaffected."
-                                            wrapMode: Text.Wrap
-                                            font.family: Theme.font
-                                            font.pixelSize: Theme.fontSize - 3
-                                            color: Theme.warn
-                                        }
                                         RowLayout {
                                             Layout.topMargin: 2
                                             spacing: 8
                                             Pill {
-                                                text: "Encrypt swap"
+                                                text: "Add swapfile"
                                                 current: true
                                                 small: true
                                                 onClicked: {
                                                     swapFix.confirming = false
-                                                    win.admin(swapFix.losesHibernate
-                                                              ? ["encrypt-swap", "--break-hibernate"]
-                                                              : ["encrypt-swap"],
-                                                              "Encrypting swap…")
+                                                    win.admin(["add-swapfile"], "Creating the swapfile…")
                                                 }
                                             }
                                             Pill {
