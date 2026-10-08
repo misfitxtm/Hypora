@@ -61,6 +61,15 @@ def palette():
         name = (conf / "current/name").read_text().strip()
     except OSError:
         sys.exit("No theme is applied yet; run hypora-theme first.")
+
+    # The name comes from ~/.config/hypora/current/name, which is writable by the user,
+    # while this runs as root. It is used as a path component below — and in hypora-grub,
+    # written into a file GRUB parses at boot — so it is validated rather than trusted.
+    # Without this, anything able to write that one file could steer a root-run script's
+    # reads with "..", or break out of the quoted string it lands in.
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}", name):
+        sys.exit(f"Theme name {name!r} is not a plain name; refusing to use it as root.")
+
     colors = conf / "themes" / name / "colors.toml"
     try:
         text = colors.read_text()

@@ -760,6 +760,38 @@ def add_swapfile(arg=""):
     if not st["supported"]:
         sys.exit(f"Don't know how to make a swapfile on {st['rootFs'] or 'this filesystem'}.")
 
+    # Create everything under a restrictive umask rather than relaxing it afterwards.
+    # fallocate honours the umask and would otherwise make the file 0644 for the moment
+    # between creating it and the chmod below. It holds no swap data in that window, so
+    # nothing actually leaks — but a world-readable swapfile is bad enough that the window
+    # is worth not having at all.
+    old_umask = os.umask(0o077)
+    try:
+        _create_swapfile(st, size)
+    finally:
+        os.umask(old_umask)
+
+    os.chmod(SWAPFILE, 0o600)
+    rc, out = run(["swapon", str(SWAPFILE)], timeout=60)
+    if rc != 0:
+        SWAPFILE.unlink(missing_ok=True)
+        sys.exit(f"Could not activate the swapfile, so it was removed: {out.strip()[:200]}")
+
+    # Persist only after it is proven working, same order as everything else here.
+    _backup(FSTAB)
+    text = FSTAB.read_text() if FSTAB.exists() else ""
+    if not re.search(rf"^\s*{re.escape(str(SWAPFILE))}\s", text, re.M):
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"{SWAPFILE} none swap defaults,nofail 0 0\n"
+        FSTAB.write_text(text)
+    run(["systemctl", "daemon-reload"])
+
+    print(f"{SWAPFILE} created ({size}) and active. It is inside the encrypted root, so it "
+          "is encrypted with everything else.")
+
+
+def _create_swapfile(st, size):
     if st["rootFs"] == "btrfs":
         # Its own subvolume, so snapshots never capture it. A swapfile caught in a snapshot
         # pins its full size in extents for as long as that snapshot lives.
@@ -783,25 +815,6 @@ def add_swapfile(arg=""):
         if rc != 0:
             SWAPFILE.unlink(missing_ok=True)
             sys.exit(f"mkswap failed: {out.strip()[:200]}")
-
-    os.chmod(SWAPFILE, 0o600)
-    rc, out = run(["swapon", str(SWAPFILE)], timeout=60)
-    if rc != 0:
-        SWAPFILE.unlink(missing_ok=True)
-        sys.exit(f"Could not activate the swapfile, so it was removed: {out.strip()[:200]}")
-
-    # Persist only after it is proven working, same order as everything else here.
-    _backup(FSTAB)
-    text = FSTAB.read_text() if FSTAB.exists() else ""
-    if not re.search(rf"^\s*{re.escape(str(SWAPFILE))}\s", text, re.M):
-        if text and not text.endswith("\n"):
-            text += "\n"
-        text += f"{SWAPFILE} none swap defaults,nofail 0 0\n"
-        FSTAB.write_text(text)
-    run(["systemctl", "daemon-reload"])
-
-    print(f"{SWAPFILE} created ({size}) and active. It is inside the encrypted root, so it "
-          "is encrypted with everything else.")
 
 
 def remove_swapfile(arg=""):
