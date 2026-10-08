@@ -90,6 +90,34 @@ fetch_verified() {
     fi
 }
 
+# pin_clone <url> <commit> <dest>: check out exactly one reviewed commit, nothing else.
+#
+# The same argument as fetch_verified, for git. `git clone --depth 1 <url>` takes whatever
+# the default branch points at today, and both repositories below are *executed* code — Oh
+# My Zsh runs on every interactive shell, the LazyVim starter runs inside Neovim. An upstream
+# compromise would therefore run as you, on your next shell. Everything else this installer
+# fetches is pinned to a hash or a GPG fingerprint; these were the exception.
+#
+# Fetching a bare commit needs the server to allow it, which GitHub does. The rev-parse at
+# the end is the actual guarantee: without it this would just be a slower unpinned clone.
+pin_clone() {
+    local url=$1 commit=$2 dest=$3
+    rm -rf "$dest"
+    git init -q "$dest" 2>/dev/null || { warn "Could not create $dest"; return 1; }
+    git -C "$dest" remote add origin "$url" || return 1
+    if ! git -C "$dest" fetch -q --depth 1 origin "$commit" 2>/dev/null; then
+        rm -rf "$dest"
+        warn "Could not fetch $commit from $url"
+        return 1
+    fi
+    git -C "$dest" checkout -q FETCH_HEAD || { rm -rf "$dest"; return 1; }
+    if [ "$(git -C "$dest" rev-parse HEAD)" != "$commit" ]; then
+        rm -rf "$dest"
+        warn "$url did not check out $commit"
+        return 1
+    fi
+}
+
 # ---------- repos ----------
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
@@ -123,6 +151,10 @@ REQUIRED=(
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
     polkit sddm qt6-qtsvg gnupg2 curl tar xz unzip firewalld
+    # Secret Service provider. GNOME's session starts one and Hyprland doesn't, so without
+    # this an app looking for somewhere to keep a token finds no provider — and some then
+    # fall back to writing it to disk unencrypted. Started from hyprland.lua.
+    gnome-keyring
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
     papirus-icon-theme breeze-icon-theme
@@ -282,19 +314,25 @@ else
     # RUNZSH=no CHSH=no KEEP_ZSHRC=yes that script only clones anyway — Hypora writes its
     # own .zshrc and sets the login shell itself — so running it bought nothing and meant
     # executing a file fetched from a moving branch.
+    #
+    # Pinned, like every other artifact here. Bumping it is a deliberate edit: read what
+    # changed, then update the commit. config/zsh/zshrc turns Oh My Zsh's own auto-update
+    # off, because a framework that silently pulls master would make this pin decorative.
     log "Installing Oh My Zsh"
-    git clone -q --depth 1 https://github.com/ohmyzsh/ohmyzsh.git "$HOME/.oh-my-zsh" \
-        || warn "Could not clone Oh My Zsh"
+    pin_clone https://github.com/ohmyzsh/ohmyzsh.git \
+        60c9a7a839b790cd905d0fd4419435124fd1bdc0 \
+        "$HOME/.oh-my-zsh" || warn "Could not install Oh My Zsh"
 fi
 
 # LazyVim starter, only when ~/.config/nvim is empty; an existing config is left alone.
 if [ -e "$CONF/nvim/init.lua" ] || [ -e "$CONF/nvim/init.vim" ]; then
     log "Keeping your existing Neovim config"
-elif git clone -q --depth 1 https://github.com/LazyVim/starter "$CONF/nvim" 2>/dev/null; then
+elif pin_clone https://github.com/LazyVim/starter \
+        803bc181d7c0d6d5eeba9274d9be49b287294d99 "$CONF/nvim"; then
     rm -rf "$CONF/nvim/.git"
     log "Installed the LazyVim starter"
 else
-    warn "Could not clone the LazyVim starter"
+    warn "Could not install the LazyVim starter"
 fi
 
 # ---------- services ----------
@@ -349,13 +387,39 @@ sudo systemctl try-restart systemd-resolved NetworkManager 2>/dev/null || true
 # Firewall. Fedora's FedoraWorkstation zone leaves ports 1025-65535 open on TCP and UDP;
 # `public` allows only ssh, mDNS and DHCPv6, which is the right baseline for a desktop that
 # serves nothing. LocalSend is the one thing here that listens, so it gets its port back.
+#
+# SSH is then closed as well, which Fedora leaves open. A desktop nobody logs into remotely
+# has no reason to answer on 22, and sshd is the one service reachable from the network by
+# default. Set KEEP_SSH=yes to leave it alone.
+#
+# Never when the installer is itself running over SSH: closing the port you arrived on, on a
+# machine you are not sitting at, is how an install ends in a drive to the office.
+KEEP_SSH=${KEEP_SSH:-}
+if [ -z "$KEEP_SSH" ] && [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SSH_CLIENT:-}" ]; then
+    KEEP_SSH=yes
+    warn "Running over SSH, so SSH is being left enabled and open"
+fi
+
 log "Enabling the firewall"
 sudo systemctl enable --now firewalld || warn "Could not enable firewalld"
 if systemctl is-active --quiet firewalld; then
     sudo firewall-cmd --quiet --set-default-zone=public || warn "Could not set the default firewall zone"
+    if [ "$KEEP_SSH" != yes ]; then
+        sudo firewall-cmd --quiet --permanent --remove-service=ssh 2>/dev/null || true
+    fi
     sudo firewall-cmd --quiet --permanent --add-port=53317/tcp || true   # LocalSend
     sudo firewall-cmd --quiet --permanent --add-port=53317/udp || true
     sudo firewall-cmd --quiet --reload || true
+fi
+
+# Stop the daemon too, not just block the port: a listener nothing can reach is still a
+# listener, and it comes back the moment someone widens a zone. Left installed, so turning
+# it back on is `sudo systemctl enable --now sshd`.
+if [ "$KEEP_SSH" != yes ]; then
+    if systemctl is-enabled --quiet sshd 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
+        log "Disabling the SSH server (KEEP_SSH=yes to keep it)"
+        sudo systemctl disable --now sshd 2>/dev/null || warn "Could not disable sshd"
+    fi
 fi
 
 # Automatic security updates, in two halves because nothing covers both.
@@ -393,10 +457,17 @@ sudo systemctl enable hypora-flatpak-update.timer \
 # soft-blocked — and they look identical from the desktop. hypora-hardware separates them and
 # fixes the ones that can be fixed from Fedora's own repositories. It never adds a third-party
 # repo; where a chip needs one (Broadcom's wl, typically) it says so and leaves it to you.
-if [ -x "$HOME/.local/bin/hypora-hardware" ]; then
+# Run from the repo, not from ~/.local/bin. Two reasons, both of which bit:
+#   * ~/.local/bin is writable by you, and this runs under sudo — anything that could write
+#     your home directory would have earned root the next time you ran the installer. The
+#     repo is the tree you are already executing, so it grants nothing new.
+#   * ~/.local/bin/hypora-hardware doesn't exist yet at this point in the script (bin/ is
+#     installed further down), so on a *fresh* install the guard was false and this never
+#     ran at all — on exactly the case it was written for, a new install with no Wi-Fi.
+if [ -x "$REPO/bin/hypora-hardware" ]; then
     log "Checking hardware, firmware and drivers"
-    sudo "$HOME/.local/bin/hypora-hardware" fix || warn "Some hardware could not be fixed"
-    "$HOME/.local/bin/hypora-hardware" probe || true
+    sudo "$REPO/bin/hypora-hardware" fix || warn "Some hardware could not be fixed"
+    "$REPO/bin/hypora-hardware" probe || true
 fi
 
 sudo systemctl set-default graphical.target
@@ -490,21 +561,39 @@ for f in "$REPO"/applications/*.desktop; do
 done
 
 # ---------- bin ----------
-# hypora-security is the one script that gets run as root (via pkexec, from the Security
-# window). It must live somewhere only root can write: a copy under ~/.local/bin would let
-# anything that can write your home directory earn root the next time you touch a toggle.
-log "Installing hypora-security to /usr/local/bin (root-owned)"
-sudo install -m755 -o root -g root "$REPO/bin/hypora-security" /usr/local/bin/hypora-security
-# Drop the user-writable copy an earlier version of this installer left behind
-rm -f "$HOME/.local/bin/hypora-security"
+# Scripts that get run as root must live somewhere only root can write. A copy under
+# ~/.local/bin would let anything that can write your home directory earn root the next time
+# you ran it — which is the whole attack, and it does not require the attacker to be root
+# already. So these go to /usr/local/bin, owned by root, and the user-writable copies are
+# removed:
+#
+#   hypora-security   run by pkexec from the Security window
+#   hypora-console    documented as `sudo hypora-console apply`; it writes the kernel
+#                     command line, so a tampered copy is a boot-integrity problem
+#   hypora-hardware   documented as `sudo hypora-hardware fix`; it installs packages and
+#                     loads kernel modules
+#
+# The test is simply "does anything tell you to run this under sudo", which is why these
+# three and not the others — the rest never need more than your own privileges.
+ROOT_OWNED=(hypora-security hypora-console hypora-hardware)
+
+for name in "${ROOT_OWNED[@]}"; do
+    log "Installing $name to /usr/local/bin (root-owned)"
+    sudo install -m755 -o root -g root "$REPO/bin/$name" "/usr/local/bin/$name"
+    # Drop any user-writable copy an earlier version of this installer left behind
+    rm -f "$HOME/.local/bin/$name"
+done
 
 shopt -s nullglob
 bin_files=("$REPO"/bin/*)
 if [ ${#bin_files[@]} -gt 0 ]; then
     log "Installing bin scripts to ~/.local/bin"
     for f in "${bin_files[@]}"; do
-        [ "$(basename "$f")" = hypora-security ] && continue   # root-owned, installed above
-        put "$f" "$HOME/.local/bin/$(basename "$f")" 755
+        name=$(basename "$f")
+        skip=
+        for r in "${ROOT_OWNED[@]}"; do [ "$name" = "$r" ] && skip=1; done
+        [ -n "$skip" ] && continue        # root-owned, installed above
+        put "$f" "$HOME/.local/bin/$name" 755
     done
 fi
 

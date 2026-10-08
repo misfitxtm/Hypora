@@ -41,6 +41,31 @@ Singleton {
     // Categories that at least one installed app belongs to
     readonly property var categories: allCategories.filter(c => all.some(e => e.categories.includes(c.id)))
 
+    // Categories in order of how much they actually say about an app. System and Utility
+    // come last because they're what a .desktop file falls back to when it has nothing more
+    // specific to offer, so "Network" is a better answer than "Utility" for something
+    // claiming both.
+    readonly property var describeCategories: [
+        "AudioVideo", "Audio", "Video", "Development", "Education", "Game",
+        "Graphics", "Network", "Office", "Science", "Settings", "System", "Utility"
+    ]
+
+    // One short phrase saying what an app is, for the launcher's right-hand column.
+    //
+    // GenericName is the field meant for exactly this, but fewer than half the .desktop
+    // files on a Fedora system set it — so the column was simply blank for things like
+    // Calculator, Disks and Document Viewer. Comment is set by most of the rest and reads
+    // well enough here; failing both, the app's main category at least places it.
+    function describe(entry) {
+        if (!entry) return ""
+        if (entry.genericName) return entry.genericName
+        if (entry.comment) return entry.comment
+        const cats = entry.categories || []
+        for (const c of describeCategories)
+            if (cats.includes(c)) return c
+        return ""
+    }
+
     // Lower rank = better match; -1 = no match
     function rank(entry, q) {
         const name = entry.name.toLowerCase()

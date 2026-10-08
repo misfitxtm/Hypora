@@ -1,2 +1,7 @@
 # Environment for apps started through uwsm (the Hypora session). Read by uwsm at login.
 export QT_QPA_PLATFORMTHEME=qt6ct
+
+# Point ssh at gnome-keyring's agent (started in hyprland.lua). The daemon prints this for
+# eval on startup, which is no use to processes that began before it; the path is fixed, so
+# setting it here means everything in the session agrees on one agent socket.
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR}/keyring/ssh"

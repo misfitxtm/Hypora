@@ -26,7 +26,11 @@ Scope {
             implicitWidth: 560
             implicitHeight: 680
             color: Theme.bg
-            onClosed: ShellState.keybindHelpOpen = false
+            // Clearing `capturing` first matters: its handler is what gives the keyboard back
+            onClosed: {
+                capturing = ""
+                ShellState.keybindHelpOpen = false
+            }
 
             // Rebindable actions, grouped the way they're explained
             readonly property var groups: [
@@ -51,7 +55,9 @@ Scope {
                     { action: "focusUp",     label: "Focus up",        def: "SUPER + up" },
                     { action: "focusDown",   label: "Focus down",      def: "SUPER + down" },
                     { action: "monitorLeft",  label: "Send to left monitor",  def: "SUPER + SHIFT + left" },
-                    { action: "monitorRight", label: "Send to right monitor", def: "SUPER + SHIFT + right" }
+                    { action: "monitorRight", label: "Send to right monitor", def: "SUPER + SHIFT + right" },
+                    { action: "monitorUp",    label: "Send to monitor above", def: "SUPER + SHIFT + up" },
+                    { action: "monitorDown",  label: "Send to monitor below", def: "SUPER + SHIFT + down" }
                 ]},
                 { title: "Scratchpad", items: [
                     { action: "scratchpad",       label: "Show / hide scratchpad", def: "SUPER + S" },
@@ -81,6 +87,47 @@ Scope {
             property string notice: ""
 
             function keyFor(action, fallback) { return overrides[action] || fallback }
+
+            // ---------- holding the keyboard while we wait for a chord ----------
+            //
+            // Hyprland handles binds itself, before any client is offered the key. So while
+            // this window waited for a new chord, every combination that was already bound
+            // ran its action instead of reaching us: pressing SUPER + Q to rebind "Close
+            // window" closed the window, and SUPER + Q was never captured.
+            //
+            // Switching to a submap with no binds defined in it is Hyprland's own answer --
+            // nothing matches, so every key falls through to the focused client. `reset`
+            // returns to the normal map. This needs nothing in hyprland.lua; the submap does
+            // not have to exist to be switched to, which is exactly why it is empty.
+            readonly property string grabSubmap: "hypora-rebind"
+
+            function grabKeyboard(on) {
+                Quickshell.execDetached(["hyprctl", "dispatch", "submap",
+                                         on ? grabSubmap : "reset"])
+            }
+
+            // One hook covers every way capture can end: a chord landing, Escape, clicking
+            // another row, or the timeout below. Anything that clears `capturing` releases.
+            onCapturingChanged: grabKeyboard(capturing !== "")
+
+            // Nothing may leave the submap engaged, or the machine has no shortcuts at all
+            // and no obvious way back. Belt and braces, in order of how bad the path is:
+            Component.onDestruction: grabKeyboard(false)
+            // ...and a reset on the way in, in case something earlier died mid-capture
+            Component.onCompleted: grabKeyboard(false)
+
+            // A chord takes a moment to press, not a quarter of an hour. If capture is still
+            // open after this, assume it was forgotten and give the keyboard back.
+            Timer {
+                id: captureTimeout
+                interval: 15000
+                running: win.capturing !== ""
+                onTriggered: {
+                    win.capturing = ""
+                    win.notice = "Stopped waiting, so your shortcuts still work. Click one to try again."
+                    clearNotice.restart()
+                }
+            }
 
             // Every chord more than one action now wants. A duplicate is allowed — refusing
             // the edit made it impossible to swap two shortcuts, since whichever you set
@@ -245,7 +292,9 @@ Scope {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         text: win.notice !== "" ? win.notice
-                            : win.capturing !== "" ? "Press the new key combination, or Esc to cancel."
+                            : win.capturing !== "" ? "Press the new key combination, or Esc to cancel. "
+                                                   + "Your shortcuts are paused until you do, so the one "
+                                                   + "you press can be read instead of firing."
                             : "Click a shortcut to change it."
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                         color: win.capturing !== "" ? Theme.accent : Theme.dim

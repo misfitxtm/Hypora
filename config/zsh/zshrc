@@ -5,6 +5,13 @@
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="robbyrussell"
 
+# Oh My Zsh is installed at a pinned commit (see install.sh). Left to itself it would offer
+# to pull the latest master, which would quietly undo that pin — and this is code that runs
+# on every interactive shell. Update it deliberately instead: bump the commit in install.sh
+# and re-run it, or `omz update` yourself once you've read what changed.
+zstyle ':omz:update' mode disabled
+DISABLE_AUTO_UPDATE=true
+
 # Fedora ships the suggestion and highlighting plugins, so they aren't cloned into
 # Oh My Zsh; they're sourced further down instead.
 plugins=(git sudo dnf systemd extract colored-man-pages command-not-found)
