@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""hypora-replace-de: remove another desktop's shell, keeping what Hypora needs.
+
+    hypora-replace-de list      what else is installed, and what removing it would take
+    hypora-replace-de remove    remove it (needs root; asks first)
+    hypora-replace-de remove --yes
+
+Only the **session** is removed — the shell, the session manager, the greeter. Never the
+applications or the schemas, because Hypora is built on top of some of them:
+
+  * gsettings-desktop-schemas provides org.gnome.desktop.interface, which bin/hypora-theme
+    writes, and org.gnome.desktop.privacy, which the Security window reads. Losing it
+    breaks theming and two rows of that window.
+  * nautilus, gnome-calculator, gnome-disk-utility, gnome-software and adw-gtk3-theme are
+    installed by Hypora on purpose.
+
+So "remove GNOME" here means gnome-shell and gnome-session, not GNOME. Anything on the
+keep list is passed to dnf as an explicit exclude, and the plan is printed for you to read
+before anything happens — because the way this goes wrong is a dependency chain quietly
+taking a schema package with it, and you only find out when your theme stops applying.
+"""
+import os
+import re
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+# marker package -> (display name, the session packages to remove)
+#
+# The marker is what proves the desktop is installed. The removal list is deliberately
+# short: the pieces that start and run a session, and its greeter. Toolkit libraries,
+# file managers, terminals and settings apps are all left alone — they are useful on
+# their own and removing them is how a "replace the desktop" turns into a broken system.
+DESKTOPS = {
+    "gnome-shell": ("GNOME", [
+        "gnome-shell", "gnome-session", "gnome-initial-setup",
+        "gnome-browser-connector", "gnome-shell-extension-common", "gdm",
+    ]),
+    "plasma-workspace": ("KDE Plasma", [
+        "plasma-workspace", "plasma-desktop", "plasma-workspace-wayland",
+        "kwin", "sddm-kcm", "plasma-nm", "kde-settings-plasma",
+    ]),
+    "xfdesktop": ("Xfce", [
+        "xfdesktop", "xfwm4", "xfce4-session", "xfce4-panel", "lightdm",
+    ]),
+    "cinnamon": ("Cinnamon", [
+        "cinnamon", "cinnamon-session", "cinnamon-screensaver", "muffin",
+    ]),
+    "mate-session-manager": ("MATE", [
+        "mate-session-manager", "mate-panel", "marco", "mate-desktop",
+    ]),
+    "lxqt-session": ("LXQt", [
+        "lxqt-session", "lxqt-panel", "lxqt-runner", "openbox",
+    ]),
+    "budgie-desktop": ("Budgie", [
+        "budgie-desktop", "budgie-desktop-view", "budgie-screensaver",
+    ]),
+    "cosmic-session": ("COSMIC", [
+        "cosmic-session", "cosmic-comp", "cosmic-panel", "cosmic-greeter",
+    ]),
+    "sway": ("Sway", ["sway", "swayidle", "swaylock"]),
+    "i3": ("i3", ["i3", "i3status", "i3lock"]),
+}
+
+# Never removed, whatever depends on what. This is the list that makes the difference
+# between replacing a desktop and breaking this one.
+KEEP = [
+    "gsettings-desktop-schemas",      # org.gnome.desktop.* — theming and the Security window
+    "glib2", "gtk3", "gtk4", "libadwaita",
+    "nautilus", "gvfs", "gnome-calculator", "gnome-disk-utility", "gnome-software",
+    "adw-gtk3-theme", "xdg-desktop-portal", "xdg-desktop-portal-gtk",
+    "polkit", "pipewire", "wireplumber", "NetworkManager",
+    "sddm",                           # Hypora's own greeter
+    "hyprland", "quickshell",
+    # Found by running the removal as a dry run and reading the dependency chain, which is
+    # the only way these surface — nothing about their names suggests GNOME owns them:
+    "xorg-x11-server-Xwayland",       # every X11 app under Hyprland goes through this
+    "gnome-keyring", "gnome-keyring-pam", "gcr",   # pam_gnome_keyring.so lives here, and
+                                      # the keyring auto-unlock in install.sh needs it
+]
+
+
+def run(cmd, timeout=120):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except (OSError, subprocess.SubprocessError) as e:
+        return 1, str(e)
+
+
+def installed(pkg):
+    return run(["rpm", "-q", pkg], timeout=20)[0] == 0
+
+
+def detected():
+    """[(name, marker, [packages actually installed from its removal list])]"""
+    out = []
+    for marker, (name, pkgs) in sorted(DESKTOPS.items()):
+        if not installed(marker):
+            continue
+        present = [p for p in pkgs if installed(p)]
+        out.append((name, marker, present))
+    return out
+
+
+def running_desktop():
+    """What session is running right now, lowercased, or ''."""
+    return (os.environ.get("XDG_CURRENT_DESKTOP")
+            or os.environ.get("DESKTOP_SESSION") or "").lower()
+
+
+def is_running(name):
+    """Are we inside the desktop we are being asked to remove?
+
+    Checked because removing the shell out from under a running session takes the terminal
+    the command was typed into with it, part-way through a dnf transaction.
+    """
+    cur = running_desktop()
+    return bool(cur) and (name.lower().split()[0] in cur)
+
+
+PROTECTED_D = Path("/etc/dnf/protected.d")
+
+
+def protection_file(marker):
+    """Which protected.d file, if any, declares this package protected.
+
+    Fedora Workstation protects gnome-shell so you cannot remove your own desktop by
+    accident — a good default that this command has to step around deliberately. There is
+    no flag for it: --setopt=protected_packages is additive, so narrowing the list does
+    not release anything, and clearing it entirely would also unprotect systemd, sudo,
+    grub2, shim and the SELinux policy. Moving the one file aside and putting it back is
+    the only way to lift exactly one protection and nothing else.
+    """
+    if not PROTECTED_D.is_dir():
+        return None
+    for f in sorted(PROTECTED_D.glob("*.conf")):
+        try:
+            if marker in f.read_text().split():
+                return f
+        except OSError:
+            continue
+    return None
+
+
+class protection_lifted:
+    """Move a protected.d file aside for the duration, and always put it back."""
+
+    def __init__(self, path):
+        self.path = path
+        self.moved = None
+
+    def __enter__(self):
+        if self.path and self.path.is_file():
+            self.moved = self.path.with_suffix(".conf.hypora-disabled")
+            shutil.move(str(self.path), str(self.moved))
+        return self
+
+    def __exit__(self, *exc):
+        if self.moved and self.moved.is_file():
+            shutil.move(str(self.moved), str(self.path))
+        return False
+
+
+def plan(pkgs):
+    """What dnf would actually remove, asked without doing it.
+
+    The point of showing this is the dependency chain. Removing gnome-shell can pull in
+    things nobody intended, and the only way to know is to ask dnf and read the answer.
+    """
+    rc, out = run(["dnf", "remove", "--assumeno"] + pkgs + [f"--exclude={p}" for p in KEEP],
+                  timeout=180)
+    if "protected packages" in out:
+        return None, out
+    # --assumeno always exits non-zero; the transaction summary is still in the output
+    removing = []
+    in_list = False
+    for line in out.splitlines():
+        if re.match(r"^\s*(Removing|Remove)\b", line):
+            in_list = True
+            continue
+        if in_list:
+            if not line.strip() or line.startswith(("Transaction", "Freed", "Operation")):
+                in_list = False
+                continue
+            m = re.match(r"^\s*([a-zA-Z0-9._+-]+)\s", line)
+            if m:
+                removing.append(m.group(1))
+    return removing, out
+
+
+def cmd_list():
+    found = detected()
+    if not found:
+        print("No other desktop environment or window manager is installed.")
+        return 1
+    cur = running_desktop()
+    for name, marker, pkgs in found:
+        mark = "  (currently running)" if is_running(name) else ""
+        print(f"{name}{mark}")
+        print(f"  detected by : {marker}")
+        print(f"  would remove: {' '.join(pkgs)}")
+    if cur:
+        print(f"\nCurrent session: {cur}")
+    print(f"\nAlways kept: {' '.join(KEEP[:6])} and {len(KEEP) - 6} more")
+    return 0
+
+
+def cmd_remove(assume_yes=False):
+    if os.geteuid() != 0:
+        sys.exit("This removes packages, so it needs root:\n    sudo hypora-replace-de remove")
+
+    found = detected()
+    if not found:
+        print("No other desktop environment or window manager is installed.")
+        return 0
+
+    critical = ("gsettings-desktop-schemas", "nautilus", "gnome-calculator",
+                "xorg-x11-server-Xwayland", "gnome-keyring-pam", "sddm", "hyprland")
+    before = [p for p in critical if installed(p)]
+
+    for name, _marker, pkgs in found:
+        print(f"\n--- {name} ---")
+        if is_running(name):
+            print(f"Skipping: you are running {name} right now. Removing the shell out from "
+                  "under a live session takes the terminal with it, part-way through a dnf "
+                  "transaction. Reboot into Hypora and run this again.", file=sys.stderr)
+            continue
+
+        with protection_lifted(protection_file(_marker)):
+            removing, raw = plan(pkgs)
+        if removing is None:
+            print(f"dnf still reports {name} as protected; not touching it.", file=sys.stderr)
+            continue
+        if not removing:
+            print(f"dnf would not remove anything for {name}; leaving it alone.")
+            continue
+
+        collateral = [p for p in removing if p not in pkgs]
+        print(f"Removing: {' '.join(pkgs)}")
+        if collateral:
+            print(f"Pulled in by dependencies ({len(collateral)}):")
+            for p in sorted(collateral):
+                print(f"    {p}")
+            print("Read that list. Anything there that you use is a reason to stop.")
+
+        if not assume_yes:
+            if not sys.stdin.isatty():
+                print("Not a terminal and --yes not given; nothing removed.", file=sys.stderr)
+                continue
+            answer = input(f"Remove {name}? [y/N] ").strip().lower()
+            if not answer.startswith("y"):
+                print(f"Left {name} alone.")
+                continue
+
+        with protection_lifted(protection_file(_marker)):
+            rc, out = run(["dnf", "remove", "-y"] + pkgs
+                          + [f"--exclude={p}" for p in KEEP], timeout=1800)
+        if rc != 0:
+            print(f"Could not remove {name}:\n{out[-1200:]}", file=sys.stderr)
+            continue
+        print(f"{name} removed.")
+
+    # Verify the things Hypora needs are still here, because the whole risk of this
+    # operation is that one of them left quietly as a dependency.
+    #
+    # Compared against what was present *before*, not against the list in the abstract:
+    # reporting a package as missing when it was never installed is crying wolf, and the
+    # one warning that matters here would be lost among the noise.
+    missing = [p for p in before if not installed(p)]
+    if missing:
+        print(f"\nWARNING: these are gone and Hypora needs them: {' '.join(missing)}",
+              file=sys.stderr)
+        print(f"Put them back with: sudo dnf install {' '.join(missing)}", file=sys.stderr)
+        return 1
+    print("\nChecked: the schemas and apps Hypora depends on are still installed.")
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "list"
+    if cmd in ("-h", "--help"):
+        print(__doc__, file=sys.stderr)
+        return 0
+    if cmd == "list":
+        return cmd_list()
+    if cmd == "remove":
+        return cmd_remove("--yes" in argv or "-y" in argv)
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

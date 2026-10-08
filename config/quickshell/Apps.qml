@@ -122,4 +122,15 @@ Singleton {
         running: true
         onExited: code => root.hasClaude = code === 0
     }
+
+    // Two conditions, because either one failing makes the menu entry a dead end: the
+    // machine needs a reader libfprint might drive, and fprintd has to be installed to
+    // enrol against it. hypora-hardware exits 0 only when it finds a reader.
+    property bool hasFingerprint: false
+    Process {
+        command: ["sh", "-c",
+                  "command -v fprintd-enroll >/dev/null && hypora-hardware fingerprint >/dev/null 2>&1"]
+        running: true
+        onExited: code => root.hasFingerprint = code === 0
+    }
 }

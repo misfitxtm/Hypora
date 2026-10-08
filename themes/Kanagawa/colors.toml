@@ -1,0 +1,39 @@
+# Kanagawa wave (github.com/rebelot/kanagawa.nvim). Also a defined scheme; the
+# names in the original are sumiInk, fujiWhite, crystalBlue and so on.
+name = "Kanagawa"
+mode = "dark"
+
+# UI
+background = "#1f1f28"
+surface = "#2a2a37"
+foreground = "#dcd7ba"
+dim = "#727169"
+accent = "#7e9cd8"
+error = "#e82424"
+selection = "#2d4f67"
+muted = "#54546d"
+
+# Terminal (ANSI)
+term_foreground = "#dcd7ba"
+black = "#090618"
+red = "#c34043"
+green = "#76946a"
+yellow = "#c0a36e"
+blue = "#7e9cd8"
+magenta = "#957fb8"
+cyan = "#6a9589"
+white = "#c8c093"
+bright_black = "#727169"
+bright_red = "#e82424"
+bright_green = "#98bb6c"
+bright_yellow = "#e6c384"
+bright_blue = "#7fb4ca"
+bright_magenta = "#938aa9"
+bright_cyan = "#7aa89f"
+bright_white = "#dcd7ba"
+
+# System
+font = "JetBrainsMono Nerd Font"
+gtk_theme = "adw-gtk3-dark"
+icon_theme = "Gruvbox-Plus-Dark"
+color_scheme = "prefer-dark"

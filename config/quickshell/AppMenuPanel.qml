@@ -42,7 +42,17 @@ Rectangle {
             // Optional at install time: hidden entirely when it isn't installed
             { icon: "claude", label: "Claude Code", available: () => Apps.hasClaude,
               run: () => Apps.inTerminal("claude") },
-            { icon: "camera", label: "Screenshot (region)", run: () => screenshot() }
+            { icon: "camera", label: "Screenshot (region)", run: () => screenshot() },
+            // Enrolment is per-user and interactive — it asks for the same finger several
+            // times — so it belongs in a terminal rather than behind a progress bar that
+            // cannot tell you to lift and press again. Hidden unless there is a reader and
+            // fprintd to drive it.
+            { icon: "lock", label: "Set up fingerprint", available: () => Apps.hasFingerprint,
+              // Pauses at the end on purpose. inTerminal only holds the window open on a
+              // non-zero exit, and a successful enrolment exits 0 — so the confirmation
+              // would flash past on the one outcome you most want to read.
+              run: () => Apps.inTerminal(
+                  "fprintd-enroll; printf '\\nPress Enter to close. '; read _") }
         ],
         "Help": [
             { icon: "sliders", label: "Keybindings", run: () => ShellState.keybindHelpOpen = true }

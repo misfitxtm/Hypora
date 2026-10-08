@@ -1,0 +1,40 @@
+# Hackerman. Built from its own wallpapers, which sample to near-black #021316 with
+# cyan highlights around #21bcd1 — a cold terminal look rather than the green one
+# the name might suggest.
+name = "Hackerman"
+mode = "dark"
+
+# UI
+background = "#020e12"
+surface = "#0e2b36"
+foreground = "#cfeef3"
+dim = "#6b96a2"
+accent = "#21bcd1"
+error = "#ff5f6b"
+selection = "#16404f"
+muted = "#1b5468"
+
+# Terminal (ANSI)
+term_foreground = "#bfe4ea"
+black = "#020e12"
+red = "#e5484d"
+green = "#3dd68c"
+yellow = "#d9b44a"
+blue = "#2486a8"
+magenta = "#9a7bbf"
+cyan = "#21bcd1"
+white = "#a9ccd4"
+bright_black = "#1b5468"
+bright_red = "#ff5f6b"
+bright_green = "#5ae0a3"
+bright_yellow = "#edc968"
+bright_blue = "#46b7cf"
+bright_magenta = "#b495d6"
+bright_cyan = "#81f5f8"
+bright_white = "#e6fbff"
+
+# System
+font = "JetBrainsMono Nerd Font"
+gtk_theme = "adw-gtk3-dark"
+icon_theme = "Gruvbox-Plus-Dark"
+color_scheme = "prefer-dark"
