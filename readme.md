@@ -354,6 +354,8 @@ sudo hypora-power remove
 
 `install.sh` runs `install` automatically **on laptops only**, and `hypora-power install` refuses on anything else even if run by hand.
 
+The installer decides laptop-or-desktop **once, at the start**, and every laptop-specific step reads that one answer — so they cannot disagree with each other. It prints which it chose and why. `IS_LAPTOP=yes` or `IS_LAPTOP=no` overrides it, for firmware that reports nonsense.
+
 The test is the SMBIOS chassis type, not "does this machine have a battery" — those are different questions. A desktop with a UPS reports `type=Battery`, and so does a paired wireless mouse. The chassis never lies about what the machine is. Where DMI says nothing useful, which is mostly virtual machines, it falls back to looking for a battery whose `scope` is not `Device`, so a peripheral still doesn't count.
 
 That test lives in one place — `hypora-power is-laptop`, which the installer calls rather than reimplementing, because two copies of a distinction that subtle would eventually disagree.
@@ -630,6 +632,21 @@ sudo plymouth quit
 ```
 
 If the theme ever fails to render on a machine that needs a passphrase, **Esc** drops Plymouth to the plain text prompt. The installer also refuses to switch to the theme unless `entry.png` and `bullet.png` are actually on disk, so a half-generated theme can't lock you out.
+
+
+### Handing over to the login screen
+
+Plymouth draws into its own buffer, so when it exits the framebuffer underneath still holds whatever was there before — on a themed setup, the GRUB menu. That is why the menu appears to come back for a moment between the splash ending and SDDM arriving: it is not being redrawn, it was never painted over.
+
+A drop-in on `plymouth-quit.service` passes `--retain-splash`, which leaves the splash's last frame on screen so SDDM paints over Hypora's own artwork instead:
+
+```
+/etc/systemd/system/plymouth-quit.service.d/10-hypora-retain-splash.conf
+```
+
+The empty `ExecStart=` in that file is required rather than decorative — `plymouth-quit.service` is a oneshot with one `ExecStart`, and systemd refuses a second unless the list is cleared first.
+
+Worth knowing the trade: if SDDM never starts, the splash stays on screen rather than dropping to a console, so a failed boot looks like a frozen splash. `Ctrl+Alt+F3` still gets a TTY and `journalctl -b -u sddm` says what happened.
 
 ## Text console
 
