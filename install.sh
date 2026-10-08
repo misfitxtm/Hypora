@@ -891,12 +891,16 @@ fi
 # shell, so without it a laptop sits in `balanced` on battery indefinitely — and tuned's
 # own powersave profile leaves PCIe ASPM, USB autosuspend and PCI runtime power management
 # untouched. hypora-power covers both and installs a udev rule so it follows the charger.
-if grep -qx Battery /sys/class/power_supply/*/type 2>/dev/null; then
+# `hypora-power is-laptop` rather than a battery test written out again here. "Has a
+# battery" is not the same question — a desktop with a UPS, or one paired with a wireless
+# mouse, has one — and two copies of that distinction would eventually disagree. The script
+# refuses to install on a desktop anyway; this just keeps the installer quiet about it.
+if "$REPO/bin/hypora-power" is-laptop >/dev/null 2>&1; then
     log "Setting up laptop power management"
     sudo /usr/local/bin/hypora-power install \
         || warn "Could not set up automatic power switching"
 else
-    log "No battery, so laptop power management was skipped"
+    log "Power management skipped: $("$REPO/bin/hypora-power" is-laptop)"
 fi
 
 # ---------- wallpapers ----------
@@ -1005,10 +1009,6 @@ want_rpmfusion() {
         yes|y|1) return 0 ;;
         no|n|0)  return 1 ;;
     esac
-    if rpm -q rpmfusion-free-release >/dev/null 2>&1; then
-        log "RPM Fusion is already enabled"
-        return 1
-    fi
     if [ ! -t 0 ]; then
         log "Skipping RPM Fusion (no terminal to ask; set ENABLE_RPMFUSION=yes to enable it)"
         return 1
@@ -1022,7 +1022,9 @@ want_rpmfusion() {
     case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
-if want_rpmfusion; then
+if rpm -q rpmfusion-free-release >/dev/null 2>&1; then
+    log "RPM Fusion already enabled"
+elif want_rpmfusion; then
     log "Enabling RPM Fusion"
     rel=$(rpm -E %fedora)
     sudo dnf install -y \
@@ -1037,6 +1039,15 @@ fi
 # Claude Code is not installed unless you say so. Set INSTALL_CLAUDE=yes or =no to answer
 # ahead of time; without an answer on a non-interactive run it is skipped.
 CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+
+# Three ways, because Claude Code can arrive by routes other than this one: Anthropic's
+# own install script puts it in ~/.local/bin and npm puts it elsewhere again. Asking a
+# second time on a machine that already has it is the whole complaint.
+claude_installed() {
+    rpm -q claude-code >/dev/null 2>&1 && return 0
+    command -v claude >/dev/null 2>&1 && return 0
+    [ -x "$HOME/.local/bin/claude" ]
+}
 
 want_claude() {
     case "${INSTALL_CLAUDE:-}" in
@@ -1055,7 +1066,9 @@ want_claude() {
     case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
-if want_claude; then
+if claude_installed; then
+    log "Claude Code already installed"
+elif want_claude; then
     log "Installing Claude Code"
     # Check the signing key against the fingerprint Anthropic publishes before rpm trusts it
     key=$(mktemp)
