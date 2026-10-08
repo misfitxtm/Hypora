@@ -62,22 +62,39 @@ def secure_boot():
         return {"firmware": "bios", "supported": False, "enabled": False,
                 "note": "This machine booted in legacy BIOS mode, where Secure Boot does not apply."}
     out = {"firmware": "uefi", "supported": True}
+
+    # Read this whichever way `enabled` is determined. Setup Mode is the difference between
+    # "Secure Boot is off" and "Secure Boot is switched on in the firmware menu but has no
+    # keys to check anything against", and those need different answers from the person
+    # reading this. The second is easy to hit on a ThinkPad: setting Secure Boot to Enabled
+    # does not by itself enrol a platform key, and until one exists SecureBoot reads 0 while
+    # the BIOS screen still says Enabled. Reporting a bare "Off" at someone who just turned
+    # it on is accurate and useless.
+    setup = efivar_bool("SetupMode")
+    if setup is not None:
+        out["setupMode"] = setup
+
     # mokutil is the authoritative answer; the efivar is the fallback
     if shutil.which("mokutil"):
         rc, text = run(["mokutil", "--sb-state"])
         if rc == 0 and text:
             out["enabled"] = "enabled" in text.lower()
             out["source"] = "mokutil"
+    if "enabled" not in out:
+        val = efivar_bool("SecureBoot")
+        if val is None:
+            out["supported"] = False
+            out["enabled"] = False
+            out["note"] = "No SecureBoot EFI variable; the firmware does not report a state."
             return out
-    val = efivar_bool("SecureBoot")
-    if val is None:
-        out["supported"] = False
-        out["enabled"] = False
-        out["note"] = "No SecureBoot EFI variable; the firmware does not report a state."
-    else:
         out["enabled"] = val
-        out["setupMode"] = efivar_bool("SetupMode")
         out["source"] = "efivars"
+
+    if not out["enabled"] and out.get("setupMode"):
+        out["note"] = ("The firmware is in Setup Mode: Secure Boot is switched on but no "
+                       "platform key is enrolled, so nothing is being verified. In your "
+                       "UEFI setup, look for \"Restore Factory Keys\" or \"Reset to "
+                       "Setup Mode\" and make sure the default keys are installed.")
     return out
 
 

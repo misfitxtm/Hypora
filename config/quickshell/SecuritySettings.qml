@@ -314,12 +314,23 @@ Scope {
 
                             StatusRow {
                                 readonly property var sb: win.info ? win.info.secureBoot : null
+                                // Setup Mode is its own state, not a flavour of "Off". The
+                                // firmware menu says Enabled while nothing is being verified,
+                                // so reporting a bare "Off" reads as though the switch never
+                                // took — and amber rather than red, because it is half done
+                                // rather than untouched.
+                                readonly property bool sbSetup: sb !== null && !sb.enabled
+                                                                && sb.setupMode === true
                                 icon: !sb ? "shield" : sb.enabled ? "shield-check" : "shield-alert"
-                                tone: !sb ? Theme.dim : sb.enabled ? Theme.accent : Theme.error
+                                tone: !sb ? Theme.dim
+                                    : sb.enabled ? Theme.accent
+                                    : sbSetup ? Theme.warn : Theme.error
                                 title: "Secure Boot"
                                 value: !sb ? ""
                                      : !sb.supported ? "Not available"
-                                     : sb.enabled ? "On" : "Off"
+                                     : sb.enabled ? "On"
+                                     : sbSetup ? "Setup Mode"
+                                     : "Off"
                                 detail: !sb ? ""
                                       : sb.note ? sb.note
                                       : sb.enabled
