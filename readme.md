@@ -148,9 +148,28 @@ Flatpak sandboxing earns its keep for software that handles hostile input, which
 
 ## Requirements
 
-- A fresh **Fedora** install (a minimal / Everything netinstall is a good base)
-- **Tick "Encrypt my data"** in the installer if you want full-disk encryption. This is the one thing Hypora cannot add for you: LUKS has to be set up as the partitions are created, so switching it on later means reinstalling. The Security window reports which way you went, and flags unencrypted swap — a leak path for memory contents even when the root filesystem is encrypted
+### For full support
+
+Hypora is built and tested against one baseline, and everything below works on it:
+
+> **Fedora Everything netinstall**, with **"Encrypt my data" ticked** and **btrfs** as the filesystem.
+
+None of the three is enforced — the installer runs on a stock Workstation install on ext4 without encryption and most of it works fine. But each one you skip takes a feature with it, and two of them cannot be added later without reinstalling:
+
+| Choice | What you get | If you skip it |
+|---|---|---|
+| **Everything netinstall** | a base with no second desktop competing for the session | GNOME's shell and session stay installed; Hypora disables GDM and uses its own session, but you are carrying two desktops. (`--replace-gnome` is planned) |
+| **Encrypt my data** (LUKS) | full-disk encryption, and a themed passphrase prompt at boot | the disk is readable by anyone holding it. **Cannot be added later** — LUKS is set up as the partitions are created, so switching it on means reinstalling |
+| **btrfs** | snapshots via snapper (with the btrfs-assistant GUI), one taken before every unattended update, and scheduled scrub and balance | no snapshots and no scrub, so bit rot goes unnoticed. **Cannot be converted later** in any way worth attempting on a system you care about |
+
+The installer checks these at the start and tells you which you are missing, then carries on.
+
+### Also
+
+- A fresh **Fedora** install
+- **Encryption** is the one thing Hypora cannot add for you: LUKS has to be set up as the partitions are created, so switching it on later means reinstalling. The Security window reports which way you went, and flags unencrypted swap — a leak path for memory contents even when the root filesystem is encrypted (see [Encrypted swap](#encrypted-swap))
 - An internet connection and a user with `sudo`
+- **Snapshots need btrfs.** Where there is a btrfs filesystem the installer sets up **snapper** — not Timeshift, whose BTRFS mode requires the Ubuntu-style `@` subvolume layout that Fedora does not create, leaving it silently in file-copying RSYNC mode. See [Snapshots](#snapshots)
 - **The SSH server is switched off**, and port 22 is closed in the firewall. Fedora leaves sshd enabled, and it is the one service on a stock desktop reachable from the network. Pass `KEEP_SSH=yes` to keep it, and note the installer keeps it automatically if you are running the install *over* SSH — closing the port you arrived on is not a thing it will do to you. Turn it back on with `sudo systemctl enable --now sshd`
 - **Hyprland 0.55 or newer**: the config is written in Lua (`hyprland.lua`), which replaces the deprecated `hyprland.conf` format
 - A Quickshell build with the PipeWire, system tray, notifications, UPower and polkit modules. The installer enables COPRs if the packages aren't in the main repos; check that they are current for your Fedora version
@@ -263,6 +282,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-sysinfo      # prints RAM/CPU/GPU stats as JSON for the bar widget
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
 │   ├── hypora-console      # puts the theme's colours on the text console (kernel args)
+│   ├── hypora-grub         # themes the GRUB boot menu from the active palette
 │   ├── hypora-firmware     # checks LVFS and installs firmware updates, in a terminal
 │   ├── hypora-hardware     # finds hardware with no driver, firmware or radio, and fixes it
 │   ├── hypora-plymouth     # draws the boot screen's images in the current palette
@@ -369,6 +389,57 @@ Skip it with `KEYRING_AUTOUNLOCK=no ./install.sh`, or undo it by deleting those 
 
 If you are **still** asked for a keyring password after this, the usual cause is a login keyring that already exists with a *different* password — PAM is offering your login password and the keyring wants the old one. Either change the keyring's password to match your login password in Seahorse (`gnome-keyring` ships it as **Passwords and Keys**), or delete `~/.local/share/keyrings/login.keyring` and let it be recreated, which loses whatever was stored in it.
 
+## Snapshots
+
+Where `/` or `/home` is btrfs, the installer sets up **snapper** with a config for each, plus the timeline and cleanup timers.
+
+**btrfs-assistant** is installed alongside it as a GUI — browse snapshots, create and restore them, edit the configs — because finding *which* snapshot you want is the part that genuinely benefits from a list you can click. On the command line:
+
+```
+snapper list                                  # what you have
+snapper -c root create -d "before I try this" # one on demand
+snapper -c root status 42..43                 # what changed between two
+snapper -c root undochange 42..43             # put those files back
+```
+
+> **Snapshots are not backups.** They live on the same filesystem they protect, so a failed drive takes every one of them with it. They are excellent against mistakes — a bad update, a deleted file, a config you broke at 1am — and worth exactly nothing against hardware. Hypora does not set up off-disk backup and does not pretend to; if you want that, `borg` or `restic` do versioned backups to another disk properly, and Déjà Dup if you'd rather click.
+
+**Why snapper and not Timeshift.** Timeshift is the better-known tool and the wrong one on Fedora: its BTRFS mode requires the Ubuntu-style subvolume layout, with `/` on a subvolume literally named `@`. Fedora's installer creates `root` and `home`, so Timeshift never offers BTRFS mode at all — it falls back to RSYNC and copies files, which is a backup, not a snapshot. It does this quietly, which is the worst part. snapper does not care what the subvolumes are called.
+
+**Retention is deliberately modest.** snapper's defaults keep ten hourly, ten monthly and ten yearly snapshots per config, which on a laptop retains a lot of extents for very little benefit. Hypora sets 5 hourly, 7 daily, 4 weekly, 2 monthly, 0 yearly, and a 10-snapshot cap. Change them in `/etc/snapper/configs/root`, or turn timeline snapshots off entirely with `TIMELINE_CREATE="no"`.
+
+**Unattended updates are snapshotted; manual ones are not.** This is a real gap and worth understanding rather than discovering. `python3-dnf-plugin-snapper` is a **dnf4** plugin, and Fedora now runs dnf5, which has no snapper plugin at all — so nothing hooks a `dnf` transaction. Installing that plugin would hook nothing and only look like protection.
+
+What Hypora does instead is cover the case that actually needs it: a systemd drop-in on `dnf5-automatic.service` takes a snapshot of `/` before every unattended update, because that is the one you weren't watching.
+
+```
+/etc/systemd/system/dnf5-automatic.service.d/10-hypora-snapshot.conf
+```
+
+The `ExecStartPre` there is prefixed with `-`, so a failing snapshot can never stop a security update from installing — an update that applied is worth more than a snapshot that didn't.
+
+For a manual upgrade, take one yourself:
+
+```
+sudo snapper -c root create -d "before dnf upgrade" && sudo dnf upgrade
+```
+
+**What this is not.** These are not bootable rollbacks. Booting *into* a snapshot needs `grub-btrfs`, which Fedora does not package, so snapper here gives you file-level recovery — compare two snapshots, undo a change, or mount one and copy out of it — not a boot menu entry per snapshot.
+
+### Scrub and balance
+
+Nothing on a stock Fedora runs btrfs's own housekeeping, so where there is btrfs Hypora installs `btrfsmaintenance` and schedules two jobs monthly:
+
+- **scrub** reads every block and checks it against its checksum. This is how bit rot gets found, and it matters *more* once you have snapshots: a corrupted extent is shared by every snapshot that references it, so the longer it goes unnoticed the less a snapshot is worth.
+- **balance** reclaims chunks that are allocated but mostly empty — the usual cause of a btrfs filesystem reporting "no space left" while `df` says it is half free.
+
+Two of the four periods it offers are deliberately left off:
+
+- **trim** — Fedora already enables `fstrim.timer`, so this would be a second thing doing the same job.
+- **defrag** — defragmenting a filesystem with snapshots **unshares** the extents those snapshots have in common, so it can multiply disk usage rather than tidy it. It is the wrong tool once snapshots exist.
+
+Change any of it in `/etc/sysconfig/btrfsmaintenance`, then `sudo systemctl restart btrfsmaintenance-refresh`.
+
 ## Encrypted swap
 
 Swap holds whatever was in memory. A plaintext swap partition on an otherwise encrypted machine is therefore a hole straight through the encryption: anything the kernel paged out — keys, messages, documents — sits on the disk in the clear, and stays there after the machine is off.
@@ -431,6 +502,36 @@ The workspace keybinds are Lua functions rather than plain dispatchers, because 
 - `hl.dsp.*` builds an object and does nothing on its own; it has to be handed to `hl.dispatch()`. Returning it from a bind callback silently does nothing ([#14282](https://github.com/hyprwm/Hyprland/discussions/14282)).
 
 The rules are applied from the `hyprland.start` hook rather than at the top level, because `hl.get_monitors()` is still empty while the config is being read, and again on `monitor.added` so a screen plugged in later gets its own set.
+
+## Boot menu
+
+The GRUB menu is the first screen of the boot, and Fedora leaves it as white-on-black in 80×25 text mode. `bin/hypora-grub` generates a theme from the active palette: the wordmark, the kernel list, one accent bar on the selected entry, and the keys along the bottom. Nothing moves, no chrome, no distro branding.
+
+```
+hypora-grub print      # the theme.txt that would be written, no root needed
+hypora-grub status     # what GRUB is currently set to do
+sudo hypora-grub apply # install it and switch GRUB to graphics mode
+sudo hypora-grub remove
+```
+
+`install.sh` applies it automatically when GRUB is present, and skips silently when it isn't — a machine booting via systemd-boot has nothing here to theme.
+
+Three things about GRUB make this more than dropping a file in place, and each one is a way to end up with a theme that appears broken rather than one that is:
+
+- **A theme does nothing in text mode.** Fedora ships `GRUB_TERMINAL_OUTPUT="console"`, which is exactly that. A theme installed without changing it is invisible, and looks for all the world like the theme is at fault. `apply` switches it to `gfxterm`, sets `GRUB_GFXMODE=auto`, and sets `GRUB_GFXPAYLOAD_LINUX=keep` so the handover to the kernel doesn't flash back to text.
+- **GRUB has no system fonts.** It reads only its own `.pf2` format, so fonts are converted with `grub2-mkfont` — one file per size, because GRUB cannot scale a font. The names have to match `theme.txt` exactly; a name that doesn't match falls back to the built-in font with no error. Note that `grub2-mkfont -n` takes the *family* and appends the style and size itself, so the family is `Hypora Mono` and the result is `Hypora Mono Regular 16`.
+- **The selected row cannot be filled with a colour.** `selected_item_color` sets the *text* colour, not the background, so the accent bar behind the current entry has to be an image. It is a 1×1 PNG written straight from `zlib` and stretched by GRUB's nine-slice scaler, which is also why only the `_c` centre slice exists — the eight edge and corner slices are treated as empty, giving a clean square bar.
+
+`/etc/default/grub` is backed up to `/etc/default/grub.hypora-<timestamp>` before each change, and every line the script owns is marked:
+
+```
+# was, before hypora-grub: GRUB_TERMINAL_OUTPUT="console"
+GRUB_TERMINAL_OUTPUT="gfxterm"  # set by hypora-grub
+```
+
+That marker is what makes the edit safe to repeat: without it, each theme switch commented out the previous switch's line, and `remove` then restored a stack of dead lines as live config. `remove` puts the original back exactly.
+
+Switching themes does **not** re-theme the boot menu, because that means regenerating `grub.cfg` as root — far too much to do behind a theme switch. `hypora-theme` compares the installed theme against what the current palette would produce and tells you to run `sudo hypora-grub apply` only when they actually differ.
 
 ## Boot screen
 
