@@ -9,9 +9,9 @@
     hypora-security selinux-boot <enforcing|permissive|disabled>   change it for next boot
     hypora-security camera <on|off>             load or unload the webcam driver
     hypora-security location <on|off>           unmask or mask geoclue
-    hypora-security encrypt-swap [--break-hibernate]
-                                                put any plaintext swap behind dm-crypt,
-                                                re-keyed from /dev/urandom every boot
+    hypora-security add-swapfile [size]         make an encrypted swapfile on the root
+                                                volume (default 4g) and switch it on
+    hypora-security remove-swapfile             switch it off and delete it
 
 Only `status` and `firmware` run unprivileged; the rest need root and are meant to be run
 with pkexec, which puts the request through Hypora's polkit prompt. Run `status` yourself to
@@ -110,21 +110,6 @@ def firmware_checks():
         "total": len(attrs),
         "failed": failed[:8],
     }
-
-
-def hibernation():
-    """Is the system set up to hibernate into swap?
-
-    This matters because random-key encrypted swap cannot be resumed from: the key is
-    thrown away at power-off by design. Read from the running kernel's command line, which
-    is what actually decides it, rather than from a bootloader config that may not be live.
-    """
-    try:
-        cmdline = Path("/proc/cmdline").read_text()
-    except OSError:
-        return {"configured": False, "device": ""}
-    m = re.search(r"\bresume=(\S+)", cmdline)
-    return {"configured": bool(m), "device": m.group(1) if m else ""}
 
 
 def crypttab_random_keyed():
@@ -239,10 +224,9 @@ def encryption():
         "swap": swaps,
         "unencryptedSwap": [s["name"] for s in exposed],
         "swapFiles": files,
-        "hibernation": hibernation(),
-        # The window only offers the button when there is something to act on and the tool
-        # to do it with; this keeps that decision in one place.
-        "canEncryptSwap": bool(exposed) and shutil.which("cryptsetup") is not None,
+        # Everything the window needs to decide which swapfile button to show, kept here
+        # so that decision lives in one place rather than being re-derived in QML.
+        "swapfile": swapfile_state(),
     }
 
 
@@ -697,18 +681,25 @@ def set_location(state):
     sys.exit(rc)
 
 
-# ---------- encrypted swap ----------
+# ---------- swapfile on the encrypted root ----------
 #
-# Swap holds whatever was in memory, so a plaintext swap partition on an otherwise
-# encrypted machine is a hole straight through the encryption. The fix is a plain dm-crypt
-# layer keyed from /dev/urandom: a new key every boot, never written anywhere, so the
-# contents are unrecoverable the moment the machine powers off. That also means hibernation
-# can never work, which is the one real cost and why this asks first.
+# This replaces an earlier "encrypt swap in place" action, and the reason is worth keeping:
+# that one put a dm-crypt layer over an existing swap *partition*, which meant a crypttab
+# entry, a GPT type change, and removing resume= from the kernel command line. Three pieces
+# of boot-critical state, and getting any of them wrong left the machine unbootable — which
+# it duly did.
+#
+# A swapfile inside the encrypted root is encrypted by construction. No crypttab, no
+# partition table, no resume=. The only persistent change is one fstab line carrying
+# nofail, so the worst failure is a machine that boots without swap.
+#
+# It is only offered when / is encrypted. A swapfile on a plaintext root is plaintext swap,
+# which is the problem rather than the fix.
 
-SWAP_CIPHER = "aes-xts-plain64"
-SWAP_KEY_BITS = "512"          # aes-xts splits this into two 256-bit keys
 FSTAB = Path("/etc/fstab")
-CRYPTTAB = Path("/etc/crypttab")
+SWAP_SUBVOL = Path("/swap")
+SWAPFILE = Path("/swap/swapfile")
+DEFAULT_SWAPFILE_SIZE = "4g"
 
 
 def _backup(path):
@@ -720,278 +711,115 @@ def _backup(path):
     return dest
 
 
-def _stable_ref(swap):
-    """A way to name a swap device that survives being encrypted.
-
-    Deliberately not UUID=. Encrypting the device overwrites its swap signature, so the UUID
-    that identifies it right now stops existing the moment this runs -- a crypttab or fstab
-    entry pointing at it would fail at the next boot, which is exactly the sort of mistake
-    that ends in an emergency shell. A partition's PARTUUID lives in the partition table, and
-    an LVM volume's /dev/mapper path is assigned by LVM, so both outlive the contents.
-
-    Takes the entry from encryption()'s own lsblk walk rather than asking lsblk again: the
-    data is already there, and one source for it means one thing to keep right.
-    """
-    if swap.get("partuuid"):
-        # The explicit symlink, not PARTUUID=. fstab resolves that form, but crypttab's
-        # second field is a device and leaning on it to parse the same spellings is a
-        # needless question mark in a file that decides whether the machine boots.
-        return f"/dev/disk/by-partuuid/{swap['partuuid']}"
-    if swap.get("kind") == "lvm":
-        return swap.get("path") or f"/dev/mapper/{swap['name']}"
-    return None
+def root_encrypted():
+    """Is / backed by a dm-crypt layer? Asks what the mounted source is."""
+    rc, src = run(["findmnt", "-fno", "SOURCE", "/"])
+    if rc != 0 or not src:
+        return False
+    src = src.split("[")[0]                      # btrfs reports /dev/x[/subvol]
+    rc, kind = run(["lsblk", "-no", "TYPE", src])
+    return kind.splitlines()[0].strip() == "crypt" if kind else False
 
 
-def _comment_swap_lines(text, keys):
-    """Comment out any fstab line that activates one of `keys` as swap."""
-    lower = {k.lower() for k in keys}
-    out, hit = [], []
-    for line in text.splitlines():
-        s = line.strip()
-        if s and not s.startswith("#"):
-            f = s.split()
-            if len(f) >= 3 and f[2] == "swap" and f[0].lower() in lower:
-                hit.append(s)
-                out.append("# replaced by Hypora's encrypted swap:")
-                out.append("# " + line)
-                continue
-        out.append(line)
-    return "\n".join(out) + "\n", hit
-
-
-def _mapper_name(name):
-    safe = re.sub(r"[^A-Za-z0-9_-]", "-", name)
-    return f"cryptswap-{safe}"
-
-
-def _remove_resume():
-    """Take resume= (and resume_offset=) off the kernel command line. (ok, detail)
-
-    Three places, because Fedora can carry it in all of them and missing one means it comes
-    back at the next kernel install:
-      * the installed boot entries, via grubby --update-kernel=ALL
-      * /etc/kernel/cmdline, which is where new entries are built from
-      * GRUB_CMDLINE_LINUX in /etc/default/grub, for a grub2-mkconfig regeneration
-    """
-    changed = []
-
-    if shutil.which("grubby"):
-        rc, out = run(["grubby", "--update-kernel=ALL",
-                       "--remove-args=resume resume_offset"], timeout=60)
-        if rc != 0:
-            return False, f"grubby could not remove resume= ({out.strip()[:200]})"
-        changed.append("boot entries")
-    else:
-        return False, "grubby is not installed, so resume= cannot be removed safely"
-
-    cmdline = Path("/etc/kernel/cmdline")
-    if cmdline.is_file():
-        try:
-            text = cmdline.read_text()
-            new = re.sub(r'\s*\bresume(_offset)?=[^\s"]+', "", text).strip() + "\n"
-            if new != text:
-                cmdline.write_text(new)
-                changed.append(str(cmdline))
-        except OSError as e:
-            return False, f"cannot rewrite {cmdline}: {e}"
-
-    default_grub = Path("/etc/default/grub")
-    if default_grub.is_file():
-        try:
-            text = default_grub.read_text()
-            new = re.sub(r'\bresume(_offset)?=[^\s"]+\s*', "", text)
-            if new != text:
-                default_grub.write_text(new)
-                changed.append(str(default_grub))
-        except OSError as e:
-            return False, f"cannot rewrite {default_grub}: {e}"
-
-    # It is still on /proc/cmdline until the next boot; that is expected and harmless,
-    # because the device it names is only looked for at boot.
-    return True, "resume= removed from " + ", ".join(changed)
-
-
-# GPT type GUIDs. systemd-gpt-auto-generator activates a partition marked "Linux swap"
-# on the root disk with no fstab entry at all, which is how Fedora's installer leaves it:
-# the fstab it writes has no swap line. Re-typing the partition to the generic "Linux
-# filesystem" is what stops that, and it is also simply true afterwards -- the partition
-# holds a dm-crypt container, not swap.
-GPT_LINUX_SWAP = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f"
-GPT_LINUX_GENERIC = "0fc63daf-8483-4772-8e79-3d69d8477de4"
-
-
-def _partition_of(name):
-    """(disk device, partition number) for a partition's kernel name, or None.
-
-    Read from sysfs rather than by chopping the name up: sda2, nvme0n1p2 and mmcblk0p2 all
-    split differently, and sysfs already knows the answer.
-    """
-    base = Path("/sys/class/block") / name
+def swapfile_state():
+    """What the window needs to decide which button, if any, to show."""
+    rc, fstype = run(["findmnt", "-fno", "FSTYPE", "/"])
+    fstype = fstype.strip() if rc == 0 else ""
+    active = False
     try:
-        num = int((base / "partition").read_text().strip())
-        disk = base.resolve().parent.name
-    except (OSError, ValueError):
-        return None
-    if not disk:
-        return None
-    return f"/dev/{disk}", num
+        for line in Path("/proc/swaps").read_text().splitlines()[1:]:
+            if line.split() and line.split()[0] == str(SWAPFILE):
+                active = True
+    except OSError:
+        pass
+    return {
+        "path": str(SWAPFILE),
+        "exists": SWAPFILE.is_file(),
+        "active": active,
+        "rootFs": fstype,
+        "rootEncrypted": root_encrypted(),
+        # btrfs needs its own handling; anything else takes the plain path
+        "supported": fstype in ("btrfs", "ext4", "xfs"),
+    }
 
 
-def _retype_partition(name):
-    """Stop gpt-auto claiming this partition as swap. (ok, detail)"""
-    where = _partition_of(name)
-    if where is None:
-        # Not a partition (an LVM volume, say) -- gpt-auto only looks at partitions
-        return True, "not a partition"
-    disk, num = where
-    rc, out = run(["sfdisk", "--part-type", disk, str(num), GPT_LINUX_GENERIC], timeout=30)
-    # sfdisk can still fail to make the kernel re-read a table whose partitions are in use.
-    # That part does not matter: the type is on disk, and gpt-auto reads it at the next boot.
-    if rc != 0:
-        rc2, _ = run(["lsblk", "-ndo", "PARTTYPE", f"/dev/{name}"])
-        return False, out or "sfdisk failed"
-    return True, f"{disk} partition {num} re-typed to Linux filesystem"
-
-
-def encrypt_swap(arg=""):
+def add_swapfile(arg=""):
     need_root()
-    allow_hibernate_loss = arg in ("--break-hibernate", "force")
+    size = arg or DEFAULT_SWAPFILE_SIZE
+    if not re.fullmatch(r"\d+[kmgKMG]?", size):
+        sys.exit(f"Size must look like 4g or 512m, not {size!r}")
 
-    info = encryption()
-    if not info.get("available"):
-        sys.exit(info.get("note", "Could not read the disk layout."))
+    st = swapfile_state()
+    if st["exists"]:
+        sys.exit(f"{SWAPFILE} already exists. Remove it first with: "
+                 "hypora-security remove-swapfile")
+    if not st["rootEncrypted"]:
+        sys.exit("/ is not encrypted, so a swapfile on it would be plaintext swap — which "
+                 "is the problem this is meant to avoid, not the fix. Encrypt the root "
+                 "volume (only possible at install time) first.")
+    if not st["supported"]:
+        sys.exit(f"Don't know how to make a swapfile on {st['rootFs'] or 'this filesystem'}.")
 
-    targets = [s for s in info["swap"] if not s["safe"]]
-    if not targets:
-        print("Nothing to do: no swap is reaching the disk unencrypted.")
-        return
-    if shutil.which("cryptsetup") is None:
-        sys.exit("cryptsetup is not installed.")
+    if st["rootFs"] == "btrfs":
+        # Its own subvolume, so snapshots never capture it. A swapfile caught in a snapshot
+        # pins its full size in extents for as long as that snapshot lives.
+        if not SWAP_SUBVOL.exists():
+            rc, out = run(["btrfs", "subvolume", "create", str(SWAP_SUBVOL)], timeout=60)
+            if rc != 0:
+                sys.exit(f"Could not create {SWAP_SUBVOL}: {out.strip()[:200]}")
+        # mkswapfile sets NOCOW, disables compression and formats it — all of which btrfs
+        # requires of a swapfile and none of which a plain fallocate would do.
+        rc, out = run(["btrfs", "filesystem", "mkswapfile", "--size", size, str(SWAPFILE)],
+                      timeout=300)
+        if rc != 0:
+            sys.exit(f"Could not create the swapfile: {out.strip()[:300]}")
+    else:
+        SWAP_SUBVOL.mkdir(parents=True, exist_ok=True)
+        rc, out = run(["fallocate", "-l", size, str(SWAPFILE)], timeout=300)
+        if rc != 0:
+            sys.exit(f"Could not allocate {SWAPFILE}: {out.strip()[:200]}")
+        os.chmod(SWAPFILE, 0o600)
+        rc, out = run(["mkswap", str(SWAPFILE)], timeout=120)
+        if rc != 0:
+            SWAPFILE.unlink(missing_ok=True)
+            sys.exit(f"mkswap failed: {out.strip()[:200]}")
 
-    hib = info["hibernation"]
-    if hib["configured"]:
-        if not allow_hibernate_loss:
-            sys.exit(
-                f"Hibernation is configured (resume={hib['device']}). Encrypted swap takes a "
-                "new random key every boot, so a hibernated image could never be resumed -- "
-                "the key it was written with is gone. Re-run with --break-hibernate to give "
-                "hibernation up and have the resume= argument removed for you."
-            )
-        # resume= must go at the same time, not as advice afterwards.
-        #
-        # This is the bug that made a laptop unbootable: the swap signature the resume=
-        # argument points at is destroyed by encrypting the device, so the next boot waits
-        # for a resume device that cannot exist. Earlier this printed a note suggesting the
-        # argument be removed by hand, which is no use at all -- by the time anyone could
-        # act on it the machine was already not booting. Either both halves happen or
-        # neither does.
-        ok, detail = _remove_resume()
-        if not ok:
-            sys.exit(f"Refusing to continue: {detail}. Encrypting swap while resume= still "
-                     f"points at it would leave the next boot waiting for a device that no "
-                     f"longer exists. Remove resume= yourself and re-run.")
-        print(f"Hibernation given up: {detail}")
+    os.chmod(SWAPFILE, 0o600)
+    rc, out = run(["swapon", str(SWAPFILE)], timeout=60)
+    if rc != 0:
+        SWAPFILE.unlink(missing_ok=True)
+        sys.exit(f"Could not activate the swapfile, so it was removed: {out.strip()[:200]}")
 
+    # Persist only after it is proven working, same order as everything else here.
     _backup(FSTAB)
-    _backup(CRYPTTAB)
-    fstab = FSTAB.read_text() if FSTAB.exists() else ""
-    crypttab = CRYPTTAB.read_text() if CRYPTTAB.exists() else ""
-    done = []
-
-    for s in targets:
-        dev, name, uuid = s["path"], s["name"], s["uuid"]
-        mapper = _mapper_name(name)
-        ref = _stable_ref(s)
-        if not ref:
-            print(f"skipping {name}: it is neither a partition nor an LVM volume, so there "
-                  "is no name for it that survives being encrypted", file=sys.stderr)
-            continue
-
-        def restore(why):
-            """Put the plaintext swap back exactly as it was, UUID included."""
-            run(["cryptsetup", "close", mapper])
-            if uuid:
-                run(["mkswap", "-U", uuid, dev])
-            else:
-                run(["mkswap", dev])
-            run(["swapon", dev])
-            print(f"skipping {name}: {why}", file=sys.stderr)
-
-        # Prove it works on the live system before writing anything that affects the boot.
-        rc, _ = run(["swapoff", dev], timeout=60)
-        if rc != 0:
-            print(f"skipping {name}: could not swapoff {dev}", file=sys.stderr)
-            continue
-
-        rc, _ = run(["cryptsetup", "open", "--type", "plain",
-                     "--key-file", "/dev/urandom", "--key-size", SWAP_KEY_BITS,
-                     "--cipher", SWAP_CIPHER, dev, mapper], timeout=60)
-        if rc != 0:
-            # Nothing has been written to the device yet, so the old swap is still intact
-            run(["swapon", dev])
-            print(f"skipping {name}: cryptsetup could not open {dev}", file=sys.stderr)
-            continue
-
-        target = f"/dev/mapper/{mapper}"
-        rc, _ = run(["mkswap", target], timeout=60)
-        if rc != 0:
-            restore("mkswap failed on the encrypted device")
-            continue
-        rc, _ = run(["swapon", target], timeout=60)
-        if rc != 0:
-            restore("the encrypted device would not activate as swap")
-            continue
-
-        # It is live and working; now make it survive a reboot.
-        if not re.search(rf"^\s*{re.escape(mapper)}\s", crypttab, re.M):
-            if crypttab and not crypttab.endswith("\n"):
-                crypttab += "\n"
-            # nofail matters as much as the cipher does. Without it a swap device that
-            # fails to appear takes cryptsetup.target down with it, and the boot ends at an
-            # emergency prompt over a swap partition nothing was waiting for. The fstab line
-            # below has always had it; this one did not, which was an oversight.
-            crypttab += (f"# Hypora: swap re-keyed from /dev/urandom every boot\n"
-                         f"{mapper} {ref} /dev/urandom "
-                         f"swap,cipher={SWAP_CIPHER},size={SWAP_KEY_BITS},"
-                         f"nofail,x-systemd.device-timeout=10s\n")
-
-        keys = {dev, f"/dev/{name}"}
-        if uuid:
-            keys |= {f"UUID={uuid}", f"/dev/disk/by-uuid/{uuid}"}
-        fstab, replaced = _comment_swap_lines(fstab, keys)
-        if not re.search(rf"^\s*{re.escape(target)}\s", fstab, re.M):
-            if fstab and not fstab.endswith("\n"):
-                fstab += "\n"
-            # nofail so that a swap that fails to come up cannot hold up the boot
-            fstab += f"{target} none swap defaults,nofail,x-systemd.device-timeout=10s 0 0\n"
-
-        # Commenting out fstab is not enough on its own: with no fstab entry -- which is how
-        # Fedora ships -- the partition is activated purely because its GPT type says
-        # "Linux swap". Left alone, the next boot would generate a swap unit for the raw
-        # partition, which now holds ciphertext and no swap signature.
-        retyped, detail = _retype_partition(name)
-        done.append({"device": dev, "mapper": mapper, "ref": ref, "replaced": replaced,
-                     "retyped": retyped, "retypeDetail": detail})
-
-    if not done:
-        sys.exit("No swap was changed.")
-
-    CRYPTTAB.write_text(crypttab)
-    FSTAB.write_text(fstab)
+    text = FSTAB.read_text() if FSTAB.exists() else ""
+    if not re.search(rf"^\s*{re.escape(str(SWAPFILE))}\s", text, re.M):
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"{SWAPFILE} none swap defaults,nofail 0 0\n"
+        FSTAB.write_text(text)
     run(["systemctl", "daemon-reload"])
 
-    for d in done:
-        print(f"{d['device']} is now encrypted swap at /dev/mapper/{d['mapper']} "
-              f"(keyed from /dev/urandom, referenced as {d['ref']})")
-        if not d["retyped"]:
-            print(f"warning: {d['device']} is still marked as a swap partition in the "
-                  f"partition table ({d['retypeDetail']}). systemd will try to activate it "
-                  "directly at the next boot, which will fail now that it is encrypted. Fix "
-                  f"with: sfdisk --part-type <disk> <number> {GPT_LINUX_GENERIC}",
-                  file=sys.stderr)
-    if hib["configured"]:
-        print("Hibernation will no longer work. Remove resume= from the kernel command line "
-              "to stop the boot waiting for it.", file=sys.stderr)
+    print(f"{SWAPFILE} created ({size}) and active. It is inside the encrypted root, so it "
+          "is encrypted with everything else.")
+
+
+def remove_swapfile(arg=""):
+    need_root()
+    if not SWAPFILE.is_file():
+        print(f"No {SWAPFILE} to remove.")
+        return
+    run(["swapoff", str(SWAPFILE)], timeout=120)
+
+    _backup(FSTAB)
+    if FSTAB.exists():
+        kept = [l for l in FSTAB.read_text().splitlines()
+                if not re.match(rf"^\s*{re.escape(str(SWAPFILE))}\s", l)]
+        FSTAB.write_text("\n".join(kept) + "\n")
+
+    SWAPFILE.unlink(missing_ok=True)
+    run(["systemctl", "daemon-reload"])
+    print(f"{SWAPFILE} removed.")
 
 
 def main(argv):
@@ -1010,7 +838,8 @@ def main(argv):
         "selinux-boot": set_selinux_boot,
         "camera": set_camera,
         "location": set_location,
-        "encrypt-swap": encrypt_swap,
+        "add-swapfile": add_swapfile,
+        "remove-swapfile": remove_swapfile,
     }
     if cmd not in actions:
         print(__doc__, file=sys.stderr)
