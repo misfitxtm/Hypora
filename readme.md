@@ -64,7 +64,7 @@ All shown in **Nord**; every theme drives the same widgets from its own palette.
 | Component | What it does |
 |---|---|
 | Bar (`Bar.qml`) | Top bar on every monitor: Hypora menu button, that monitor's own workspaces, clock, tray and status icons (network, volume, battery, Do Not Disturb). See [Workspaces and monitors](#workspaces-and-monitors) |
-| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound — Hypora's own windows, not the system's control panels), **Security**, **Tools** (Terminal, region screenshot, and Claude Code only when it's installed) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
+| Menu (`AppMenu.qml`, `AppMenuPanel.qml`) | Menu from the Hypora logo at the top left. Five sections: **Apps**, **Style** (Theme, Next wallpaper), **Settings** (Display, Network, Bluetooth, Sound — Hypora's own windows, not the system's control panels), **Security**, **Tools** — including **Set up fingerprint**, which opens a terminal on `fprintd-enroll` because enrolment is interactive (it asks for the same finger several times) and shown only where there is both a reader and `fprintd` to drive it; and (Terminal, region screenshot, and Claude Code only when it's installed) and **Help** (Keybindings). Enter or Right opens a section; Esc or Left goes back; typing searches apps. Power actions are in the control center |
 | Security & Privacy (`SecuritySettings.qml`) | Menu > Security, in two sections. **Security** — whether Secure Boot is on; whether this system is on an encrypted volume, and whether any swap is reaching the disk unencrypted, with **Add swapfile** to put one inside the encrypted root when zram is not enough (see [Swap](#swap)); fwupd's firmware checks, with **Check for firmware updates** to install any your vendor has published — see [Firmware updates](#firmware-updates); whether DNS is encrypted (and in which mode, and to which resolver); whether each card is presenting a randomized MAC address; whether the firewall is running in a closed zone; whether system packages and flatpaks update on their own; and SELinux's running mode and the one set for next boot. **Privacy** — location (masks GeoClue), camera (unloads the `uvcvideo` driver), microphone (mutes it in PipeWire) and GTK file history, with a Clear button. Grouped by subject rather than by component: a camera and a microphone are about you, a firewall is about the machine. **Opening this window never asks for a password.** The two readings that need root — fwupd's host security attributes and firewalld's zone — sit behind **Run the deeper checks**, which is a single `pkexec hypora-security deep`: one prompt, not one per service. There is no periodic refresh, because re-reading on a timer turned one prompt into one every fifteen seconds; instead a change moves its own switch straight away and the window re-reads the moment the change finishes |
 
 The shell itself is never run as root, and shouldn't be. Quickshell is a single process — the Security window is not separable from the bar, launcher and notification daemon — and it loads its QML from `~/.config/quickshell/`, which you can write. Privileged code must not sit on a path its own user can edit, which is why `hypora-security` is root-owned in `/usr/local/bin` and reached through pkexec. `hypora-security deep` deliberately re-reads none of your per-user settings, so running it as root can't substitute root's configuration for yours; it reads firewalld's zone from `/etc/firewalld` directly rather than over D-Bus, so that half can't raise a second prompt. Readings and root actions go through `hypora-security`, installed to `/usr/local/bin` and owned by root — pkexec runs it as root, so it must not sit anywhere you could write. Run `hypora-security status` to see exactly what it reads |
@@ -288,6 +288,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-hardware     # finds hardware with no driver, firmware or radio, and fixes it
 │   ├── hypora-plymouth     # draws the boot screen's images in the current palette
 │   ├── hypora-power        # measures battery draw and follows the charger
+│   ├── hypora-replace-de   # removes another desktop's session, keeping its apps
 │   ├── hypora-security     # security status as JSON, and the root actions behind it
 │   │                       # (root-owned in /usr/local/bin, with hypora-console
 │   │                       #  and hypora-hardware — the three that need root)
@@ -388,6 +389,32 @@ Battery          72%   about 3h 55m left at this rate
 For reference, a ThinkPad T480s idling at 10 W has roughly twice the headroom it should; a tuned one sits nearer 5 W, which on the same battery is the difference between about four hours and about eight.
 
 Screen brightness remains the single largest draw on any laptop, and nothing here changes it — that one is yours.
+
+## Replacing another desktop
+
+If another desktop environment or window manager is installed, the installer names it and offers to remove it — last, after everything else has succeeded, and only if one is actually there.
+
+```
+hypora-replace-de list              # what is installed, and what removing it would take
+sudo hypora-replace-de remove       # asks first, and shows the full plan
+```
+
+Recognises GNOME, KDE Plasma, Xfce, Cinnamon, MATE, LXQt, Budgie, COSMIC, Sway and i3.
+
+**Only the session is removed** — the shell, the session manager, the greeter. Not the applications, and emphatically not the settings schemas, because Hypora is built on top of several of them:
+
+- `gsettings-desktop-schemas` provides `org.gnome.desktop.interface`, which `bin/hypora-theme` writes, and `org.gnome.desktop.privacy`, which the Security window reads. Lose it and theming stops working and two rows of that window go blank.
+- `nautilus`, `gnome-calculator`, `gnome-disk-utility`, `gnome-software` and `adw-gtk3-theme` are installed by Hypora deliberately.
+
+So "remove GNOME" here means `gnome-shell` and `gnome-session`, not GNOME.
+
+Three things make that safe rather than hopeful:
+
+- **The plan is printed before anything happens**, including every package the dependency chain would drag along. That list is worth reading. Two entries in it were found exactly this way and are now permanently excluded: `xorg-x11-server-Xwayland`, without which no X11 application runs under Hyprland, and `gnome-keyring-pam`, which provides the `pam_gnome_keyring.so` that [keyring auto-unlock](#secrets-and-the-keyring) depends on. Neither has a name that suggests GNOME owns it.
+- **It refuses if you are running the desktop in question.** Removing a shell out from under a live session takes the terminal the command was typed into with it, part-way through a dnf transaction. Running the installer from a GNOME terminal is the normal case, so expect that refusal — reboot into Hypora and run it again.
+- **It checks afterwards** that the schemas and applications Hypora needs are still installed, comparing against what was there before rather than against a list in the abstract, and prints the command to put anything back.
+
+One wrinkle worth knowing: Fedora marks `gnome-shell` as a **dnf-protected package**, so you cannot remove your own desktop by accident. There is no flag to bypass that for one package — `--setopt=protected_packages` is additive, and clearing it entirely would also unprotect systemd, sudo, grub2, shim and the SELinux policy. So the single `protected.d` file naming that desktop is moved aside for the duration of the transaction and put back afterwards, including if the removal fails part-way.
 
 ## Hardware, drivers and firmware
 

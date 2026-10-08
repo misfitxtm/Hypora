@@ -3,11 +3,18 @@
 -- Edit anything else under ~/.config/nvim freely; the installer only writes this file.
 
 -- Which Neovim colorscheme goes with which Hypora theme. LazyVim already brings
--- tokyonight and catppuccin; nord is added below.
+-- tokyonight and catppuccin; the rest are added below.
+--
+-- Osakajade and Hackerman are deliberately absent: neither has a Neovim colorscheme, and
+-- there is no near match worth pretending to. They fall through to the default below,
+-- which is a mismatch but an honest one — inventing a mapping to something merely dark
+-- would look like it was meant.
 local schemes = {
   Nord = "nord",
   TokyoNight = "tokyonight-night",
   CatppuccinMocha = "catppuccin-mocha",
+  Gruvbox = "gruvbox",
+  Kanagawa = "kanagawa-wave",
 }
 
 local function hypora_theme()
@@ -23,6 +30,8 @@ local scheme = schemes[hypora_theme() or ""] or "tokyonight-night"
 
 return {
   { "shaunsingh/nord.nvim", lazy = true },
+  { "ellisonleao/gruvbox.nvim", lazy = true },
+  { "rebelot/kanagawa.nvim", lazy = true },
 
   -- LazyVim reads this to decide the colorscheme
   {

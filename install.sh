@@ -888,10 +888,13 @@ done
 #                     and regenerates grub.cfg, so a tampered copy decides how you boot
 #   hypora-power      documented as `sudo hypora-power install`; it writes a udev rule and
 #                     sysfs power controls, and udev runs it as root on every AC change
+#   hypora-replace-de documented as `sudo hypora-replace-de remove`; it removes packages
+#                     and briefly moves a dnf protection file aside to do it
 #
 # The test is simply "does anything tell you to run this under sudo", which is why these
-# five and not the others — the rest never need more than your own privileges.
-ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub hypora-power)
+# six and not the others — the rest never need more than your own privileges.
+ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub hypora-power
+            hypora-replace-de)
 
 for name in "${ROOT_OWNED[@]}"; do
     log "Installing $name to /usr/local/bin (root-owned)"
@@ -1031,6 +1034,34 @@ fi
 prune
 mkdir -p "$(dirname "$MANIFEST")"
 mv "$NEW_MANIFEST" "$MANIFEST"
+
+# ---------- another desktop ----------
+# Offered last, and only when something else is installed. The order matters more than it
+# looks: this is where Hypora stops being an addition and starts being a replacement, and
+# it should happen after everything else has succeeded rather than before.
+#
+# hypora-replace-de refuses outright if you are running the desktop in question, because
+# removing a shell out from under a live session takes the terminal the command was typed
+# into with it, half way through a dnf transaction. Running the installer from a GNOME
+# terminal is the normal case, so expect that refusal and run it again after rebooting
+# into Hypora.
+if "$REPO/bin/hypora-replace-de" list >/dev/null 2>&1; then
+    printf '\n'
+    "$REPO/bin/hypora-replace-de" list >&2
+    printf '\n%s\n%s\n' \
+        "Hypora can remove that desktop's shell and session. Its applications and settings" \
+        "schemas are kept — Hypora is built on some of them and would break without them." >&2
+    if [ -t 0 ] && [ "${REPLACE_DE:-}" != no ]; then
+        read -r -p "Remove it now? [y/N] " answer
+        case "$answer" in
+            [Yy]*) sudo /usr/local/bin/hypora-replace-de remove \
+                       || warn "Could not remove the other desktop" ;;
+            *) log "Left it alone — run: sudo hypora-replace-de remove" ;;
+        esac
+    else
+        log "Leaving it alone; run: sudo hypora-replace-de remove"
+    fi
+fi
 
 # ---------- optional third-party repositories ----------
 # RPM Fusion carries what Fedora won't ship: patent-encumbered codecs, NVIDIA's own driver,

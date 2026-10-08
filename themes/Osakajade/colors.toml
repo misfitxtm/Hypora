@@ -1,0 +1,40 @@
+# Osakajade. No upstream palette to copy, so the colours are taken from the theme's
+# own wallpapers — sampling them gives #091715 backgrounds and jade accents around
+# #16935b to #48ad75, which is what this is built around.
+name = "Osakajade"
+mode = "dark"
+
+# UI
+background = "#0c1915"
+surface = "#16342a"
+foreground = "#d6e8dc"
+dim = "#7a9c8c"
+accent = "#4bb382"
+error = "#e06c75"
+selection = "#1e4a39"
+muted = "#2a5a46"
+
+# Terminal (ANSI)
+term_foreground = "#c3d6ca"
+black = "#0c1915"
+red = "#cc6666"
+green = "#3f9c6d"
+yellow = "#bfa95f"
+blue = "#4f8f96"
+magenta = "#9a7fb0"
+cyan = "#5bb79b"
+white = "#c3d6ca"
+bright_black = "#2a5a46"
+bright_red = "#e06c75"
+bright_green = "#4bb382"
+bright_yellow = "#d4c072"
+bright_blue = "#6aa9b0"
+bright_magenta = "#b093c4"
+bright_cyan = "#78cfb2"
+bright_white = "#e6f2ea"
+
+# System
+font = "JetBrainsMono Nerd Font"
+gtk_theme = "adw-gtk3-dark"
+icon_theme = "Gruvbox-Plus-Dark"
+color_scheme = "prefer-dark"

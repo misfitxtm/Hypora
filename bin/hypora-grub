@@ -344,6 +344,75 @@ MARK = "# set by hypora-grub"
 SAVE = "# was, before hypora-grub: "
 
 
+# The screen does not clear between the bootloader and the login screen unless something
+# makes it. That is deliberate kernel behaviour, not a bug: when a firmware framebuffer is
+# present, fbcon defers binding so the bootloader's image survives into early boot and the
+# handoff looks seamless. On a themed GRUB that image is the menu, and it keeps resurfacing
+# — once while GRUB prints its loading messages, and again when Plymouth exits and the
+# console reclaims the display underneath it.
+#
+# fbcon=nodefer turns the preservation off: fbcon binds immediately, and binding clears.
+# The cost is a brief blank console before Plymouth starts rather than a stale menu after
+# it, which is the right way round.
+#
+# Two earlier attempts at this missed, and both are worth recording. Dropping
+# GRUB_GFXPAYLOAD_LINUX=keep was BIOS-era reasoning — on UEFI, GRUB draws on the GOP buffer
+# and the kernel inherits it whatever that setting says. Passing --retain-splash to
+# plymouth-quit fixes a Plymouth-to-display-manager gap, which this is not: the console
+# takes the display back regardless of what Plymouth does on the way out.
+KERNEL_ARGS = ["fbcon=nodefer"]
+KERNEL_CMDLINE = Path("/etc/kernel/cmdline")
+
+
+def _kernel_args(add):
+    """Add or remove KERNEL_ARGS in all three places Fedora keeps them. (ok, detail)
+
+    grubby covers the entries that already exist, /etc/kernel/cmdline is what new ones are
+    built from, and GRUB_CMDLINE_LINUX is read when grub2-mkconfig regenerates. Missing any
+    one of them means the argument comes back — or fails to — at the next kernel update.
+    """
+    args = " ".join(KERNEL_ARGS)
+    done = []
+
+    if shutil.which("grubby"):
+        flag = f"--args={args}" if add else f"--remove-args={args}"
+        rc, out = run(["grubby", "--update-kernel=ALL", flag], timeout=60)
+        if rc != 0:
+            return False, f"grubby failed: {out.strip()[:160]}"
+        done.append("boot entries")
+    else:
+        return False, "grubby is not installed"
+
+    if KERNEL_CMDLINE.is_file():
+        try:
+            text = KERNEL_CMDLINE.read_text()
+            new = re.sub(rf"\s*\b{re.escape(args)}\b", "", text).strip()
+            if add:
+                new = (new + " " + args).strip()
+            if new + "\n" != text:
+                KERNEL_CMDLINE.write_text(new + "\n")
+                done.append(str(KERNEL_CMDLINE))
+        except OSError as e:
+            return False, f"cannot rewrite {KERNEL_CMDLINE}: {e}"
+
+    # GRUB_CMDLINE_LINUX is a quoted shell value, so the argument goes inside the quotes
+    try:
+        text = GRUB_DEFAULT.read_text()
+    except OSError:
+        return True, "added to " + ", ".join(done)
+    m = re.search(r'^(\s*GRUB_CMDLINE_LINUX=")([^"]*)(")', text, re.M)
+    if m:
+        inner = re.sub(rf"\s*\b{re.escape(args)}\b", "", m.group(2)).strip()
+        if add:
+            inner = (inner + " " + args).strip()
+        if inner != m.group(2):
+            text = text[:m.start()] + m.group(1) + inner + m.group(3) + text[m.end():]
+            GRUB_DEFAULT.write_text(text)
+            done.append(str(GRUB_DEFAULT))
+
+    return True, ("added to " if add else "removed from ") + ", ".join(done)
+
+
 def set_keys(text, values):
     """Set each key, preserving any pre-existing value once and only once."""
     lines = text.splitlines()
@@ -402,6 +471,13 @@ def cmd_status():
     for key in MANAGED:
         m = re.search(rf"^\s*{key}=(.*)$", text, re.M)
         print(f"  {key:24s} {m.group(1).strip() if m else '(unset)'}")
+    try:
+        on_cmdline = all(a in Path("/proc/cmdline").read_text() for a in KERNEL_ARGS)
+    except OSError:
+        on_cmdline = False
+    print(f"  {'kernel args':24s} {' '.join(KERNEL_ARGS)}"
+          f" {'(active this boot)' if on_cmdline else '(not on the running kernel)'}")
+
     term = re.search(r'^\s*GRUB_TERMINAL_OUTPUT=(.*)$', text, re.M)
     if term and "console" in term.group(1):
         print("\n  GRUB is in text mode, so no theme will be shown. `apply` changes that.")
@@ -457,6 +533,8 @@ def cmd_apply():
     })
     GRUB_DEFAULT.write_text(new)
 
+    ok, detail = _kernel_args(True)
+
     cfg = grub_cfg(gdir)
     rc, out = run(["grub2-mkconfig", "-o", str(cfg)])
     if rc != 0:
@@ -464,6 +542,8 @@ def cmd_apply():
         sys.exit(f"grub2-mkconfig failed, so {GRUB_DEFAULT} was put back:\n{out[-1500:]}")
 
     print(f"Boot menu themed with {name}.")
+    print(f"  {' '.join(KERNEL_ARGS)}: {detail}" if ok
+          else f"  could not set {' '.join(KERNEL_ARGS)}: {detail}")
     print(f"  theme:   {dest}/theme.txt")
     print(f"  config:  {cfg}")
     print(f"  backup:  {backup}")
@@ -489,6 +569,8 @@ def cmd_remove():
     GRUB_DEFAULT.write_text(unset_keys(text, MANAGED))
 
     shutil.rmtree(gdir / "themes" / THEME_NAME, ignore_errors=True)
+    ok, detail = _kernel_args(False)
+    print(f"  {' '.join(KERNEL_ARGS)}: {detail}")
 
     cfg = grub_cfg(gdir)
     rc, out = run(["grub2-mkconfig", "-o", str(cfg)])
