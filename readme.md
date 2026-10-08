@@ -87,6 +87,20 @@ Also needed:
 
 ## Install
 
+Two ways to get the files. Either works; the difference is only which revision you end up on.
+
+**Download a release** — a fixed set of files that was tested as a unit. On alpha this is the one to pick if you want to be able to say *which* Hypora you are reporting a bug against. Grab the source tarball from the [releases page](https://github.com/misfitxtm/Hypora/releases), or:
+
+```bash
+mkdir -p ~/.local/share/hypora
+curl -fsSL https://github.com/misfitxtm/Hypora/archive/refs/tags/v0.1.0-alpha.tar.gz \
+  | tar xz --strip-components=1 -C ~/.local/share/hypora
+cd ~/.local/share/hypora
+./install.sh
+```
+
+**Clone the repository** — tracks `main`, so you get fixes as they land, which during alpha is most days. Also what you want if you intend to read or change the code, since you keep the history:
+
 ```bash
 git clone https://github.com/misfitxtm/Hypora.git ~/.local/share/hypora
 cd ~/.local/share/hypora
@@ -117,7 +131,7 @@ The installer is safe to re-run. It:
 
 Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
 
-Configs are **copies**, so the clone can be moved or deleted afterwards. To update, `git pull` and re-run `./install.sh`: it records a checksum of every file it installs, so files you haven't touched are updated quietly, files you edited are saved as `<name>.bak.<timestamp>` before being replaced, and files Hypora no longer ships are removed (unless you edited them). Quickshell live-reloads when you edit `~/.config/quickshell/*.qml`.
+Configs are **copies**, so the directory you installed from can be moved or deleted afterwards. To update, `git pull` (or download a newer release over the same directory) and re-run `./install.sh`: it records a checksum of every file it installs, so files you haven't touched are updated quietly, files you edited are saved as `<name>.bak.<timestamp>` before being replaced, and files Hypora no longer ships are removed (unless you edited them). Quickshell live-reloads when you edit `~/.config/quickshell/*.qml`.
 
 ### Starting the desktop
 
