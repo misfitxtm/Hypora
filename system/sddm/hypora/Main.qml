@@ -24,6 +24,35 @@ Rectangle {
 
     color: colour(config.bg, "#2e3440")
 
+    // Which screen shows the login panel.
+    //
+    // SDDM instantiates this file once per screen, so without this the clock and password
+    // field are drawn on every monitor and the "main display" chosen in Display Settings
+    // means nothing here. Compositor focus cannot fix that — there is a window per output
+    // either way — so the theme has to decide.
+    //
+    // `primary` is written into theme.conf by hypora-greeter. Validated like every other
+    // value from that file: the greeter runs before anyone has logged in, so take nothing
+    // on trust.
+    readonly property string wantScreen:
+        /^[A-Za-z][A-Za-z0-9-]{0,31}$/.test(String(config.primary || "")) ? String(config.primary) : ""
+
+    // Is the named output actually connected? Each instance can only see its own Screen,
+    // so ask the application for the full list. A name that matches nothing — a monitor
+    // unplugged since it was chosen — must not mean the panel appears nowhere, which
+    // would be a login screen you cannot log in to.
+    readonly property bool wantScreenPresent: {
+        if (wantScreen === "") return false
+        const all = Qt.application.screens
+        for (let i = 0; i < all.length; i++)
+            if (all[i].name === wantScreen) return true
+        return false
+    }
+
+    // Show here when a main display was chosen and this is it; otherwise fall back to the
+    // old behaviour of showing on every screen.
+    readonly property bool showPanel: !wantScreenPresent || Screen.name === wantScreen
+
     readonly property color surface: colour(config.surface, "#3b4252")
     readonly property color fg: colour(config.fg, "#eceff4")
     readonly property color dim: colour(config.dim, "#7b88a1")
@@ -82,6 +111,8 @@ Rectangle {
     Column {
         anchors.centerIn: parent
         spacing: 0
+        // Secondary screens keep the themed background and nothing else.
+        visible: root.showPanel
 
         Text {
             anchors.horizontalCenter: parent.horizontalCenter

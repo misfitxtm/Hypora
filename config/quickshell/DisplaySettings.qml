@@ -248,11 +248,10 @@ Scope {
                 return out
             }
 
-            // Boxes with the in-progress drag applied, so the map follows the pointer
-            // without committing anything until the button comes up.
-            readonly property var live: boxes.map(b => b.name === dragging
-                ? ({ name: b.name, x: dragX, y: dragY, w: b.w, h: b.h }) : b)
-
+            // Deliberately no "boxes with the drag applied" list here. One existed, and
+            // feeding it to the Repeater is what broke dragging outright: a new array per
+            // mouse move rebuilt every delegate and destroyed the mouse grab. The drag
+            // position reaches the view through the delegate's own x/y bindings instead.
             property string dragging: ""
             property real dragX: 0
             property real dragY: 0
@@ -481,10 +480,10 @@ Scope {
                         clip: true
 
                         // Scale from the COMMITTED layout, never from the in-flight drag.
-                        // Deriving it from win.live meant that moving a monitor changed the
-                        // span, which changed `fit`, which rescaled every box including the
-                        // one under the pointer — so the drag altered its own conversion
-                        // factor and the monitor would not track the cursor.
+                        // Deriving it from the in-flight drag meant that moving a monitor
+                        // changed the span, which changed `fit`, which rescaled every box
+                        // including the one under the pointer — so the drag altered its own
+                        // conversion factor and the monitor would not track the cursor.
                         readonly property var boxes: win.boxes
                         readonly property real minX: boxes.length ? Math.min(...boxes.map(b => b.x)) : 0
                         readonly property real minY: boxes.length ? Math.min(...boxes.map(b => b.y)) : 0
@@ -498,17 +497,33 @@ Scope {
                             height: arrangement.spanH * arrangement.fit
 
                             Repeater {
-                                // Rendered from win.live so the dragged monitor follows the
-                                // pointer, while the scale above stays pinned to win.boxes.
-                                model: win.live
+                                // The model must NOT change while a drag is in progress.
+                                //
+                                // A Repeater given a plain JS array does not diff it: when the
+                                // array instance changes it destroys and rebuilds every
+                                // delegate. Binding this to a list recomputed from win.dragX
+                                // meant the MouseArea holding the mouse grab was destroyed on
+                                // the first pixel of movement — the drag died immediately, and
+                                // win.dragging was never cleared because neither onReleased nor
+                                // onCanceled had a live object left to fire on.
+                                //
+                                // win.boxes only re-evaluates when `edits` or `monitors` change,
+                                // neither of which happens mid-drag, so the delegates survive.
+                                // The drag offset is applied in the x/y bindings below instead,
+                                // which updates position without touching the model.
+                                model: win.boxes
                                 Rectangle {
                                     id: box
                                     required property var modelData
                                     readonly property bool isSelected: modelData.name === win.selected
                                     readonly property bool isPrimary: modelData.name === win.primary
                                     readonly property bool isDragging: modelData.name === win.dragging
-                                    x: (modelData.x - arrangement.minX) * arrangement.fit + 2
-                                    y: (modelData.y - arrangement.minY) * arrangement.fit + 2
+                                    // Live position: the drag value while this one is being
+                                    // dragged, the committed value otherwise.
+                                    readonly property real posX: isDragging ? win.dragX : modelData.x
+                                    readonly property real posY: isDragging ? win.dragY : modelData.y
+                                    x: (posX - arrangement.minX) * arrangement.fit + 2
+                                    y: (posY - arrangement.minY) * arrangement.fit + 2
                                     width: modelData.w * arrangement.fit - 4
                                     height: modelData.h * arrangement.fit - 4
                                     radius: 6

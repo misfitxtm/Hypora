@@ -14,14 +14,14 @@ hl.monitor({
 -- pcall and a plain existence check, because this is the config that draws the login
 -- screen: if the generated file is ever malformed, the greeter must still come up. A
 -- login screen on the wrong monitor is a nuisance; no login screen is a rescue disk.
-do
-    local extra = "/usr/share/sddm/themes/hypora/primary-monitor.lua"
-    local f = io.open(extra, "r")
-    if f then
-        f:close()
-        pcall(dofile, extra)
-    end
-end
+-- pcall alone, with no io.open existence check: dofile on a missing file raises, pcall
+-- catches it, and that covers both "not written yet" and "written badly" in one step
+-- without assuming Hyprland's Lua exposes the io library at all.
+--
+-- This only moves keyboard focus. Which monitor *shows* the login panel is decided by
+-- Main.qml reading `primary` from theme.conf, because SDDM instantiates the theme once
+-- per screen and no amount of compositor focus changes that.
+pcall(dofile, "/usr/share/sddm/themes/hypora/primary-monitor.lua")
 
 hl.config({
     input = {
