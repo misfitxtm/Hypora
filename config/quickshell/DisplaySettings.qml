@@ -185,8 +185,13 @@ Scope {
             // With nothing saved yet, the main display is the one Hyprland has focused —
             // true on a single-monitor machine by definition. Compared against rather than
             // written eagerly, so opening the window doesn't look like an unsaved change.
+            // The inner ?? chain is parenthesised because JavaScript refuses to mix ?? with
+            // || or && at the same level — it is a SyntaxError, not a precedence question,
+            // and QML reports it as "Left-hand side may not contain || or &&". Unparenthesised,
+            // this one line stopped the whole shell from loading: shell.qml could not create
+            // DisplaySettings, so nothing downstream of it existed either.
             readonly property string effectivePrimary:
-                savedPrimary || (monitors.find(m => m.focused) ?? monitors[0])?.name ?? ""
+                savedPrimary || ((monitors.find(m => m.focused) ?? monitors[0])?.name ?? "")
 
             function luaPrimary(name) {
                 return name ? `HYPORA_PRIMARY = "${name}"` : "HYPORA_PRIMARY = nil"
