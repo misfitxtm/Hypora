@@ -236,7 +236,10 @@ def mark_user(pkgs):
     if not pkgs:
         return
     at_risk = [p for p in pkgs if install_reason(p) in DEP_REASONS]
-    rc, out = run(["dnf", "mark", "user", "--skip-unavailable"] + pkgs, timeout=180)
+    # -y and a timeout: `dnf mark` prints a transaction summary and waits on the system
+    # repository lock indefinitely, so without both it can sit on a prompt nobody sees or
+    # block behind a background PackageKit refresh.
+    rc, out = run(["dnf", "-y", "mark", "user", "--skip-unavailable"] + pkgs, timeout=180)
     if rc != 0:
         print(f"Warning: could not mark packages user-installed, so `dnf autoremove` may "
               f"still take them. Skipping the orphan sweep would be safer.\n{out[-500:]}",
