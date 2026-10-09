@@ -76,8 +76,23 @@ hl.on("hyprland.start", function()
     --
     -- Hyprland has no primary-monitor concept of its own, so this plus the Quickshell side
     -- (ShellState.primaryScreen) is the whole of what "main display" means here.
+    --
+    -- Dispatched in-process, not through `hyprctl dispatch focusmonitor <name>`. Under a
+    -- Lua config `hyprctl dispatch` evaluates its argument AS LUA, so that older form
+    -- became the malformed `hl.dispatch(focusmonitor DP-3)` and silently did nothing for
+    -- as long as it existed. The greeter hit the identical bug; its journal spelled it out:
+    --
+    --   error: [string "return hl.dispatch(movecursor 960 540)"]:1: ')' expected near '960'
+    --   → Note: dispatch in lua is a shorthand for hl.dispatch(...)
+    --
+    -- hl.dispatch takes the dispatcher and its arguments as one string. There is no
+    -- hl.dsp.focusmonitor: trying it first put `attempt to call a nil value` on the login
+    -- screen, because Hyprland reports the error even though pcall contains it.
+    --
+    -- pcall stays so a future API change degrades to "starts on the wrong monitor" rather
+    -- than taking the rest of this config — every binding below it — down with it.
     if HYPORA_PRIMARY then
-        hl.exec_cmd("hyprctl dispatch focusmonitor " .. HYPORA_PRIMARY)
+        pcall(hl.dispatch, "focusmonitor " .. HYPORA_PRIMARY)
     end
 end)
 

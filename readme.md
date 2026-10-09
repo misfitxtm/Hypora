@@ -336,9 +336,10 @@ What makes a report useful here:
 
 - Which Fedora version, and whether it's bare metal or a VM
 - The output of `hyprctl configerrors` if it's a compositor or keybind problem
+- **`/run/user/$UID/hypr/*/hyprland.log`** for anything else about the compositor. Hyprland sets `debug.enable_stdout_logs = 0`, so only its startup banner reaches journald and `journalctl` looks misleadingly clean — the real log, including Lua errors, is only in that file. It lives on tmpfs, so grab it *before* rebooting
 - The output of `qs` run from a terminal if it's a shell problem — QML errors print there and nowhere else
 - `hypora-security status` for anything in the Security window
-- `journalctl -b -u <unit>` for a service that didn't start
+- `journalctl -b -u <unit>` for a service that didn't start, and `journalctl -b -t hypora-greeter` for the login screen's monitor and pointer placement
 
 ## License
 
