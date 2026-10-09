@@ -181,6 +181,7 @@ The shell is never run as root, and shouldn't be. Quickshell is a single process
 **Shell, editor and fetch**
 
 - **zsh** with **Oh My Zsh**, tab completion (menu select, case-insensitive), autosuggestions and syntax highlighting. Set as your login shell; put your own additions in `~/.zshrc.local`, which Hypora never overwrites
+- **eza** replaces `ls` (`ls`, `ll`, `la`, and `lt` for a two-level tree), with **file-type icons** from the bundled Nerd Font and **coloured from the active theme** rather than from eza's own palette: `hypora-theme` renders `EZA_COLORS` from the same `colors.toml` as everything else, so a listing matches the desktop and changes with it. Permission bits, sizes, owners and dates are each coloured by meaning. `\ls` still gets you coreutils, and if `eza` is missing the plain `ls` aliases stay
 - **Neovim** with the **LazyVim** starter, its colorscheme following the active theme (`~/.config/nvim/lua/plugins/hypora.lua` is the only file Hypora owns there)
 - **fastfetch** with a Hypora logo and a short readout: OS (as *Hypora Linux*, with the running kernel), host, CPU, GPU, RAM, WM, terminal, the active theme and the palette. Set `HYPORA_NO_FETCH=1` to stop it greeting new shells
 

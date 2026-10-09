@@ -55,7 +55,18 @@ trap 'rm -f "$subs"' EXIT
     printf 's|{{ icon_theme }}|%s|g\n' "$(icon_theme)"
     sed -nE 's/^([a-z_]+)[[:space:]]*=[[:space:]]*"([^"]*)".*/\1 \2/p' "$COLORS" | while read -r key val; do
         printf 's|{{ %s }}|%s|g\n' "$key" "$val"
-        if [[ $val == \#* ]]; then printf 's|{{ %s_hex }}|%s|g\n' "$key" "${val#\#}"; fi
+        if [[ $val == \#* ]]; then
+            printf 's|{{ %s_hex }}|%s|g\n' "$key" "${val#\#}"
+            # {{ key_rgb }} as "R;G;B" decimals, for anything speaking ANSI truecolor —
+            # eza's EZA_COLORS wants 38;2;R;G;B. Doing the conversion here keeps those
+            # templates reading from the same palette as everything else, rather than
+            # falling back to the 16 ANSI slots and quietly drifting from the theme.
+            h=${val#\#}
+            if [ ${#h} -eq 6 ]; then
+                printf 's|{{ %s_rgb }}|%d;%d;%d|g\n' "$key" \
+                    "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"
+            fi
+        fi
     done
 } > "$subs"
 
