@@ -160,6 +160,7 @@ Without the login screen, start it from a text console with `uwsm start hyprland
 | Wallpaper (`Wallpaper.qml`) | Cross-fades the wallpaper on every monitor. Each theme ships several; cycle with menu > Style > **Next wallpaper** (or `qs ipc call wallpaper next`). Your choice is remembered |
 | Weather (`Weather.qml`) | Current conditions and a three-day forecast, right of the clock. You pick the city by name — no IP geolocation, and nothing requested until you choose. Data from [Open-Meteo](https://open-meteo.com), which needs no account or API key; `bin/hypora-weather` does the lookups and can be run on its own |
 | Sound (`AudioSettings.qml`) | Output and input devices with their own volume and mute, a picker when there's more than one, and a row per playing application. Talks to PipeWire through Quickshell — no pavucontrol. `wiremix` is behind "Advanced" for routing and profiles |
+| Default Apps (`DefaultApps.qml`) | Menu > Settings > Default Apps: which app opens each common file type, with the apps that declare the type first and **Show all apps** for the rest. **Add a file type** takes any extension — `.qml` in Neovim, say — and an extension nothing claims gets a small MIME type of its own in `~/.local/share/mime`. Defaults belong to MIME types, so each row says which other extensions a choice also changes. Writes only `~/.config/mimeapps.list`, the file Files, Firefox and `xdg-open` all read, through `bin/hypora-defaults` — no password. Terminal apps open in kitty via `xdg-terminal-exec` |
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | Click the status icons at the top right: Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness, power mode (Saver / Balanced / Performance — see [Power](docs/power.md)), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles |
 | Network (`NetworkSettings.qml`, `Network.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed. The bar icon updates live via `nmcli monitor` |
 | Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
@@ -283,6 +284,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │   ├── hypora-sysinfo      # RAM/CPU/GPU stats as JSON for the bar widget
 │   ├── hypora-screenshot   # region / window / screen, saved and copied
 │   ├── hypora-weather      # place search and forecast via Open-Meteo
+│   ├── hypora-defaults     # default apps per file type, for the Default Apps window
 │   ├── hypora-plymouth     # draws the boot screen's images in the current palette
 │   ├── hypora-firmware     # checks LVFS and installs firmware updates
 │   └── # root-owned, installed to /usr/local/bin:
