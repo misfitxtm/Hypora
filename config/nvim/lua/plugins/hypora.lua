@@ -5,7 +5,7 @@
 -- Which Neovim colorscheme goes with which Hypora theme. LazyVim already brings
 -- tokyonight and catppuccin; the rest are added below.
 --
--- Osakajade and Hackerman are deliberately absent: neither has a Neovim colorscheme, and
+-- Osakajade is deliberately absent: it has no Neovim colorscheme, and
 -- there is no near match worth pretending to. They fall through to the default below,
 -- which is a mismatch but an honest one — inventing a mapping to something merely dark
 -- would look like it was meant.
