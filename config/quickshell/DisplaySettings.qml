@@ -182,16 +182,22 @@ Scope {
             property string primary: ""          // what the toggle is showing
             property string savedPrimary: ""     // what monitors.lua currently says
 
-            // With nothing saved yet, the main display is the one Hyprland has focused —
-            // true on a single-monitor machine by definition. Compared against rather than
-            // written eagerly, so opening the window doesn't look like an unsaved change.
-            // The inner ?? chain is parenthesised because JavaScript refuses to mix ?? with
-            // || or && at the same level — it is a SyntaxError, not a precedence question,
-            // and QML reports it as "Left-hand side may not contain || or &&". Unparenthesised,
-            // this one line stopped the whole shell from loading: shell.qml could not create
-            // DisplaySettings, so nothing downstream of it existed either.
-            readonly property string effectivePrimary:
-                savedPrimary || ((monitors.find(m => m.focused) ?? monitors[0])?.name ?? "")
+            // With nothing saved, fall back to the first enabled output — a stable answer.
+            //
+            // This used to fall back to whichever monitor had focus, which is not stable at
+            // all: moving the pointer to the other screen changed it, so `dirty` went true
+            // with no user action and Apply lit up on its own, while the map's "main" label
+            // and the toggle disagreed about which display was which.
+            //
+            // A saved name that is no longer connected is ignored rather than honoured, so
+            // unplugging the main display leaves a real monitor marked main instead of one
+            // that isn't there.
+            readonly property string effectivePrimary: {
+                if (savedPrimary && monitors.some(m => m.name === savedPrimary))
+                    return savedPrimary
+                const live = monitors.filter(m => !m.disabled)
+                return (live.length > 0 ? live[0] : monitors[0])?.name ?? ""
+            }
 
             function luaPrimary(name) {
                 return name ? `HYPORA_PRIMARY = "${name}"` : "HYPORA_PRIMARY = nil"
@@ -331,11 +337,37 @@ Scope {
             }
             function keep() {
                 countdown = 0
+                const primaryChanged = savedPrimary !== primary
                 savedPrimary = primary
                 saved.setText("-- Written by Hypora Display Settings. Loaded from hyprland.lua.\n"
                               + "-- HYPORA_PRIMARY is Hypora's main display: see DisplaySettings.qml.\n"
                               + luaPrimary(primary) + "\n" + lua(edits) + "\n")
+                // The login screen runs as the sddm user and never reads your ~/.config, so
+                // the main display has to be written somewhere root owns for it to survive
+                // a reboot. Only on an actual change: everything else in this window applies
+                // without ever asking for a password, and a prompt on every Apply would be a
+                // worse trade than a prompt on the rare occasion you move the main display.
+                if (primaryChanged && primary)
+                    greeter.exec(["pkexec", "hypora-greeter", "set", primary])
                 reloadSoon.restart()
+            }
+
+            // Failure here costs the login screen's placement and nothing else, so it is
+            // reported in the window rather than thrown — including the common case of
+            // simply dismissing the password prompt.
+            property string greeterNote: ""
+            Process {
+                id: greeter
+                stderr: StdioCollector {
+                    onStreamFinished: if (text.trim() !== "") win.greeterNote = text.trim()
+                }
+                onExited: code => {
+                    if (code === 0) win.greeterNote = ""
+                    else if (code === 126 || code === 127) win.greeterNote =
+                        "Login screen left as it was (authentication cancelled)."
+                    else if (win.greeterNote === "") win.greeterNote =
+                        "Could not set the login screen's display."
+                }
             }
             function revert() {
                 countdown = 0
@@ -443,10 +475,17 @@ Scope {
                         Layout.preferredHeight: 170
                         radius: 12
                         color: Theme.surface
+                        // Now that the scale is pinned to the committed layout, a monitor
+                        // dragged past the edge would otherwise be drawn over the controls
+                        // below instead of staying inside its own panel.
+                        clip: true
 
-                        // The live set includes the in-progress drag, so the map rescales as a
-                        // monitor is pulled past the current bounds instead of clipping it.
-                        readonly property var boxes: win.live
+                        // Scale from the COMMITTED layout, never from the in-flight drag.
+                        // Deriving it from win.live meant that moving a monitor changed the
+                        // span, which changed `fit`, which rescaled every box including the
+                        // one under the pointer — so the drag altered its own conversion
+                        // factor and the monitor would not track the cursor.
+                        readonly property var boxes: win.boxes
                         readonly property real minX: boxes.length ? Math.min(...boxes.map(b => b.x)) : 0
                         readonly property real minY: boxes.length ? Math.min(...boxes.map(b => b.y)) : 0
                         readonly property real spanW: boxes.length ? Math.max(...boxes.map(b => b.x + b.w)) - minX : 1
@@ -459,7 +498,9 @@ Scope {
                             height: arrangement.spanH * arrangement.fit
 
                             Repeater {
-                                model: arrangement.boxes
+                                // Rendered from win.live so the dragged monitor follows the
+                                // pointer, while the scale above stays pinned to win.boxes.
+                                model: win.live
                                 Rectangle {
                                     id: box
                                     required property var modelData
@@ -507,24 +548,36 @@ Scope {
                                             ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
                                             : Qt.PointingHandCursor
                                         enabled: win.countdown === 0
+                                        // Pointer position in `arrangement` coordinates, not
+                                        // in this MouseArea's. The MouseArea is anchored to
+                                        // the box, so it travels with the drag: measuring
+                                        // from it meant every delta was taken from an origin
+                                        // the previous delta had already moved, and the
+                                        // monitor ran away from the cursor. `arrangement` is
+                                        // a fixed-size Rectangle and stays put.
                                         property real startX: 0
                                         property real startY: 0
                                         property real originX: 0
                                         property real originY: 0
+                                        // Frozen at press, so a rescale cannot change the
+                                        // factor part-way through a drag.
+                                        property real dragFit: 1
 
                                         onPressed: mouse => {
                                             win.selected = box.modelData.name
                                             if (win.monitors.length < 2) return
-                                            startX = mouse.x; startY = mouse.y
+                                            const p = mapToItem(arrangement, mouse.x, mouse.y)
+                                            startX = p.x; startY = p.y
                                             originX = box.modelData.x; originY = box.modelData.y
+                                            dragFit = arrangement.fit || 1
                                             win.dragX = originX; win.dragY = originY
                                             win.dragging = box.modelData.name
                                         }
                                         onPositionChanged: mouse => {
                                             if (win.dragging !== box.modelData.name) return
-                                            const f = arrangement.fit || 1
-                                            win.dragX = originX + (mouse.x - startX) / f
-                                            win.dragY = originY + (mouse.y - startY) / f
+                                            const p = mapToItem(arrangement, mouse.x, mouse.y)
+                                            win.dragX = originX + (p.x - startX) / dragFit
+                                            win.dragY = originY + (p.y - startY) / dragFit
                                         }
                                         onReleased: {
                                             if (win.dragging !== box.modelData.name) return
@@ -682,7 +735,7 @@ Scope {
                                 Layout.fillWidth: true
                                 wrapMode: Text.Wrap
                                 text: win.primary === win.selected
-                                    ? "Starts focused, and Hypora's menu and clipboard open here."
+                                    ? "Starts focused, hosts the login screen, and Hypora's menu and clipboard open here."
                                     : `Currently ${win.primary || "unset"}.`
                                 font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                                 color: Theme.dim
@@ -701,9 +754,11 @@ Scope {
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
                             text: win.countdown > 0 ? "Waiting for you to confirm on screen…"
-                                                    : "Changes apply right away and can be reverted."
+                                : win.greeterNote !== "" ? win.greeterNote
+                                : "Changes apply right away and can be reverted."
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
-                            color: Theme.dim
+                            color: win.greeterNote !== "" && win.countdown === 0
+                                   ? Theme.warn : Theme.dim
                         }
                         Button {
                             text: "Reset"

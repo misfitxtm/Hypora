@@ -267,6 +267,8 @@ REQUIRED=(
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
+    # eza: the ls replacement the shell aliases use, themed from the active palette
+    eza
     polkit sddm qt6-qtsvg gnupg2 curl tar xz unzip firewalld
     # Secret Service provider. GNOME's session starts one and Hyprland doesn't, so without
     # this an app looking for somewhere to keep a token finds no provider — and some then
@@ -934,6 +936,19 @@ sudo install -m644 -o root -g root "$REPO/system/sddm/hypora/theme.conf" "$SDDM_
 sudo chown root:root "$SDDM_THEME/theme.conf"
 sudo install -m644 "$REPO/system/sddm/10-hypora.conf" /etc/sddm.conf.d/10-hypora.conf
 
+# Carry the main display through to the login screen. Display Settings records it in
+# ~/.config/hypr/monitors.lua, which the greeter cannot read — it runs as the sddm user —
+# so it is mirrored into the theme directory here, where privileges are already in hand.
+# Doing it on every install also repairs the case where the GUI's one-off pkexec was
+# dismissed, without making the user think to run anything.
+primary=$(sed -nE 's/^HYPORA_PRIMARY[[:space:]]*=[[:space:]]*"([A-Za-z][A-Za-z0-9-]*)".*/\1/p' \
+    "$CONF/hypr/monitors.lua" 2>/dev/null | head -1)
+if [ -n "$primary" ]; then
+    log "Sending the login screen to $primary"
+    sudo /usr/local/bin/hypora-greeter set "$primary" \
+        || warn "Could not set the login screen's display; run: sudo hypora-greeter set $primary"
+fi
+
 for dm in gdm lightdm greetd; do
     if systemctl is-enabled -q "$dm" 2>/dev/null; then
         sudo systemctl disable "$dm"
@@ -1044,11 +1059,13 @@ done
 #                     sysfs power controls, and udev runs it as root on every AC change
 #   hypora-replace-de documented as `sudo hypora-replace-de remove`; it removes packages
 #                     and briefly moves a dnf protection file aside to do it
+#   hypora-greeter    writes a Lua file the SDDM greeter loads before anyone has logged in,
+#                     so it must not be writable by the user it is about to authenticate
 #
 # The test is simply "does anything tell you to run this under sudo", which is why these
-# six and not the others — the rest never need more than your own privileges.
+# seven and not the others — the rest never need more than your own privileges.
 ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub hypora-power
-            hypora-replace-de)
+            hypora-replace-de hypora-greeter)
 
 for name in "${ROOT_OWNED[@]}"; do
     log "Installing $name to /usr/local/bin (root-owned)"

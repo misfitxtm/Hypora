@@ -4,6 +4,29 @@ Living with the desktop once it is installed.
 
 [← back to the readme](../readme.md)
 
+## The main display
+
+Hyprland has no primary-monitor concept, so this is Hypora's own and it means three things: that screen starts focused, Hypora's single-instance panels (app menu, clipboard history) open there rather than on whichever output Quickshell enumerated first, and **the SDDM login screen appears there**.
+
+Set it in Display Settings with the **Main display** toggle. It can only be moved to another screen, never switched off — "no main display" isn't a useful state.
+
+The first two are stored in `~/.config/hypr/monitors.lua` as `HYPORA_PRIMARY`, read by `hyprland.lua` and by `ShellState.qml`. The login screen needs more than that: **the greeter runs as the `sddm` user and never reads your `~/.config`**, which is why a second monitor can host the login prompt and then stop being the main display the moment you log in.
+
+So `bin/hypora-greeter` — root-owned, reached through `pkexec` — writes one generated file next to the greeter's own config, which loads it if present. That file is root-owned on purpose: anything the greeter reads before login must not be writable by the user it is about to authenticate.
+
+Two deliberate choices in how little it does:
+
+- It sets the output with `hyprctl dispatch focusmonitor`, not a monitor or window rule. This file is loaded by the config that draws the login screen, and a key some Hyprland version doesn't recognise would be a config error at the one moment there is no way to log in and fix it. A shell command that fails leaves the greeter exactly where it would have been.
+- The greeter's `hyprland.lua` checks the file exists and `pcall`s it. A login screen on the wrong monitor is a nuisance; no login screen is a rescue disk.
+
+The password prompt appears only when the main display actually changes — everything else in Display Settings applies without ever asking. Dismissing it costs the login screen's placement and nothing else, and the window says so. `install.sh` also re-applies whatever `monitors.lua` says on every run, so a dismissed prompt repairs itself next time you run the installer.
+
+```
+hypora-greeter status            # what the greeter is currently told
+sudo hypora-greeter set DP-3     # by hand, if you prefer
+sudo hypora-greeter clear        # back to letting Hyprland decide
+```
+
 ## Workspaces and monitors
 
 Every monitor has its own independent set of workspaces. Workspace 1 exists on each screen at the same time, SUPER + 1 switches the monitor you're pointing at, and sending a window to the other screen leaves it on the workspace you sent it to rather than dropping it wherever that screen happened to be.

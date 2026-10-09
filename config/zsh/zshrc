@@ -62,12 +62,38 @@ export EDITOR=nvim
 export VISUAL=nvim
 export PATH="$HOME/.local/bin:$PATH"
 
+# ---------- listings ----------
+# eza replaces ls when it's installed. Its colours come from the active Hypora theme via
+# ~/.config/hypora/current/eza-colors.sh, which hypora-theme regenerates on every switch, so
+# a listing matches the rest of the desktop instead of using eza's built-in palette.
+#
+# Guarded on both sides: if eza isn't installed the coreutils aliases stay, so `ls` never
+# turns into "command not found" on a machine where the package was skipped.
+if command -v eza >/dev/null; then
+    [ -r "$HOME/.config/hypora/current/eza-colors.sh" ] \
+        && source "$HOME/.config/hypora/current/eza-colors.sh"
+    # --group-directories-first is Hypora's preference, not eza's default.
+    # Long form shows Permissions / Size / User / Date Modified / Name.
+    #
+    # --icons=auto, not a bare --icons: `auto` emits glyphs only when stdout is a real
+    # terminal, so piping `ls` into another command doesn't feed it icon characters it was
+    # never meant to parse. The glyphs come from JetBrainsMono Nerd Font, which Hypora
+    # installs system-wide — in a terminal using some other font they show as boxes, and
+    # EZA_ICON_SPACING=2 helps if your terminal draws them tight against the name.
+    alias ls='eza --icons=auto --group-directories-first'
+    alias ll='eza -lh --icons=auto --group-directories-first'
+    alias la='eza -lah --icons=auto --group-directories-first'
+    alias lt='eza --tree --level=2 --icons=auto --group-directories-first'
+    # The real ls is still one backslash away: \ls
+else
+    alias ls='ls --color=auto'
+    alias ll='ls -lh --group-directories-first'
+    alias la='ls -lAh --group-directories-first'
+fi
+
 # ---------- aliases ----------
 alias vi=nvim
 alias vim=nvim
-alias ll='ls -lh --group-directories-first'
-alias la='ls -lAh --group-directories-first'
-alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 alias ff=fastfetch
 alias theme=hypora-theme
