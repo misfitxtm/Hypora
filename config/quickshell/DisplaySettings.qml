@@ -346,8 +346,11 @@ Scope {
                 // a reboot. Only on an actual change: everything else in this window applies
                 // without ever asking for a password, and a prompt on every Apply would be a
                 // worse trade than a prompt on the rare occasion you move the main display.
-                if (primaryChanged && primary)
-                    greeter.exec(["pkexec", "hypora-greeter", "set", primary])
+                // Unsetting it is a change too: without `clear` the login screen would stay
+                // on the old monitor until the next install.
+                if (primaryChanged)
+                    greeter.exec(primary ? ["pkexec", greeterHelper, "set", primary]
+                                         : ["pkexec", greeterHelper, "clear"])
                 reloadSoon.restart()
             }
 
@@ -355,6 +358,10 @@ Scope {
             // reported in the window rather than thrown — including the common case of
             // simply dismissing the password prompt.
             property string greeterNote: ""
+            // Absolute, never a bare name: pkexec resolves a bare name through your PATH,
+            // where ~/.local/bin comes first, so anything able to write there would be run
+            // as root the next time you typed your password here.
+            readonly property string greeterHelper: "/usr/local/bin/hypora-greeter"
             Process {
                 id: greeter
                 stderr: StdioCollector {

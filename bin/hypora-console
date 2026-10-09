@@ -94,6 +94,45 @@ def need_root():
                  f"    sudo {Path(sys.argv[0]).name} {sys.argv[1] if len(sys.argv) > 1 else 'apply'}")
 
 
+def atomic_write(path, text):
+    """Replace a file the boot depends on without ever leaving it half-written.
+
+    write_text truncates first, so a crash or power cut part-way through leaves an empty
+    fstab, grub default or kernel command line — a machine that boots to an emergency shell,
+    or not at all. Writing a sibling, flushing it to disk and renaming it over the original
+    means the file is always either the old version or the new one, because a rename is
+    atomic. Mode and owner are carried over, and the SELinux label is restored: a new file
+    takes its directory's label, which is not always the one the original had.
+    """
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.hypora-tmp")
+    st = path.stat() if path.exists() else None
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if st:
+            os.chown(tmp, st.st_uid, st.st_gid)
+            os.chmod(tmp, st.st_mode & 0o7777)
+        else:
+            os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    dfd = os.open(path.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+    try:
+        subprocess.run(["restorecon", str(path)], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def run(cmd):
     try:
         p = subprocess.run(cmd, capture_output=True, text=True)
@@ -113,7 +152,7 @@ def edit_kernel_cmdline(new_args):
         return None  # not used on this system; new kernels inherit from /proc/cmdline
     text = KERNEL_CMDLINE.read_text().strip()
     kept = [w for w in text.split() if not w.split("=", 1)[0] in KEYS]
-    KERNEL_CMDLINE.write_text(" ".join(kept + list(new_args)).strip() + "\n")
+    atomic_write(KERNEL_CMDLINE, " ".join(kept + list(new_args)).strip() + "\n")
     return KERNEL_CMDLINE
 
 

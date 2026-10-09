@@ -111,6 +111,19 @@ fetch_verified() {
     fi
 }
 
+# key_ok <file> <fingerprint>: the file holds exactly one primary key, and it is the pinned one.
+#
+# Checking only the first fingerprint is not enough, because `rpm --import` takes every key
+# in the file: a server that appended its own key after the genuine one would pass the check
+# and get both trusted. So collect every primary key's fingerprint (the `fpr` record right
+# after a `pub`, not a subkey's) and require the whole list to be the one we expect.
+key_ok() {
+    local fprs
+    fprs=$(gpg --show-keys --with-colons "$1" 2>/dev/null \
+        | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')
+    [ -n "$fprs" ] && [ "$fprs" = "$2" ]
+}
+
 # pin_clone <url> <commit> <dest>: check out exactly one reviewed commit, nothing else.
 #
 # The same argument as fetch_verified, for git. `git clone --depth 1 <url>` takes whatever
@@ -250,7 +263,7 @@ log "Enabling COPR sdegler/hyprland"
 sudo dnf copr enable -y sdegler/hyprland
 copr_key=$(mktemp)
 if curl -fsSL "https://download.copr.fedorainfracloud.org/results/sdegler/hyprland/pubkey.gpg" -o "$copr_key" \
-    && [ "$(gpg --show-keys --with-colons "$copr_key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$HYPRLAND_COPR_FPR" ]; then
+    && key_ok "$copr_key" "$HYPRLAND_COPR_FPR"; then
     sudo rpm --import "$copr_key"
     log "Hyprland COPR signing key verified"
 else
@@ -1358,7 +1371,7 @@ elif want_claude; then
     # Check the signing key against the fingerprint Anthropic publishes before rpm trusts it
     key=$(mktemp)
     if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
-        && [ "$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" = "$CLAUDE_KEY_FPR" ]; then
+        && key_ok "$key" "$CLAUDE_KEY_FPR"; then
         sudo rpm --import "$key"
         sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
         sudo dnf install -y claude-code || warn "Could not install claude-code"
