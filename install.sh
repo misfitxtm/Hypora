@@ -33,12 +33,33 @@ MANIFEST="$CONF/hypora/installed.sha256"
 NEW_MANIFEST=$(mktemp)
 trap 'rm -f "$NEW_MANIFEST"' EXIT
 
+# `set -e` turns any unchecked failure into a silent exit, and this script has ~1100 lines of
+# them. The symptom is a run that stops mid-way with whatever the failing command printed and
+# no indication that anything is wrong — a bare "sha256sum: ...: Is a directory" is not a
+# diagnosis, and the install it leaves behind is worse than either outcome: configs copied but
+# never themed, because hypora-theme runs near the end. So say so, and say what to do.
+on_err() {
+    local code=$? line=$1
+    printf '\033[1;31mxx\033[0m %s\n' \
+        "Install failed at line $line (exit $code). This leaves a PARTIAL install:" >&2
+    printf '   %s\n' \
+        "config files may be in place while the theme, login screen and power setup are not." \
+        "Fix the error above and re-run ./install.sh — it is safe to re-run and will finish" \
+        "the steps it missed. Nothing is removed on a failed run." >&2
+}
+trap 'on_err $LINENO' ERR
+
 sha() { sha256sum "$1" | cut -c1-64; }
 installed_sha() { [ -f "$MANIFEST" ] && awk -v p="$1" 'substr($0, 67) == p { print substr($0, 1, 64) }' "$MANIFEST"; }
 
 # put <src> <dest> [mode]: copy a file into place
 put() {
     local src=$1 dest=$2 mode=${3:-644} new
+    # Refuse anything that isn't a regular file, with a message naming it. Without this the
+    # caller's glob handing over a directory produced only `sha256sum: ...: Is a directory`
+    # and, under `set -e`, killed the installer mid-run — which is how a stray bin/__pycache__
+    # left an install with its configs in place but never themed.
+    [ -f "$src" ] || die "put: $src is not a regular file (installer bug)"
     new=$(sha "$src")
     mkdir -p "$(dirname "$dest")"
     if [ -L "$dest" ]; then
@@ -442,8 +463,17 @@ if has_btrfs && available btrfsmaintenance; then
         # describes. Preferred over enabling timers directly, which would then disagree with
         # the config the next time anything ran the refresh.
         if systemctl cat btrfsmaintenance-refresh.service >/dev/null 2>&1; then
-            sudo systemctl enable --now btrfsmaintenance-refresh.service \
+            # `start`, not `enable --now`. The refresh service is a Type=oneshot helper with
+            # no [Install] section, so enabling it is a no-op that makes systemd print nine
+            # lines explaining that the unit isn't meant to be enabled — noise in an already
+            # long log. Starting it is the half that actually applies the schedule.
+            sudo systemctl start btrfsmaintenance-refresh.service \
                 || warn "Could not apply the btrfsmaintenance schedule"
+            # The .path unit beside it is the one with [Install], and enabling it is what
+            # keeps the timers in step with /etc/sysconfig/btrfsmaintenance if that file is
+            # edited later. Nothing enabled it before, so a later change went unnoticed.
+            sudo systemctl enable --now btrfsmaintenance-refresh.path 2>/dev/null \
+                || warn "btrfsmaintenance timers won't refresh if you edit its config later"
         else
             for t in btrfs-scrub btrfs-balance; do
                 systemctl cat "$t.timer" >/dev/null 2>&1 \
@@ -915,6 +945,10 @@ bin_files=("$REPO"/bin/*)
 if [ ${#bin_files[@]} -gt 0 ]; then
     log "Installing bin scripts to ~/.local/bin"
     for f in "${bin_files[@]}"; do
+        # Files only. `bin/*` matches directories too, and a __pycache__ left behind by
+        # running one of these scripts as a Python module is enough to stop the installer
+        # dead here — the same guard the quickshell loop above has always had.
+        [ -f "$f" ] || continue
         name=$(basename "$f")
         skip=
         for r in "${ROOT_OWNED[@]}"; do [ "$name" = "$r" ] && skip=1; done
