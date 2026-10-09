@@ -64,7 +64,11 @@ DESKTOPS = {
     "gnome-shell": ("GNOME", [
         "gnome-shell", "gnome-session", "gnome-initial-setup",
         "gnome-browser-connector", "gnome-shell-extension-common", "gdm",
-    ], ("gnome-", "libgnome", "gjs", "mutter", "gdm", "gnome-classic"),
+    ], ("gnome-", "libgnome", "gjs", "mutter", "gdm", "gnome-classic",
+        # GNOME Help. Named for its binary rather than its desktop, so the gnome-* patterns
+        # never reached it and it survived every sweep. Its content package, gnome-user-docs,
+        # was already being removed — leaving the reader with nothing to read.
+        "yelp"),
        ("gnome-shell", "gnome-session", "gdm", "mutter", "gnome-settings-daemon",
         "gnome-initial-setup", "gnome-backgrounds", "gnome-classic",
         "gnome-control-center", "gnome-tour")),
@@ -111,6 +115,15 @@ KEEP = [
     # Installed explicitly by install.sh — keep this block in step with its REQUIRED list
     "nautilus", "gvfs", "gnome-calculator", "gnome-disk-utility", "gnome-software",
     "adw-gtk3-theme", "gnome-keyring",
+    # GNOME apps Hypora keeps because nothing here replaces them. gnome-calendar matches the
+    # sweep patterns and was being proposed for removal as a leftover; the others do not
+    # match, but they are listed so `dnf autoremove` cannot take them either, since the keep
+    # list is what gets marked user-installed. papers and evince are the same application
+    # either side of Fedora's rename — listing both means neither release loses its viewer.
+    "gnome-calendar",                 # Calendar
+    "baobab",                         # Disk Usage Analyzer
+    "simple-scan",                    # Document Scanner
+    "papers", "evince",               # Document Viewer
     # org.gnome.desktop.* — theming (bin/hypora-theme) and the Security window
     "gsettings-desktop-schemas",
     # Toolkits and session services

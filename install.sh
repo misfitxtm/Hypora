@@ -277,6 +277,11 @@ REQUIRED=(
     # gnome-session or gdm. Nautilus does bring `localsearch`, a background indexer that
     # reads your home directory — see the readme if you'd rather it didn't.
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
+    # Kept on purpose, and listed here so they are marked user-installed: that is what keeps
+    # `dnf autoremove` and hypora-replace-de's sweep from treating them as GNOME leftovers.
+    # Calendar, Disk Usage Analyzer and Document Scanner have no Hypora equivalent and
+    # nothing else here replaces them.
+    gnome-calendar baobab simple-scan
     cliphist wl-clipboard grim slurp
 )
 # Nice to have; a missing one only produces a warning
@@ -300,8 +305,71 @@ OPTIONAL=(
 log "Installing required packages"
 sudo dnf install -y "${REQUIRED[@]}"
 
+# Mark the load-bearing packages user-installed, so `dnf autoremove` can never take them.
+#
+# This is not belt-and-braces; it is the fix for something that already happened. On a stock
+# Workstation install these arrive with reason `Group` or `Dependency`, which is exactly what
+# autoremove collects once the desktop that pulled them in is gone. A plain `dnf autoremove`
+# run by hand after removing gnome-shell took gnome-keyring-pam and gcr, silently disabling
+# keyring auto-unlock — the PAM lines are `optional` and `-` prefixed, so PAM skips the
+# missing module without even logging it.
+#
+# `dnf install` does not reliably change an existing package's reason, so mark explicitly.
+# Filtered to what is actually installed and marked one at a time: a single name that isn't
+# there must not cost the whole batch its protection, which is the failure mode that makes
+# this kind of guard worthless exactly when it is needed.
+log "Protecting required packages from dnf autoremove"
+PROTECT_USER=(
+    gsettings-desktop-schemas xorg-x11-server-Xwayland
+    gnome-keyring gnome-keyring-pam gcr
+    nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
+    gnome-calendar baobab simple-scan papers evince
+)
+protect_failed=()
+for p in "${PROTECT_USER[@]}"; do
+    rpm -q "$p" >/dev/null 2>&1 || continue
+    sudo dnf mark user "$p" >/dev/null 2>&1 || protect_failed+=("$p")
+done
+[ ${#protect_failed[@]} -eq 0 ] \
+    || warn "Could not mark these user-installed; dnf autoremove may remove them: ${protect_failed[*]}"
+
 log "Installing virtualization (@virtualization group)"
-sudo dnf group install -y virtualization || warn "Could not install the virtualization group"
+# Without virt-viewer: the group pulls it in, and its `remote-viewer` is a second, worse
+# remote-desktop client sitting next to RustDesk below. virt-manager has its own built-in
+# console for local VMs and does not depend on it, so nothing loses a feature.
+sudo dnf group install -y virtualization --exclude=virt-viewer \
+    || warn "Could not install the virtualization group"
+# Drop a copy an earlier run of this installer brought in. It is a leaf package — nothing
+# installed requires it — so this removes exactly one thing.
+if rpm -q virt-viewer >/dev/null 2>&1; then
+    log "Removing virt-viewer (remote-viewer); RustDesk replaces it"
+    sudo dnf remove -y virt-viewer || warn "Could not remove virt-viewer"
+fi
+
+# A brief earlier version of this installer used RustDesk's own unsigned RPM. The flatpak
+# replaced it, so drop the RPM rather than leaving two RustDesks in the launcher.
+if rpm -q rustdesk >/dev/null 2>&1; then
+    log "Removing the RustDesk RPM (the verified Flathub build replaces it)"
+    sudo dnf remove -y rustdesk || warn "Could not remove the RustDesk RPM"
+fi
+
+# GNOME Help. Removed here as well as by hypora-replace-de's sweep, because the sweep only
+# runs while a desktop is still detected — on a machine where GNOME's session has already
+# gone, yelp is left stranded with no way to catch it. Its content package (gnome-user-docs)
+# documents a shell that isn't running, so the reader has nothing useful to show.
+if rpm -q yelp >/dev/null 2>&1; then
+    log "Removing GNOME Help (yelp)"
+    sudo dnf remove -y yelp || warn "Could not remove yelp"
+fi
+
+# Document viewer. Fedora renamed Evince to Papers, so take whichever this release has
+# rather than hardcoding a name that breaks on one side of the rename.
+for viewer in papers evince; do
+    if available "$viewer"; then
+        sudo dnf install -y "$viewer" || warn "Could not install $viewer (document viewer)"
+        break
+    fi
+done
 
 log "Installing optional packages"
 for p in "${OPTIONAL[@]}"; do
@@ -529,6 +597,7 @@ else
 fi
 sudo fc-cache -f >/dev/null 2>&1 || true
 
+
 # ---------- Flatpak ----------
 # Flathub as a system remote, then the apps. Each install is skipped if it's already
 # there, so re-running costs nothing. Set SKIP_FLATPAKS=1 to install none of them.
@@ -547,7 +616,15 @@ FLATPAKS=(
     org.mozilla.firefox              # publisher-verified by Mozilla
     com.bitwarden.desktop
     org.localsend.localsend_app
-    com.valvesoftware.Steam
+    # Remote desktop, replacing virt-viewer's remote-viewer. Publisher-verified on Flathub
+    # (via rustdesk.com), which is better provenance than the project's own RPM: that one is
+    # unsigned, so a pinned hash would prove only that the bytes hadn't changed since someone
+    # looked at them, not who built them.
+    com.rustdesk.RustDesk
+    # Steam is installed natively instead, further down — the flatpak's sandbox gets in the
+    # way in practice (controller access, filesystem paths to existing libraries, launching
+    # anything outside it). Native Steam needs RPM Fusion nonfree, so it is installed with
+    # that section rather than here.
     net.lutris.Lutris
     com.spotify.Client               # sandboxed, rather than an unmaintained terminal client
 )
@@ -1143,6 +1220,41 @@ elif want_rpmfusion; then
         || warn "Could not enable RPM Fusion"
 else
     log "Skipping RPM Fusion"
+fi
+
+# ---------- Steam (native, needs RPM Fusion nonfree) ----------
+# Native rather than the flatpak. The sandbox is the problem in practice: controller and
+# filesystem access, and reaching game libraries that live outside it, all take fighting.
+#
+# The cost of the switch is stated plainly because it is real: `steam` lives in
+# rpmfusion-nonfree-steam, so declining RPM Fusion above means no Steam at all, where the
+# flatpak would have worked. Nothing is installed silently either way.
+if rpm -q steam >/dev/null 2>&1; then
+    log "Steam already installed natively"
+elif rpm -q rpmfusion-nonfree-release >/dev/null 2>&1 && available steam; then
+    log "Installing Steam (native)"
+    sudo dnf install -y steam || warn "Could not install Steam"
+else
+    warn "Steam not installed: it needs RPM Fusion nonfree, which is not enabled"
+    warn "  Enable it and run: sudo dnf install steam"
+    warn "  Or use the flatpak instead: flatpak install flathub com.valvesoftware.Steam"
+fi
+
+# An earlier Hypora installed the Steam flatpak. Two Steams in the launcher is the confusion
+# this change was meant to end, so retire the flatpak — but never with --delete-data: the
+# library under ~/.var/app can be hundreds of GB of games, and it is not ours to throw away.
+if flatpak info com.valvesoftware.Steam >/dev/null 2>&1; then
+    if rpm -q steam >/dev/null 2>&1; then
+        log "Removing the Steam flatpak (native Steam is installed)"
+        sudo flatpak uninstall -y com.valvesoftware.Steam \
+            || warn "Could not remove the Steam flatpak; you now have two Steams installed"
+        warn "The flatpak's games are still at ~/.var/app/com.valvesoftware.Steam/.local/share/Steam"
+        warn "  Add that as a library folder in native Steam (Settings > Storage) to reuse them,"
+        warn "  or delete it once you are sure: rm -rf ~/.var/app/com.valvesoftware.Steam"
+    else
+        warn "Keeping the Steam flatpak: native Steam is not installed, so removing it"
+        warn "  would leave you with no Steam at all"
+    fi
 fi
 
 # ---------- AI tools (optional) ----------
