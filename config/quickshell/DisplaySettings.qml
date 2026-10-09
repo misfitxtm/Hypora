@@ -5,7 +5,14 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic as C
 
-// Display Settings: resolution, refresh rate, scale, rotation, position and on/off per monitor.
+// Display Settings: resolution, refresh rate, scale, rotation, arrangement, which screen is
+// the main one, and on/off per monitor.
+//
+// Position is set by dragging a monitor on the map rather than from a control: a dropdown of
+// "left of the others" cannot express a stacked or deliberately offset layout, and having two
+// ways to set one value means they drift apart. Edges snap, overlaps are refused, and the
+// whole arrangement is shifted so the top-left screen sits at 0,0.
+//
 // Changes apply live (hyprctl eval), then ask to be kept; after 15s without an answer they
 // revert. Kept settings are saved to ~/.config/hypr/monitors.lua, which hyprland.lua loads.
 // Open from the app menu, the "Display Settings" app entry, or:  qs ipc call display open
@@ -161,6 +168,29 @@ Scope {
             readonly property var mon: monitors.find(m => m.name === selected) ?? null
             readonly property var edit: edits[selected] ?? null
             readonly property bool dirty: JSON.stringify(edits) !== JSON.stringify(current())
+                                          || primary !== effectivePrimary
+
+            // ---- main display ----
+            // Hyprland has no "primary monitor" property, so this is Hypora's own notion and
+            // it means two specific things: the session starts with the focus on it, and the
+            // shell's single-instance panels (the app menu, clipboard history) open there
+            // instead of on whichever output Quickshell happened to enumerate first.
+            //
+            // Stored in monitors.lua as HYPORA_PRIMARY so there is one file holding the
+            // display layout rather than two. hyprland.lua reads the global; ShellState
+            // reads the same line back out for the QML side.
+            property string primary: ""          // what the toggle is showing
+            property string savedPrimary: ""     // what monitors.lua currently says
+
+            // With nothing saved yet, the main display is the one Hyprland has focused —
+            // true on a single-monitor machine by definition. Compared against rather than
+            // written eagerly, so opening the window doesn't look like an unsaved change.
+            readonly property string effectivePrimary:
+                savedPrimary || (monitors.find(m => m.focused) ?? monitors[0])?.name ?? ""
+
+            function luaPrimary(name) {
+                return name ? `HYPORA_PRIMARY = "${name}"` : "HYPORA_PRIMARY = nil"
+            }
 
             // ---- data ----
             function current() {
@@ -181,6 +211,104 @@ Scope {
                 edits = all
             }
 
+            // ---- arrangement geometry ----
+            // Logical rectangles for the enabled monitors, taken from `edits` rather than
+            // from hyprctl so the map reflects changes you haven't applied yet — a mode or
+            // rotation change resizes the box straight away.
+            readonly property var boxes: {
+                const out = []
+                for (const m of monitors) {
+                    const e = edits[m.name]
+                    if (!e || e.disabled) continue
+                    const dim = String(e.mode).split("@")[0].split("x").map(Number)
+                    const s = parseFloat(e.scale) || 1
+                    const rotated = (e.transform % 2) === 1
+                    const p = String(e.position).split("x").map(Number)
+                    out.push({
+                        name: m.name,
+                        // A position Hyprland reported as "auto-right" has no coordinates to
+                        // read, so fall back to where the monitor actually is.
+                        x: isFinite(p[0]) ? p[0] : m.x,
+                        y: isFinite(p[1]) ? p[1] : m.y,
+                        w: (rotated ? dim[1] : dim[0]) / s,
+                        h: (rotated ? dim[0] : dim[1]) / s
+                    })
+                }
+                return out
+            }
+
+            // Boxes with the in-progress drag applied, so the map follows the pointer
+            // without committing anything until the button comes up.
+            readonly property var live: boxes.map(b => b.name === dragging
+                ? ({ name: b.name, x: dragX, y: dragY, w: b.w, h: b.h }) : b)
+
+            property string dragging: ""
+            property real dragX: 0
+            property real dragY: 0
+
+            readonly property int snapDistance: 64      // logical px
+
+            function snapAxis(v, size, others, lo, span) {
+                let best = v, bd = snapDistance
+                for (const o of others) {
+                    const s = o[lo], e = o[lo] + o[span]
+                    // Abut after, abut before, or align the near/far edges
+                    for (const c of [e, s - size, s, e - size]) {
+                        const d = Math.abs(v - c)
+                        if (d < bd) { bd = d; best = c }
+                    }
+                }
+                return best
+            }
+
+            function overlaps(a, b) {
+                return a.x < b.x + b.w && b.x < a.x + a.w
+                    && a.y < b.y + b.h && b.y < a.y + a.h
+            }
+
+            // Push `me` clear of `o` along whichever side costs the least movement.
+            function pushOut(me, o) {
+                let best = null, bd = Infinity
+                for (const c of [{ x: o.x + o.w, y: me.y }, { x: o.x - me.w, y: me.y },
+                                 { x: me.x, y: o.y + o.h }, { x: me.x, y: o.y - me.h }]) {
+                    const d = Math.abs(c.x - me.x) + Math.abs(c.y - me.y)
+                    if (d < bd) { bd = d; best = c }
+                }
+                return best
+            }
+
+            // Move `name` to (nx, ny): snap to its neighbours, refuse to overlap, and shift
+            // the whole arrangement so the top-left monitor sits at 0,0. Hyprland accepts
+            // negative coordinates, but letting them drift makes every later comparison and
+            // every saved file harder to read for no gain.
+            function placeMonitor(name, nx, ny) {
+                const me = boxes.find(b => b.name === name)
+                if (!me) return
+                const others = boxes.filter(b => b.name !== name)
+                let p = { name, x: nx, y: ny, w: me.w, h: me.h }
+                if (others.length) {
+                    p.x = snapAxis(nx, me.w, others, "x", "w")
+                    p.y = snapAxis(ny, me.h, others, "y", "h")
+                    for (let i = 0; i < 4; i++) {
+                        const hit = others.find(o => overlaps(p, o))
+                        if (!hit) break
+                        const r = pushOut(p, hit)
+                        p.x = r.x; p.y = r.y
+                    }
+                    // Still overlapping after four pushes: a layout this cramped has no
+                    // sensible answer, so keep the position it had rather than inventing one.
+                    if (others.some(o => overlaps(p, o))) return
+                }
+                const placed = boxes.map(b => b.name === name ? p : b)
+                const minX = Math.min(...placed.map(b => b.x))
+                const minY = Math.min(...placed.map(b => b.y))
+                const all = Object.assign({}, edits)
+                for (const b of placed)
+                    all[b.name] = Object.assign({}, all[b.name],
+                                                { position: `${b.x - minX}x${b.y - minY}` })
+                edits = all
+            }
+
             function lua(set) {
                 return Object.entries(set).map(([name, e]) =>
                     `hl.monitor({ output = "${name}", mode = "${e.mode}", position = "${e.position}", `
@@ -191,19 +319,32 @@ Scope {
 
             function apply() {
                 applied = current()
+                appliedPrimary = effectivePrimary
                 evalLua(lua(edits))
+                focusPrimary()
                 countdown = 15
             }
             function keep() {
                 countdown = 0
-                saved.setText("-- Written by Hypora Display Settings. Loaded from hyprland.lua.\n" + lua(edits) + "\n")
+                savedPrimary = primary
+                saved.setText("-- Written by Hypora Display Settings. Loaded from hyprland.lua.\n"
+                              + "-- HYPORA_PRIMARY is Hypora's main display: see DisplaySettings.qml.\n"
+                              + luaPrimary(primary) + "\n" + lua(edits) + "\n")
                 reloadSoon.restart()
             }
             function revert() {
                 countdown = 0
                 evalLua(lua(applied))
                 edits = applied
+                primary = appliedPrimary
+                focusPrimary()
                 reloadSoon.restart()
+            }
+            property string appliedPrimary: ""
+            // Moving the focus is the half of "main display" that can be shown immediately;
+            // the rest only means anything from the next session, which is what the file is for.
+            function focusPrimary() {
+                if (primary) Quickshell.execDetached(["hyprctl", "dispatch", "focusmonitor", primary])
             }
             function evalLua(code) {
                 Quickshell.execDetached(["hyprctl", "eval", code])
@@ -219,6 +360,13 @@ Scope {
                         if (win.countdown === 0) win.edits = win.current()
                         if (!win.monitors.some(m => m.name === win.selected))
                             win.selected = (win.monitors.find(m => m.focused) ?? win.monitors[0])?.name ?? ""
+                        // monitors.lua is read before hyprctl answers, so when nothing was
+                        // saved there was no monitor list yet to fall back to. Settle it here,
+                        // once, now that the outputs are known.
+                        if (win.primary === "") {
+                            win.primary = win.effectivePrimary
+                            win.appliedPrimary = win.primary
+                        }
                     }
                 }
             }
@@ -235,6 +383,21 @@ Scope {
                 path: Quickshell.env("HOME") + "/.config/hypr/monitors.lua"
                 blockLoading: true
                 printErrors: false
+                // Read back the one line the QML side cares about. A regex rather than a Lua
+                // parser because this is a file Hypora writes itself and the shape is fixed;
+                // anything unrecognised just leaves the main display unset, which falls back
+                // to the focused monitor.
+                onLoaded: {
+                    const m = /^HYPORA_PRIMARY\s*=\s*"([^"]*)"/m.exec(text())
+                    win.savedPrimary = m ? m[1] : ""
+                    win.primary = win.effectivePrimary
+                    win.appliedPrimary = win.primary
+                }
+                onLoadFailed: {
+                    win.savedPrimary = ""
+                    win.primary = win.effectivePrimary
+                    win.appliedPrimary = win.primary
+                }
             }
 
             // ---- options for the selected monitor ----
@@ -276,16 +439,13 @@ Scope {
                         radius: 12
                         color: Theme.surface
 
-                        readonly property var boxes: win.monitors.filter(m => !m.disabled).map(m => {
-                            const rotated = m.transform % 2 === 1
-                            const w = (rotated ? m.height : m.width) / m.scale
-                            const h = (rotated ? m.width : m.height) / m.scale
-                            return { name: m.name, x: m.x, y: m.y, w, h }
-                        })
-                        readonly property real minX: Math.min(...boxes.map(b => b.x))
-                        readonly property real minY: Math.min(...boxes.map(b => b.y))
-                        readonly property real spanW: Math.max(...boxes.map(b => b.x + b.w)) - minX
-                        readonly property real spanH: Math.max(...boxes.map(b => b.y + b.h)) - minY
+                        // The live set includes the in-progress drag, so the map rescales as a
+                        // monitor is pulled past the current bounds instead of clipping it.
+                        readonly property var boxes: win.live
+                        readonly property real minX: boxes.length ? Math.min(...boxes.map(b => b.x)) : 0
+                        readonly property real minY: boxes.length ? Math.min(...boxes.map(b => b.y)) : 0
+                        readonly property real spanW: boxes.length ? Math.max(...boxes.map(b => b.x + b.w)) - minX : 1
+                        readonly property real spanH: boxes.length ? Math.max(...boxes.map(b => b.y + b.h)) - minY : 1
                         readonly property real fit: boxes.length ? Math.min((width - 40) / spanW, (height - 40) / spanH) : 1
 
                         Item {
@@ -299,25 +459,76 @@ Scope {
                                     id: box
                                     required property var modelData
                                     readonly property bool isSelected: modelData.name === win.selected
+                                    readonly property bool isPrimary: modelData.name === win.primary
+                                    readonly property bool isDragging: modelData.name === win.dragging
                                     x: (modelData.x - arrangement.minX) * arrangement.fit + 2
                                     y: (modelData.y - arrangement.minY) * arrangement.fit + 2
                                     width: modelData.w * arrangement.fit - 4
                                     height: modelData.h * arrangement.fit - 4
                                     radius: 6
                                     color: isSelected ? Theme.accent : Theme.bg
-                                    border.width: 1
-                                    border.color: isSelected ? Theme.accent : Theme.dim
+                                    border.width: isPrimary ? 2 : 1
+                                    border.color: isSelected ? Theme.accent
+                                                             : (isPrimary ? Theme.accent : Theme.dim)
+                                    opacity: isDragging ? 0.85 : 1
+                                    z: isDragging ? 1 : 0
 
-                                    Text {
+                                    Column {
                                         anchors.centerIn: parent
-                                        text: box.modelData.name
-                                        font.family: Theme.font; font.pixelSize: Theme.fontSize - 1; font.bold: true
-                                        color: box.isSelected ? Theme.bg : Theme.fg
+                                        spacing: 1
+                                        Text {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            text: box.modelData.name
+                                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 1; font.bold: true
+                                            color: box.isSelected ? Theme.bg : Theme.fg
+                                        }
+                                        Text {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            visible: box.isPrimary && box.height > 34
+                                            text: "main"
+                                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 3
+                                            color: box.isSelected ? Theme.bg : Theme.accent
+                                        }
                                     }
+
+                                    // Drag to arrange. The press selects, so a plain click still
+                                    // works; the move is tracked in logical pixels (screen
+                                    // coordinates divided by the map's scale) and only committed
+                                    // on release, where the snapping happens.
                                     MouseArea {
+                                        id: dragArea
                                         anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: win.selected = box.modelData.name
+                                        cursorShape: win.monitors.length > 1
+                                            ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
+                                            : Qt.PointingHandCursor
+                                        enabled: win.countdown === 0
+                                        property real startX: 0
+                                        property real startY: 0
+                                        property real originX: 0
+                                        property real originY: 0
+
+                                        onPressed: mouse => {
+                                            win.selected = box.modelData.name
+                                            if (win.monitors.length < 2) return
+                                            startX = mouse.x; startY = mouse.y
+                                            originX = box.modelData.x; originY = box.modelData.y
+                                            win.dragX = originX; win.dragY = originY
+                                            win.dragging = box.modelData.name
+                                        }
+                                        onPositionChanged: mouse => {
+                                            if (win.dragging !== box.modelData.name) return
+                                            const f = arrangement.fit || 1
+                                            win.dragX = originX + (mouse.x - startX) / f
+                                            win.dragY = originY + (mouse.y - startY) / f
+                                        }
+                                        onReleased: {
+                                            if (win.dragging !== box.modelData.name) return
+                                            const name = box.modelData.name
+                                            const nx = win.dragX, ny = win.dragY
+                                            win.dragging = ""
+                                            win.placeMonitor(name, Math.round(nx), Math.round(ny))
+                                        }
+                                        onCanceled: win.dragging = ""
                                     }
                                 }
                             }
@@ -329,6 +540,19 @@ Scope {
                             text: "No displays found (is Hyprland running?)"
                             font.family: Theme.font; font.pixelSize: Theme.fontSize
                             color: Theme.dim
+                        }
+
+                        // Live read-out while dragging: the snap only lands on release, so
+                        // without this there is no way to tell a deliberate gap from a
+                        // near-miss that is about to be snapped shut.
+                        Text {
+                            anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 6 }
+                            visible: win.monitors.length > 1
+                            text: win.dragging
+                                ? `${win.dragging} at ${Math.round(win.dragX)}, ${Math.round(win.dragY)}`
+                                : "Drag a display to arrange it — edges snap together"
+                            font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
+                            color: win.dragging ? Theme.accent : Theme.dim
                         }
                     }
 
@@ -430,20 +654,34 @@ Scope {
                             onPicked: v => win.setEdit("transform", v)
                         }
 
-                        Label { text: "Position"; visible: win.monitors.length > 1 }
-                        Select {
+                        // Position is set by dragging the map above, so there is no control
+                        // here for it — a dropdown of "left of the others" could not express
+                        // a stacked or offset layout, and two ways to set one value drift.
+
+                        Label {
+                            text: "Main display"
+                            visible: win.monitors.length > 1
+                        }
+                        RowLayout {
                             Layout.fillWidth: true
                             visible: win.monitors.length > 1
-                            readonly property var choices: [
-                                { label: win.mon ? `Current (${win.mon.x}, ${win.mon.y})` : "Current", value: win.mon ? `${win.mon.x}x${win.mon.y}` : "auto" },
-                                { label: "Right of the others", value: "auto-right" },
-                                { label: "Left of the others", value: "auto-left" },
-                                { label: "Above the others", value: "auto-up" },
-                                { label: "Below the others", value: "auto-down" }
-                            ]
-                            model: choices
-                            currentIndex: Math.max(0, indexOfValue(win.edit?.position ?? ""))
-                            onActivated: i => win.setEdit("position", choices[i].value)
+                            spacing: 10
+                            Toggle {
+                                checked: win.primary === win.selected
+                                // Turning it off would leave no main display at all, so the
+                                // only move is turning a different one on.
+                                locked: win.primary === win.selected || win.countdown > 0
+                                onToggled: win.primary = win.selected
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                text: win.primary === win.selected
+                                    ? "Starts focused, and Hypora's menu and clipboard open here."
+                                    : `Currently ${win.primary || "unset"}.`
+                                font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
+                                color: Theme.dim
+                            }
                         }
                     }
 

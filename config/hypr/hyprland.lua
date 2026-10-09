@@ -70,6 +70,15 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("gnome-keyring-daemon --start --components=secrets,ssh")
     -- The monitors exist by now, which they don't when the config is first read
     workspace_rules()
+    -- Start on the main display. HYPORA_PRIMARY is set by monitors.lua, which Display
+    -- Settings writes; nil means "wherever Hyprland put the focus", which is the right
+    -- answer on a single-monitor machine and the only honest one when nothing was chosen.
+    --
+    -- Hyprland has no primary-monitor concept of its own, so this plus the Quickshell side
+    -- (ShellState.primaryScreen) is the whole of what "main display" means here.
+    if HYPORA_PRIMARY then
+        hl.exec_cmd("hyprctl dispatch focusmonitor " .. HYPORA_PRIMARY)
+    end
 end)
 
 ------------------ LOOK AND FEEL -------------

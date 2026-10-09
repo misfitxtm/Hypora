@@ -36,8 +36,8 @@ Rectangle {
     }
 
     IpcHandler {
-        // One handler per bar; the first screen's owns the shortcut
-        enabled: root.window.screen === Quickshell.screens[0]
+        // One handler per bar; the main display's owns the shortcut
+        enabled: ShellState.isPrimary(root.window.screen)
         target: "clipboard"
         function toggle(): void { drop.open = !drop.open }
     }

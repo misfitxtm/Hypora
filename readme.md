@@ -13,7 +13,7 @@ The aim is an "install it and it just looks good" experience that doesn't take c
 > - **Boot** — the GRUB framebuffer leftover (a black box after menu selection, and the menu reappearing after the splash) is still being chased; `fbcon=nodefer` is the current fix and is not yet confirmed on hardware
 > - **Battery** — on at least one ThinkPad the embedded controller's gauge reports 100% while discharging. This is a firmware reading, not Hypora's arithmetic, but the bar shows what it is given
 > - **Boot time** is longer than it should be and hasn't been profiled yet
-> - **Not yet run end to end:** `hypora-replace-de` (every test so far was a dry run), `hypora-power install`, and fingerprint enrolment
+> - **Not yet run end to end:** `hypora-power install` and fingerprint enrolment. `hypora-replace-de` has now been run on real hardware, which is how its missing cleanup phase and a silent keyring-auto-unlock breakage were found — both fixed
 > - **Packaging** — `packages/*.txt` and a modular `install/` directory are planned, not written
 > - **Theming** — TokyoNight's `dim` colour sits at 2.76 contrast, just under the 3.0 floor the other themes meet
 >
@@ -72,7 +72,7 @@ None of the three is enforced — the installer runs on a stock Workstation inst
 
 | Choice | What you get | If you skip it |
 |---|---|---|
-| **Everything netinstall** | a base with no second desktop competing for the session | you are carrying two desktops. Hypora disables GDM and uses its own session, and `hypora-replace-de` can remove the other one's shell — see [Replacing another desktop](docs/desktop.md#replacing-another-desktop) |
+| **Everything netinstall** | a base with no second desktop competing for the session | you are carrying two desktops. Hypora disables GDM and uses its own session, and `hypora-replace-de` can remove the other one's session, its leftover packages and their orphaned libraries — see [Replacing another desktop](docs/desktop.md#replacing-another-desktop) |
 | **Encrypt my data** (LUKS) | full-disk encryption, and a themed passphrase prompt at boot | the disk is readable by anyone holding it. **Cannot be added later** — LUKS is set up as the partitions are created |
 | **btrfs** | snapshots via snapper (with the btrfs-assistant GUI), one before every unattended update, plus scheduled scrub and balance | no snapshots and no scrub, so bit rot goes unnoticed. **Cannot be converted later** in any way worth attempting on a system you care about |
 
@@ -127,7 +127,7 @@ The installer is safe to re-run. It:
 10. Copies `bin/` into `~/.local/bin/`, except the root-owned helpers, which go to `/usr/local/bin`
 11. Checks hardware, firmware and drivers (see [Hardware](docs/hardware.md))
 12. On btrfs, sets up snapper, btrfs-assistant and btrfsmaintenance (see [Snapshots](docs/storage.md#snapshots))
-13. Offers to remove another desktop's session if one is installed, then **offers RPM Fusion**, then **offers Claude Code**. All three default to no, and all three are at the end of the run so a declined answer costs nothing
+13. Offers to remove another desktop if one is installed — session, leftovers and orphans, keeping what Hypora is built on — then **offers RPM Fusion**, then **offers Claude Code**. All three default to no, and all three are at the end of the run so a declined answer costs nothing
 
 Anything it replaces that you had changed is saved as `<name>.bak.<timestamp>`.
 
@@ -163,7 +163,7 @@ Without the login screen, start it from a text console with `uwsm start hyprland
 | Control center (`ControlCenter.qml`, `ControlPanel.qml`) | Click the status icons at the top right: Lock / Log out / Restart / Power off (the last three ask for a second click), volume and brightness, power mode (Saver / Balanced / Performance — see [Power](docs/power.md)), and Wi-Fi, Bluetooth, Do Not Disturb and Night Light tiles |
 | Network (`NetworkSettings.qml`, `Network.qml`) | Wi-Fi on/off, nearby networks with signal strength, connect (asking for a password when it's a new secured network), disconnect and forget. No terminal needed. The bar icon updates live via `nmcli monitor` |
 | Bluetooth (`BluetoothSettings.qml`) | Power and scanning, pair, connect, disconnect and forget, with device battery where reported |
-| Display (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation, position and on/off per monitor. Changes apply live, then a prompt appears **on every monitor** asking whether to keep them, reverting after 15 seconds — on every screen because a bad mode can hide the window holding the undo. Enter keeps, Esc reverts; kept settings go to `~/.config/hypr/monitors.lua` |
+| Display (`DisplaySettings.qml`) | Resolution, refresh rate, scale, rotation and on/off per monitor. **Arrangement is set by dragging** a screen on the map — edges snap together, overlaps are refused, and the layout is anchored at 0,0. **Main display** is a toggle: that screen starts focused and Hypora's menu and clipboard open there, instead of on whichever output Quickshell enumerated first. Changes apply live, then a prompt appears **on every monitor** asking whether to keep them, reverting after 15 seconds — on every screen because a bad mode can hide the window holding the undo. Enter keeps, Esc reverts; kept settings go to `~/.config/hypr/monitors.lua` |
 | Battery (`Battery.qml`, `BatteryWatch.qml`) | Charge in the bar on laptops, red when low. Notifies at 20% and 10% and suspends at 5%, because a laptop that runs flat mid-write is how filesystems get damaged. Each threshold fires once per discharge; plugging in resets them |
 | Clipboard (`Clipboard.qml`) | History left of the clock, also on **SUPER + SHIFT + V**: click a recent copy to put it back, or Clear to wipe it. Recorded by `wl-paste --watch cliphist store`, since Quickshell doesn't speak `wlr-data-control` |
 | Clock and calendar (`Clock.qml`, `CalendarPanel.qml`) | Click the clock: time, date and a month calendar. Arrows or scrolling change the month; click the month name to jump back to today |
@@ -285,7 +285,7 @@ Don't run another notification daemon (Mako, dunst, swaync) or polkit agent alon
 │       ├── hypora-grub     # themes the GRUB boot menu from the active palette
 │       ├── hypora-hardware # finds hardware with no driver, firmware or radio
 │       ├── hypora-power    # measures battery draw and follows the charger
-│       └── hypora-replace-de  # removes another desktop's session, keeping its apps
+│       └── hypora-replace-de  # removes another desktop, keeping what Hypora needs
 ├── docs/                   # the subsystem documentation linked above, and images/
 ├── tools/gen-ascii-logo.py # regenerates the fastfetch ASCII logo from the mark
 ├── applications/           # .desktop entries -> ~/.local/share/applications
