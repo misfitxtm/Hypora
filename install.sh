@@ -1089,8 +1089,17 @@ done
 # /usr/local/bin/hypora-greeter does not exist until the loop above puts it there. Running
 # the copy in $REPO instead would mean executing a user-writable file as root, which is the
 # one thing the root-owned split exists to prevent.
-primary=$(sed -nE 's/^HYPORA_PRIMARY[[:space:]]*=[[:space:]]*"([A-Za-z][A-Za-z0-9-]*)".*/\1/p' \
-    "$CONF/hypr/monitors.lua" 2>/dev/null | head -1)
+#
+# Guarded on the file existing rather than relying on `2>/dev/null`. That hides sed's
+# message but not its exit status, pipefail carries it through the pipe, and set -e then
+# aborts the whole install on the assignment. A machine that has never opened Display
+# Settings has no monitors.lua — which is every fresh install and every single-monitor
+# laptop, so this failed for everyone except the one desktop it was written on.
+primary=""
+if [ -f "$CONF/hypr/monitors.lua" ]; then
+    primary=$(sed -nE 's/^HYPORA_PRIMARY[[:space:]]*=[[:space:]]*"([A-Za-z][A-Za-z0-9-]*)".*/\1/p' \
+        "$CONF/hypr/monitors.lua" | head -1 || true)
+fi
 if [ -n "$primary" ] && [ -d /usr/share/sddm/themes/hypora ]; then
     log "Sending the login screen to $primary"
     sudo /usr/local/bin/hypora-greeter set "$primary" \
