@@ -1456,4 +1456,8 @@ cat <<'EOF'
    hyprctl configerrors       problems in hyprland.lua
    hypora-hardware probe      hardware with no driver, firmware or radio
 
+ Hyprland's own log is NOT in journalctl (it sets debug.enable_stdout_logs = 0):
+
+   cat /run/user/$UID/hypr/*/hyprland.log
+
 EOF
