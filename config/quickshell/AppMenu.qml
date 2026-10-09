@@ -26,9 +26,9 @@ Rectangle {
         onClicked: drop.open = true
     }
 
-    // One menu per bar; IPC toggles the one on the first screen
+    // One menu per bar; IPC toggles the one on the main display
     IpcHandler {
-        enabled: root.window.screen === Quickshell.screens[0]
+        enabled: ShellState.isPrimary(root.window.screen)
         target: "menu"
         function toggle(): void { drop.open = !drop.open }
     }

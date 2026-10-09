@@ -55,19 +55,44 @@ If another desktop environment or window manager is installed, the installer nam
 
 ```
 hypora-replace-de list              # what is installed, and what removing it would take
+hypora-replace-de check             # leftovers and PAM damage, changes nothing
 sudo hypora-replace-de remove       # asks first, and shows the full plan
 ```
 
 Recognises GNOME, KDE Plasma, Xfce, Cinnamon, MATE, LXQt, Budgie, COSMIC, Sway and i3.
 
-**Only the session is removed** — the shell, the session manager, the greeter. Not the applications, and emphatically not the settings schemas, because Hypora is built on top of several of them:
+Removal runs in **three phases**, because the first alone leaves most of the desktop on disk:
+
+| Phase | What goes | Why it is separate |
+|---|---|---|
+| 1. Session | The shell, session manager, greeter | The pieces that make it a desktop rather than a pile of apps |
+| 2. Leftovers | Every remaining package belonging to that desktop that nothing Hypora keeps still needs | Removing `gnome-shell` leaves `gnome-weather`, `gnome-logs`, `gnome-settings-daemon` and two dozen more, because nothing ever depended on them |
+| 3. Orphans | `dnf autoremove` | The libraries that only existed to serve what just left — `gjs`, `mozjs`, `webkit` and so on |
+
+On a real Fedora Workstation machine the three phases together removed **47 packages and freed 251 MiB** that phase 1 alone left behind. Use `--session-only` for the old narrow behaviour, or `--no-autoremove` to skip phase 3.
+
+**The settings schemas and Hypora's own applications are never removed**, because Hypora is built on top of several of them:
 
 - `gsettings-desktop-schemas` provides `org.gnome.desktop.interface`, which `bin/hypora-theme` writes, and `org.gnome.desktop.privacy`, which the Security window reads. Lose it and theming stops working and two rows of that window go blank.
 - `nautilus`, `gnome-calculator`, `gnome-disk-utility`, `gnome-software` and `adw-gtk3-theme` are installed by Hypora deliberately.
 
-So "remove GNOME" here means `gnome-shell` and `gnome-session`, not GNOME.
+So "remove GNOME" here means the session and its leftovers, not the component layer underneath.
 
-Three things make that safe rather than hopeful:
+### What makes phase 2 safe is the closure, not the name
+
+A package being called `gnome-*` says nothing about whether Hypora needs it. `nautilus` requires `libgnome-autoar-0.so.0` and `libgnome-desktop-4.so.2`; `gnome-software` requires `gnome-app-list`. Query those by package name with `rpm -q --whatrequires` and they look like leaves, because the dependency is on a soname rather than a name — so a name-based sweep would mark them removable and take Nautilus with them.
+
+So before anything is proposed, the full `requires` closure of the keep list is walked with `rpm` and subtracted. Names pick candidates; the closure vetoes them. The same filter is what stops a false positive: on a machine that never had Plasma, eight `kf6-*` Frameworks libraries match the KDE patterns — they arrive as Qt dependencies, one of them via `f44-backgrounds-base`. A separate `evidence` list, naming packages only that desktop's own install brings, decides whether the desktop was ever there at all.
+
+### What makes phase 3 safe is `dnf mark user`
+
+`autoremove` removes anything installed as a dependency that nothing requires any more, and after a desktop leaves, that describes several things Hypora needs: `gsettings-desktop-schemas` and `xorg-x11-server-Xwayland` are both reason `Dependency` on a stock install.
+
+This is not hypothetical. On the machine this was developed against, a plain `dnf autoremove` run by hand after removing `gnome-shell` took **`gnome-keyring-pam` and `gcr`** with it. That disables [keyring auto-unlock](security.md#secrets-and-the-keyring) *silently*: `authselect` leaves the PAM stack referencing `pam_gnome_keyring.so`, and because those lines are `optional` and prefixed with `-`, PAM skips the missing module without even logging it. Login works. The keyring just never unlocks, and nothing anywhere says why.
+
+So every installed keep-list package is marked user-installed before phase 1 starts — which takes it out of autoremove's reach permanently, including a later `dnf autoremove` you run by hand — and the keep list is passed as `--exclude` as well. `hypora-replace-de check` reports that specific damage if it has already happened, with the command to repair it.
+
+Three further things make the whole operation safe rather than hopeful:
 
 - **The plan is printed before anything happens**, including every package the dependency chain would drag along. That list is worth reading. Two entries in it were found exactly this way and are now permanently excluded: `xorg-x11-server-Xwayland`, without which no X11 application runs under Hyprland, and `gnome-keyring-pam`, which provides the `pam_gnome_keyring.so` that [keyring auto-unlock](security.md#secrets-and-the-keyring) depends on. Neither has a name that suggests GNOME owns it.
 - **It refuses if you are running the desktop in question.** Removing a shell out from under a live session takes the terminal the command was typed into with it, part-way through a dnf transaction. Running the installer from a GNOME terminal is the normal case, so expect that refusal — reboot into Hypora and run it again.

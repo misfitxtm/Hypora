@@ -1,23 +1,44 @@
 #!/usr/bin/env python3
-"""hypora-replace-de: remove another desktop's shell, keeping what Hypora needs.
+"""hypora-replace-de: remove another desktop, keeping what Hypora needs.
 
-    hypora-replace-de list      what else is installed, and what removing it would take
-    hypora-replace-de remove    remove it (needs root; asks first)
+    hypora-replace-de list            what's installed, and what removing it would take
+    hypora-replace-de remove          remove it (needs root; asks first)
     hypora-replace-de remove --yes
+    hypora-replace-de remove --session-only   just the shell/session, no sweep
+    hypora-replace-de remove --no-autoremove  skip the orphan sweep
+    hypora-replace-de check           report leftovers and PAM damage without changing anything
 
-Only the **session** is removed — the shell, the session manager, the greeter. Never the
-applications or the schemas, because Hypora is built on top of some of them:
+Removal happens in three phases, because one phase alone leaves a mess:
 
-  * gsettings-desktop-schemas provides org.gnome.desktop.interface, which bin/hypora-theme
-    writes, and org.gnome.desktop.privacy, which the Security window reads. Losing it
-    breaks theming and two rows of that window.
-  * nautilus, gnome-calculator, gnome-disk-utility, gnome-software and adw-gtk3-theme are
-    installed by Hypora on purpose.
+  1. **Session** — the shell, session manager and greeter. The pieces that make it a
+     desktop rather than a pile of apps.
+  2. **Leftovers** — every remaining package whose name belongs to that desktop and that
+     nothing Hypora keeps still needs. This is the phase that was missing: removing
+     gnome-shell leaves gnome-weather, gnome-logs, gnome-settings-daemon and two dozen
+     more sitting on disk, because nothing depended on them in the first place.
+  3. **Orphans** — `dnf autoremove`, for the libraries that only existed to serve what
+     just left (gjs, mozjs, webkit, and so on).
 
-So "remove GNOME" here means gnome-shell and gnome-session, not GNOME. Anything on the
-keep list is passed to dnf as an explicit exclude, and the plan is printed for you to read
-before anything happens — because the way this goes wrong is a dependency chain quietly
-taking a schema package with it, and you only find out when your theme stops applying.
+**What makes phase 2 safe is the dependency closure, not the name.** A package being
+called gnome-* says nothing about whether Hypora needs it: nautilus requires
+libgnome-autoar-0.so.0 and libgnome-desktop-4.so.2, and gnome-software requires
+gnome-app-list. So before anything is proposed for removal, this walks the full requires
+closure of the keep list with rpm and subtracts it. Name matching picks candidates;
+the closure vetoes them.
+
+**What makes phase 3 safe is `dnf mark user`.** `autoremove` removes packages that are
+installed as dependencies and no longer required — and after a desktop leaves, that
+describes several things Hypora needs. On a real machine a plain `dnf autoremove` after
+removing gnome-shell took `gnome-keyring-pam` and `gcr` with it, which silently disables
+keyring auto-unlock: the PAM stack keeps referencing pam_gnome_keyring.so, the line is
+`optional` and prefixed with `-`, so login still works and nothing is logged. You find
+out when your keyring stops unlocking. So every keep-list package that is installed gets
+marked user-installed first, which takes it out of autoremove's reach, and the keep list
+is passed as excludes as well.
+
+Nothing is removed without printing the plan first, including collateral, because the way
+this goes wrong is a dependency chain quietly taking a schema package with it and you only
+find out when your theme stops applying.
 """
 import os
 import re
@@ -26,59 +47,102 @@ import shutil
 import subprocess
 import sys
 
-# marker package -> (display name, the session packages to remove)
+# marker package -> (display name, session packages, name patterns for the leftover sweep)
 #
-# The marker is what proves the desktop is installed. The removal list is deliberately
-# short: the pieces that start and run a session, and its greeter. Toolkit libraries,
-# file managers, terminals and settings apps are all left alone — they are useful on
-# their own and removing them is how a "replace the desktop" turns into a broken system.
+# The marker proves the desktop is installed. The session list is the pieces that start and
+# run a session. The patterns are what phase 2 sweeps: deliberately broad, because the
+# closure filter below is what decides, not the name. A pattern matching something Hypora
+# needs is harmless; a pattern missing a leftover means it stays on disk forever.
+#
+# `evidence` is separate from `sweep` and does the opposite job: it decides whether this
+# desktop was ever installed at all. Sweeping on a name match alone produced a false
+# positive that would have proposed removing eight KDE Frameworks libraries from a machine
+# that never had Plasma — kf6-* arrives as a Qt dependency (one of them via
+# f44-backgrounds-base), so "a package called kf6-something is installed" says nothing.
+# Evidence names things only that desktop's own install brings.
 DESKTOPS = {
     "gnome-shell": ("GNOME", [
         "gnome-shell", "gnome-session", "gnome-initial-setup",
         "gnome-browser-connector", "gnome-shell-extension-common", "gdm",
-    ]),
+    ], ("gnome-", "libgnome", "gjs", "mutter", "gdm", "gnome-classic"),
+       ("gnome-shell", "gnome-session", "gdm", "mutter", "gnome-settings-daemon",
+        "gnome-initial-setup", "gnome-backgrounds", "gnome-classic",
+        "gnome-control-center", "gnome-tour")),
     "plasma-workspace": ("KDE Plasma", [
         "plasma-workspace", "plasma-desktop", "plasma-workspace-wayland",
         "kwin", "sddm-kcm", "plasma-nm", "kde-settings-plasma",
-    ]),
+    ], ("plasma-", "kde-", "kf5-", "kf6-", "kwin", "libkf5", "libkf6", "kactivit",
+        "polkit-kde", "dolphin", "konsole", "kscreen", "ksshaskpass", "kwallet"),
+       ("plasma-workspace", "plasma-desktop", "kwin", "kde-settings", "sddm-kcm",
+        "dolphin", "konsole", "kscreen", "plasma-nm")),
     "xfdesktop": ("Xfce", [
         "xfdesktop", "xfwm4", "xfce4-session", "xfce4-panel", "lightdm",
-    ]),
+    ], ("xfce", "xfwm", "xfdesktop", "xfconf", "libxfce", "thunar", "garcon",
+        "tumbler", "lightdm"),
+       ("xfce4-session", "xfwm4", "xfdesktop", "xfce4-panel", "thunar")),
     "cinnamon": ("Cinnamon", [
         "cinnamon", "cinnamon-session", "cinnamon-screensaver", "muffin",
-    ]),
+    ], ("cinnamon", "muffin", "nemo", "xapp", "xed", "xviewer", "xreader"),
+       ("cinnamon", "muffin", "nemo")),
     "mate-session-manager": ("MATE", [
         "mate-session-manager", "mate-panel", "marco", "mate-desktop",
-    ]),
+    ], ("mate-", "marco", "caja", "atril", "pluma", "eom"),
+       ("mate-session-manager", "mate-panel", "marco", "caja")),
     "lxqt-session": ("LXQt", [
         "lxqt-session", "lxqt-panel", "lxqt-runner", "openbox",
-    ]),
+    ], ("lxqt", "openbox", "obconf", "pcmanfm"),
+       ("lxqt-session", "lxqt-panel", "pcmanfm")),
     "budgie-desktop": ("Budgie", [
         "budgie-desktop", "budgie-desktop-view", "budgie-screensaver",
-    ]),
+    ], ("budgie",), ("budgie-desktop",)),
     "cosmic-session": ("COSMIC", [
         "cosmic-session", "cosmic-comp", "cosmic-panel", "cosmic-greeter",
-    ]),
-    "sway": ("Sway", ["sway", "swayidle", "swaylock"]),
-    "i3": ("i3", ["i3", "i3status", "i3lock"]),
+    ], ("cosmic",), ("cosmic-session", "cosmic-comp")),
+    "sway": ("Sway", ["sway", "swayidle", "swaylock"],
+             ("sway", "swayidle", "swaylock", "swaybg"), ("sway",)),
+    "i3": ("i3", ["i3", "i3status", "i3lock"],
+           ("i3-", "i3status", "i3lock"), ("i3", "i3status")),
 }
 
 # Never removed, whatever depends on what. This is the list that makes the difference
-# between replacing a desktop and breaking this one.
+# between replacing a desktop and breaking this one. Everything here is either installed
+# by install.sh on purpose or load-bearing for something that is.
 KEEP = [
-    "gsettings-desktop-schemas",      # org.gnome.desktop.* — theming and the Security window
-    "glib2", "gtk3", "gtk4", "libadwaita",
+    # Installed explicitly by install.sh — keep this block in step with its REQUIRED list
     "nautilus", "gvfs", "gnome-calculator", "gnome-disk-utility", "gnome-software",
-    "adw-gtk3-theme", "xdg-desktop-portal", "xdg-desktop-portal-gtk",
+    "adw-gtk3-theme", "gnome-keyring",
+    # org.gnome.desktop.* — theming (bin/hypora-theme) and the Security window
+    "gsettings-desktop-schemas",
+    # Toolkits and session services
+    "glib2", "gtk3", "gtk4", "libadwaita",
+    "xdg-desktop-portal", "xdg-desktop-portal-gtk",
     "polkit", "pipewire", "wireplumber", "NetworkManager",
     "sddm",                           # Hypora's own greeter
     "hyprland", "quickshell",
-    # Found by running the removal as a dry run and reading the dependency chain, which is
-    # the only way these surface — nothing about their names suggests GNOME owns them:
+    # Found by running the removal for real and reading what came back. Nothing about
+    # these names suggests a desktop owns them:
     "xorg-x11-server-Xwayland",       # every X11 app under Hyprland goes through this
-    "gnome-keyring", "gnome-keyring-pam", "gcr",   # pam_gnome_keyring.so lives here, and
-                                      # the keyring auto-unlock in install.sh needs it
+    "gnome-keyring-pam", "gcr", "gcr3",   # pam_gnome_keyring.so lives in -pam; losing it
+                                      # disables keyring auto-unlock *silently*
+    # Not desktop components at all, but they match the sweep patterns and removing them
+    # has consequences well outside the desktop:
+    "gnome-srpm-macros",              # redhat-rpm-config needs it; taking it uninstalls
+                                      # every *-srpm-macros and breaks rpm builds
+    "iio-sensor-proxy",               # ambient light and accelerometer, useful on laptops
+    "localsearch",                    # nautilus hard-requires it
+    # Not installed by install.sh, but a working part of something that is, and cheap:
+    "bluez-obexd",                    # Bluetooth file transfer, behind the Bluetooth window
+    #
+    # Deliberately NOT kept: `sushi`, Nautilus's space-bar preview. It is a GNOME package
+    # install.sh never asks for, and holding it holds gjs, mozjs140, javascriptcoregtk4.1
+    # and webkit2gtk4.1 with it — measured at 155 MiB to keep one preview pane, which is
+    # the wrong side of that trade. Add "sushi" here if you disagree; the closure does the
+    # rest and the whole web engine stays.
 ]
+
+# Reasons dnf gives for a package being present. Only these are autoremove's business;
+# "User" and "Group" are not, which is why phase 3 marks the keep list "user".
+DEP_REASONS = ("dependency", "weak-dependency", "weak dependency")
 
 
 def run(cmd, timeout=120):
@@ -89,35 +153,85 @@ def run(cmd, timeout=120):
         return 1, str(e)
 
 
+def rpm_q(args, timeout=60):
+    """rpm query returning a list of non-empty lines. Local, so no network and no cache."""
+    rc, out = run(["rpm"] + args, timeout=timeout)
+    return [l.strip() for l in out.splitlines() if l.strip() and "no package" not in l]
+
+
 def installed(pkg):
     return run(["rpm", "-q", pkg], timeout=20)[0] == 0
 
 
-def detected():
-    """[(name, marker, [packages actually installed from its removal list])]"""
-    out = []
-    for marker, (name, pkgs) in sorted(DESKTOPS.items()):
-        if not installed(marker):
-            continue
-        present = [p for p in pkgs if installed(p)]
-        out.append((name, marker, present))
-    return out
+def installed_names():
+    return set(rpm_q(["-qa", "--qf", "%{NAME}\n"]))
 
 
-def running_desktop():
-    """What session is running right now, lowercased, or ''."""
-    return (os.environ.get("XDG_CURRENT_DESKTOP")
-            or os.environ.get("DESKTOP_SESSION") or "").lower()
+def requires_closure(roots, present):
+    """Every installed package `roots` transitively need, including the roots.
 
+    Walked with rpm rather than dnf for three reasons: it is local (no metadata download
+    in the middle of a removal), it resolves sonames and file dependencies properly, and
+    it returns data instead of English prose that changes between dnf versions.
 
-def is_running(name):
-    """Are we inside the desktop we are being asked to remove?
-
-    Checked because removing the shell out from under a running session takes the terminal
-    the command was typed into with it, part-way through a dnf transaction.
+    Resolving capabilities matters more than it looks. `rpm -q --whatrequires gnome-autoar`
+    reports nothing, because nautilus asks for libgnome-autoar-0.so.0()(64bit), not for a
+    package name. Querying by name alone would mark gnome-autoar a leaf and remove
+    nautilus along with it.
     """
-    cur = running_desktop()
-    return bool(cur) and (name.lower().split()[0] in cur)
+    seen = {r for r in roots if r in present}
+    frontier = sorted(seen)
+    while frontier:
+        caps = []
+        for line in rpm_q(["-q", "--requires"] + frontier):
+            cap = line.split()[0]
+            # rpmlib() and config() are satisfied by rpm itself, not by packages
+            if cap and not cap.startswith(("rpmlib(", "config(")):
+                caps.append(cap)
+        providers = set()
+        for i in range(0, len(caps), 200):      # argv limit, and rpm is faster in batches
+            providers |= set(rpm_q(["-q", "--whatprovides", "--qf", "%{NAME}\n"]
+                                   + caps[i:i + 200]))
+        new = (providers & present) - seen
+        seen |= new
+        frontier = sorted(new)
+    return seen
+
+
+def leftovers(patterns, present, protected):
+    """Installed packages matching this desktop's patterns that nothing kept still needs."""
+    return sorted(n for n in present
+                  if n.startswith(tuple(patterns))
+                  and n not in protected
+                  and n not in KEEP)
+
+
+def install_reason(pkg):
+    rc, out = run(["dnf", "repoquery", "--installed", "--qf", "%{reason}", pkg], timeout=60)
+    return out.strip().splitlines()[0].strip().lower() if rc == 0 and out.strip() else ""
+
+
+def mark_user(pkgs):
+    """Take the keep list out of autoremove's reach.
+
+    autoremove's rule is "installed as a dependency and nothing requires it any more",
+    which after a desktop leaves describes gsettings-desktop-schemas (reason: Dependency),
+    Xwayland (Dependency) and the group-installed apps. Marking them user-installed is the
+    only durable fix; --exclude only covers the one command you remember to put it on.
+    """
+    pkgs = [p for p in pkgs if installed(p)]
+    if not pkgs:
+        return
+    at_risk = [p for p in pkgs if install_reason(p) in DEP_REASONS]
+    rc, out = run(["dnf", "mark", "user", "--skip-unavailable"] + pkgs, timeout=180)
+    if rc != 0:
+        print(f"Warning: could not mark packages user-installed, so `dnf autoremove` may "
+              f"still take them. Skipping the orphan sweep would be safer.\n{out[-500:]}",
+              file=sys.stderr)
+        return False
+    print(f"Marked {len(pkgs)} keep-list packages user-installed"
+          + (f" ({len(at_risk)} were at risk: {' '.join(sorted(at_risk))})" if at_risk else ""))
+    return True
 
 
 PROTECTED_D = Path("/etc/dnf/protected.d")
@@ -163,17 +277,21 @@ class protection_lifted:
         return False
 
 
+def excludes():
+    return [f"--exclude={p}" for p in KEEP]
+
+
 def plan(pkgs):
     """What dnf would actually remove, asked without doing it.
 
-    The point of showing this is the dependency chain. Removing gnome-shell can pull in
-    things nobody intended, and the only way to know is to ask dnf and read the answer.
+    Returns (removing, raw). `removing` is None when dnf refused outright — which it does
+    when a candidate is required by an excluded package, naming the conflict in the text.
+    That should not happen now the closure filter runs first, but if the closure and dnf
+    ever disagree, dnf wins and the operator gets to read why.
     """
-    rc, out = run(["dnf", "remove", "--assumeno"] + pkgs + [f"--exclude={p}" for p in KEEP],
-                  timeout=180)
-    if "protected packages" in out:
+    rc, out = run(["dnf", "remove", "--assumeno"] + pkgs + excludes(), timeout=300)
+    if "protected packages" in out or "Failed to resolve" in out:
         return None, out
-    # --assumeno always exits non-zero; the transaction summary is still in the output
     removing = []
     in_list = False
     for line in out.splitlines():
@@ -190,92 +308,260 @@ def plan(pkgs):
     return removing, out
 
 
+def freed(raw):
+    m = re.search(r"After this operation, ([\d.]+\s*[KMG]i?B) will be freed", raw)
+    return m.group(1) if m else None
+
+
+def running_desktop():
+    """What session is running right now, lowercased, or ''."""
+    return (os.environ.get("XDG_CURRENT_DESKTOP")
+            or os.environ.get("DESKTOP_SESSION") or "").lower()
+
+
+def is_running(name):
+    """Are we inside the desktop we are being asked to remove?
+
+    Checked because removing the shell out from under a running session takes the terminal
+    the command was typed into with it, part-way through a dnf transaction.
+    """
+    cur = running_desktop()
+    return bool(cur) and (name.lower().split()[0] in cur)
+
+
+def detected(present=None, protected=None):
+    """[(name, marker, session packages installed, sweep patterns)]
+
+    A desktop counts as present when its marker is installed *or* when the marker is gone
+    but its packages are not. The second case is the normal state of a machine where
+    someone removed gnome-shell — by hand, or with an older version of this script that
+    only did phase 1. Keying detection off the marker alone made those leftovers
+    permanently invisible: the one command meant to clean them up reported "no other
+    desktop environment is installed" and exited.
+    """
+    present = present if present is not None else installed_names()
+    if protected is None:
+        protected = requires_closure(KEEP, present)
+    out = []
+    for marker, (name, pkgs, patterns, evidence) in sorted(DESKTOPS.items()):
+        session = [p for p in pkgs if p in present]
+        proven = (marker in present or bool(session)
+                  or any(n.startswith(tuple(evidence)) for n in present))
+        if proven and (session or leftovers(patterns, present, protected)):
+            out.append((name, marker, session, patterns))
+    return out
+
+
+PAM_MODULE = "pam_gnome_keyring.so"
+
+
+def pam_damage():
+    """PAM files referencing pam_gnome_keyring.so when the module isn't installed.
+
+    This is the failure that motivated phase 3's mark-user step, and it is invisible: the
+    lines authselect writes are `optional` and prefixed with `-`, which tells PAM to skip a
+    missing module without even logging it. Login works, the keyring just never unlocks.
+    """
+    have = any(Path(p).exists() for p in
+               ("/usr/lib64/security/" + PAM_MODULE, "/usr/lib/security/" + PAM_MODULE))
+    if have:
+        return []
+    hits = []
+    pamd = Path("/etc/pam.d")
+    if pamd.is_dir():
+        for f in sorted(pamd.iterdir()):
+            try:
+                if f.is_file() and PAM_MODULE in f.read_text():
+                    hits.append(f.name)
+            except OSError:
+                continue
+    return hits
+
+
+def report_pam():
+    hits = pam_damage()
+    if not hits:
+        return True
+    sys.stdout.flush()
+    print(f"\nWARNING: {PAM_MODULE} is referenced by /etc/pam.d/{{{','.join(hits)}}} but the "
+          f"module is not installed, so keyring auto-unlock is silently doing nothing.",
+          file=sys.stderr)
+    print("Fix with: sudo dnf install gnome-keyring-pam gcr", file=sys.stderr)
+    return False
+
+
+def cmd_check():
+    present = installed_names()
+    protected = requires_closure(KEEP, present)
+    found = detected(present, protected)
+    if not found:
+        print("No other desktop environment or window manager is installed.")
+    else:
+        for name, marker, pkgs, patterns in found:
+            extra = leftovers(patterns, present, protected)
+            print(f"{name} (detected by {marker})")
+            print(f"  session packages still installed: {len(pkgs)}")
+            print(f"  leftover packages                : {len(extra)}")
+            if extra:
+                print(f"    {' '.join(extra)}")
+    rc, out = run(["dnf", "autoremove", "--assumeno"] + excludes(), timeout=300)
+    n = len(re.findall(r"^\s*\S+\s+\S+\s+\S+", out, re.M)) if "Nothing to do" not in out else 0
+    print(f"\nOrphaned packages `dnf autoremove` would take: "
+          f"{'none' if 'Nothing to do' in out else 'some — run remove to see the plan'}")
+    ok = report_pam()
+    return 0 if ok else 1
+
+
 def cmd_list():
-    found = detected()
+    present = installed_names()
+    protected = requires_closure(KEEP, present)
+    found = detected(present, protected)
     if not found:
         print("No other desktop environment or window manager is installed.")
         return 1
-    cur = running_desktop()
-    for name, marker, pkgs in found:
+    for name, marker, pkgs, patterns in found:
         mark = "  (currently running)" if is_running(name) else ""
+        extra = leftovers(patterns, present, protected)
         print(f"{name}{mark}")
-        print(f"  detected by : {marker}")
-        print(f"  would remove: {' '.join(pkgs)}")
+        print(f"  detected by  : {marker}")
+        print(f"  session      : {' '.join(pkgs) or '(none installed)'}")
+        print(f"  leftovers    : {' '.join(extra) or '(none)'}")
+        held = sorted(n for n in present
+                      if n.startswith(tuple(patterns)) and (n in protected or n in KEEP))
+        print(f"  kept ({len(held)}): {' '.join(held)}")
+    cur = running_desktop()
     if cur:
         print(f"\nCurrent session: {cur}")
-    print(f"\nAlways kept: {' '.join(KEEP[:6])} and {len(KEEP) - 6} more")
     return 0
 
 
-def cmd_remove(assume_yes=False):
+def confirm(question, assume_yes):
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        print("Not a terminal and --yes not given; nothing removed.", file=sys.stderr)
+        return False
+    return input(f"{question} [y/N] ").strip().lower().startswith("y")
+
+
+def do_remove(label, pkgs, marker, assume_yes):
+    """Dry-run, show the plan with collateral, confirm, remove. True if it ran."""
+    with protection_lifted(protection_file(marker)):
+        removing, raw = plan(pkgs)
+    if removing is None:
+        print(f"dnf refused the {label} transaction; nothing removed. It said:\n"
+              f"{raw[-1500:]}", file=sys.stderr)
+        return False
+    if not removing:
+        print(f"Nothing to remove for {label}.")
+        return False
+
+    collateral = [p for p in removing if p not in pkgs]
+    space = freed(raw)
+    print(f"\n{label}: {len(removing)} packages"
+          + (f", {space} freed" if space else ""))
+    print(f"  requested ({len(pkgs)}): {' '.join(pkgs)}")
+    if collateral:
+        print(f"  pulled in by dependencies ({len(collateral)}):")
+        for i in range(0, len(collateral), 4):
+            print("    " + "  ".join(f"{p:<28}" for p in sorted(collateral)[i:i + 4]).rstrip())
+        print("  Read that list. Anything there that you use is a reason to stop.")
+
+    if not confirm(f"Remove these {len(removing)} packages?", assume_yes):
+        print(f"Left {label} alone.")
+        return False
+
+    with protection_lifted(protection_file(marker)):
+        rc, out = run(["dnf", "remove", "-y"] + pkgs + excludes(), timeout=3600)
+    if rc != 0:
+        print(f"Could not complete {label}:\n{out[-1500:]}", file=sys.stderr)
+        return False
+    print(f"{label}: done.")
+    return True
+
+
+def cmd_remove(assume_yes=False, session_only=False, do_autoremove=True):
     if os.geteuid() != 0:
         sys.exit("This removes packages, so it needs root:\n    sudo hypora-replace-de remove")
 
-    found = detected()
+    present = installed_names()
+    found = detected(present)
     if not found:
         print("No other desktop environment or window manager is installed.")
         return 0
 
-    critical = ("gsettings-desktop-schemas", "nautilus", "gnome-calculator",
-                "xorg-x11-server-Xwayland", "gnome-keyring-pam", "sddm", "hyprland")
-    before = [p for p in critical if installed(p)]
+    # What to check survived afterwards. Compared against what was present *before*, not
+    # against KEEP in the abstract: reporting a package as missing when it was never
+    # installed is crying wolf, and the one warning that matters would be lost in it.
+    before = [p for p in KEEP if p in present]
 
-    for name, _marker, pkgs in found:
-        print(f"\n--- {name} ---")
+    # Phase 3 relies on this, but do it up front: if the removal is interrupted half way,
+    # the keep list is already protected from a later autoremove run by hand.
+    if do_autoremove:
+        mark_user(KEEP)
+
+    protected = requires_closure(KEEP, present)
+    touched = False
+
+    for name, marker, pkgs, patterns in found:
+        print(f"\n=== {name} ===")
         if is_running(name):
             print(f"Skipping: you are running {name} right now. Removing the shell out from "
                   "under a live session takes the terminal with it, part-way through a dnf "
                   "transaction. Reboot into Hypora and run this again.", file=sys.stderr)
             continue
 
-        with protection_lifted(protection_file(_marker)):
-            removing, raw = plan(pkgs)
-        if removing is None:
-            print(f"dnf still reports {name} as protected; not touching it.", file=sys.stderr)
-            continue
-        if not removing:
-            print(f"dnf would not remove anything for {name}; leaving it alone.")
-            continue
+        if pkgs:
+            touched |= do_remove(f"{name} session", pkgs, marker, assume_yes)
+        else:
+            print(f"{name}'s session is already gone; sweeping what it left behind.")
 
-        collateral = [p for p in removing if p not in pkgs]
-        print(f"Removing: {' '.join(pkgs)}")
-        if collateral:
-            print(f"Pulled in by dependencies ({len(collateral)}):")
-            for p in sorted(collateral):
-                print(f"    {p}")
-            print("Read that list. Anything there that you use is a reason to stop.")
-
-        if not assume_yes:
-            if not sys.stdin.isatty():
-                print("Not a terminal and --yes not given; nothing removed.", file=sys.stderr)
-                continue
-            answer = input(f"Remove {name}? [y/N] ").strip().lower()
-            if not answer.startswith("y"):
-                print(f"Left {name} alone.")
-                continue
-
-        with protection_lifted(protection_file(_marker)):
-            rc, out = run(["dnf", "remove", "-y"] + pkgs
-                          + [f"--exclude={p}" for p in KEEP], timeout=1800)
-        if rc != 0:
-            print(f"Could not remove {name}:\n{out[-1200:]}", file=sys.stderr)
+        if session_only:
             continue
-        print(f"{name} removed.")
+        # Re-probe: the session removal just changed what is installed, so leftovers
+        # computed before it would list packages that are already gone.
+        now = installed_names()
+        extra = leftovers(patterns, now, requires_closure(KEEP, now))
+        if extra:
+            touched |= do_remove(f"{name} leftovers", extra, marker, assume_yes)
+        else:
+            print(f"No {name} leftovers to sweep.")
+
+    if do_autoremove:
+        print("\n=== orphaned dependencies ===")
+        rc, out = run(["dnf", "autoremove", "--assumeno"] + excludes(), timeout=600)
+        if "Nothing to do" in out:
+            print("Nothing orphaned.")
+        else:
+            space = freed(out)
+            print(f"`dnf autoremove` would remove packages"
+                  + (f", freeing {space}" if space else "") + ".")
+            print("These are libraries nothing requires any more. The keep list is marked "
+                  "user-installed and passed as excludes, so it is not eligible.")
+            if confirm("Run dnf autoremove?", assume_yes):
+                rc, out = run(["dnf", "autoremove", "-y"] + excludes(), timeout=3600)
+                if rc != 0:
+                    print(f"autoremove failed:\n{out[-1000:]}", file=sys.stderr)
+                else:
+                    print("Orphans removed.")
+                    touched = True
+            else:
+                print("Left orphans in place.")
 
     # Verify the things Hypora needs are still here, because the whole risk of this
     # operation is that one of them left quietly as a dependency.
-    #
-    # Compared against what was present *before*, not against the list in the abstract:
-    # reporting a package as missing when it was never installed is crying wolf, and the
-    # one warning that matters here would be lost among the noise.
     missing = [p for p in before if not installed(p)]
+    ok = True
     if missing:
         print(f"\nWARNING: these are gone and Hypora needs them: {' '.join(missing)}",
               file=sys.stderr)
         print(f"Put them back with: sudo dnf install {' '.join(missing)}", file=sys.stderr)
-        return 1
-    print("\nChecked: the schemas and apps Hypora depends on are still installed.")
-    return 0
+        ok = False
+    elif touched:
+        print("\nChecked: the schemas and apps Hypora depends on are still installed.")
+    if not report_pam():
+        ok = False
+    return 0 if ok else 1
 
 
 def main(argv):
@@ -285,8 +571,12 @@ def main(argv):
         return 0
     if cmd == "list":
         return cmd_list()
+    if cmd == "check":
+        return cmd_check()
     if cmd == "remove":
-        return cmd_remove("--yes" in argv or "-y" in argv)
+        return cmd_remove(assume_yes="--yes" in argv or "-y" in argv,
+                          session_only="--session-only" in argv,
+                          do_autoremove="--no-autoremove" not in argv)
     print(__doc__, file=sys.stderr)
     return 2
 

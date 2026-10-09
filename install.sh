@@ -228,7 +228,14 @@ REQUIRED=(
     # Secret Service provider. GNOME's session starts one and Hyprland doesn't, so without
     # this an app looking for somewhere to keep a token finds no provider — and some then
     # fall back to writing it to disk unencrypted. Started from hyprland.lua.
-    gnome-keyring
+    #
+    # gnome-keyring-pam is a separate package on Fedora and ships pam_gnome_keyring.so,
+    # which is the whole mechanism behind the keyring auto-unlock enabled further down.
+    # Listing only gnome-keyring left the module absent while authselect happily wrote the
+    # PAM lines referencing it — and because those lines are `optional` and `-` prefixed,
+    # PAM skips a missing module without even logging it. Login worked and the keyring
+    # silently never unlocked. gcr provides the prompter it talks to.
+    gnome-keyring gnome-keyring-pam gcr
     # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
     papirus-icon-theme breeze-icon-theme
@@ -1048,9 +1055,10 @@ mv "$NEW_MANIFEST" "$MANIFEST"
 if "$REPO/bin/hypora-replace-de" list >/dev/null 2>&1; then
     printf '\n'
     "$REPO/bin/hypora-replace-de" list >&2
-    printf '\n%s\n%s\n' \
-        "Hypora can remove that desktop's shell and session. Its applications and settings" \
-        "schemas are kept — Hypora is built on some of them and would break without them." >&2
+    printf '\n%s\n%s\n%s\n' \
+        "Hypora can remove that desktop: its session, the packages it left lying around," \
+        "and the orphaned libraries behind them. The applications and settings schemas" \
+        "Hypora itself uses are kept — it is built on some of them and would break." >&2
     if [ -t 0 ] && [ "${REPLACE_DE:-}" != no ]; then
         read -r -p "Remove it now? [y/N] " answer
         case "$answer" in
