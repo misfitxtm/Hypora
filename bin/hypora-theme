@@ -26,6 +26,12 @@ list() {
 
 if [ $# -eq 0 ]; then list; exit 0; fi
 NAME=$1
+# The same rule the root helpers apply to current/name, which this writes: checking it here
+# means a bad name is refused where it was typed, not later by something running as root.
+if ! [[ $NAME =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,63}$ ]]; then
+    echo "Not a plain theme name: '$NAME'" >&2
+    exit 1
+fi
 COLORS="$THEMES/$NAME/colors.toml"
 if [ ! -f "$COLORS" ]; then
     { echo "No theme named '$NAME'. Installed themes:"; list; } >&2
@@ -37,13 +43,34 @@ value() { sed -nE "s/^$1[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\1/p" "$COLORS"
 # Icon theme: whatever you picked in the menu (Style > Icons) wins over the palette's
 # default, so switching colour theme doesn't quietly change your icons back.
 icon_theme() {
-    local chosen; chosen=$(cat "$DIR/icons" 2>/dev/null)
+    local chosen=$ICONS_CHOSEN
     if [ -n "$chosen" ] && [ -d "/usr/share/icons/$chosen" -o -d "$HOME/.local/share/icons/$chosen" ]; then
         echo "$chosen"
     else
         value icon_theme
     fi
 }
+
+# ---------- validate ----------
+# Every value below is pasted into a sed script, and GNU sed's `e` flag runs text as a shell
+# command — so a value carrying `|` could break out of its substitution and run anything.
+# A colors.toml is something people share, which makes it untrusted input. Values are either
+# a colour or a plain name (fonts, GTK and icon themes, modes); refuse anything else rather
+# than trying to escape it.
+while read -r key val; do
+    if ! [[ $val =~ ^#[0-9a-fA-F]{6}$ || $val =~ ^[A-Za-z0-9\ ._+-]*$ ]]; then
+        echo "Refusing theme '$NAME': '$key' has an unexpected value: $val" >&2
+        echo "Values must be a #rrggbb colour or a plain name." >&2
+        exit 1
+    fi
+done < <(sed -nE 's/^([a-z_]+)[[:space:]]*=[[:space:]]*"([^"]*)".*/\1 \2/p' "$COLORS")
+
+# The icon theme comes from its own file and lands in the same sed script
+ICONS_CHOSEN=$(cat "$DIR/icons" 2>/dev/null || true)
+if [ -n "$ICONS_CHOSEN" ] && ! [[ $ICONS_CHOSEN =~ ^[A-Za-z0-9\ ._+-]*$ ]]; then
+    echo "Ignoring $DIR/icons: '$ICONS_CHOSEN' is not a plain icon theme name" >&2
+    ICONS_CHOSEN=""
+fi
 
 # ---------- render ----------
 # Every `key = "value"` becomes {{ key }}; colors also get {{ key_hex }} without the '#'.

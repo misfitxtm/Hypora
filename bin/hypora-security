@@ -37,6 +37,45 @@ EFIVARS = Path("/sys/firmware/efi/efivars")
 SELINUX_CONFIG = Path("/etc/selinux/config")
 
 
+def atomic_write(path, text):
+    """Replace a file the boot depends on without ever leaving it half-written.
+
+    write_text truncates first, so a crash or power cut part-way through leaves an empty
+    fstab, grub default or kernel command line — a machine that boots to an emergency shell,
+    or not at all. Writing a sibling, flushing it to disk and renaming it over the original
+    means the file is always either the old version or the new one, because a rename is
+    atomic. Mode and owner are carried over, and the SELinux label is restored: a new file
+    takes its directory's label, which is not always the one the original had.
+    """
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.hypora-tmp")
+    st = path.stat() if path.exists() else None
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if st:
+            os.chown(tmp, st.st_uid, st.st_gid)
+            os.chmod(tmp, st.st_mode & 0o7777)
+        else:
+            os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    dfd = os.open(path.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+    try:
+        subprocess.run(["restorecon", str(path)], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def run(cmd, timeout=10):
     """(returncode, stdout) — never raises."""
     try:
@@ -665,7 +704,7 @@ def set_selinux_boot(mode):
     new, n = re.subn(r"^\s*SELINUX\s*=\s*\w+", f"SELINUX={mode}", text, count=1, flags=re.M)
     if n == 0:
         new = text.rstrip("\n") + f"\nSELINUX={mode}\n"
-    SELINUX_CONFIG.write_text(new)
+    atomic_write(SELINUX_CONFIG, new)
     # Ask for a relabel so the next boot can actually enforce
     if mode in ("enforcing", "permissive"):
         Path("/.autorelabel").touch()
@@ -801,7 +840,7 @@ def add_swapfile(arg=""):
         if text and not text.endswith("\n"):
             text += "\n"
         text += f"{SWAPFILE} none swap defaults,nofail 0 0\n"
-        FSTAB.write_text(text)
+        atomic_write(FSTAB, text)
     run(["systemctl", "daemon-reload"])
 
     print(f"{SWAPFILE} created ({size}) and active. It is inside the encrypted root, so it "
@@ -821,11 +860,15 @@ def _create_swapfile(st, size):
         rc, out = run(["btrfs", "filesystem", "mkswapfile", "--size", size, str(SWAPFILE)],
                       timeout=300)
         if rc != 0:
+            # A failure part-way can leave a partial file, and add_swapfile refuses to run
+            # while one exists — so without this, every retry would say "already exists".
+            SWAPFILE.unlink(missing_ok=True)
             sys.exit(f"Could not create the swapfile: {out.strip()[:300]}")
     else:
         SWAP_SUBVOL.mkdir(parents=True, exist_ok=True)
         rc, out = run(["fallocate", "-l", size, str(SWAPFILE)], timeout=300)
         if rc != 0:
+            SWAPFILE.unlink(missing_ok=True)
             sys.exit(f"Could not allocate {SWAPFILE}: {out.strip()[:200]}")
         os.chmod(SWAPFILE, 0o600)
         rc, out = run(["mkswap", str(SWAPFILE)], timeout=120)
@@ -840,12 +883,20 @@ def remove_swapfile(arg=""):
         print(f"No {SWAPFILE} to remove.")
         return
     run(["swapoff", str(SWAPFILE)], timeout=120)
+    # Asked of /proc/swaps rather than swapoff's exit code, which is also non-zero for a
+    # file that was never active. If it is still in use — swapoff fails when there is not
+    # enough free memory to take its pages back — stop here, with fstab and the file as
+    # they were, rather than report a removal that did not happen.
+    if swapfile_state()["active"]:
+        sys.exit(f"{SWAPFILE} is still in use, so nothing was changed. This usually means "
+                 "there is not enough free memory to take its contents back; close some "
+                 "applications and try again.")
 
     _backup(FSTAB)
     if FSTAB.exists():
         kept = [l for l in FSTAB.read_text().splitlines()
                 if not re.match(rf"^\s*{re.escape(str(SWAPFILE))}\s", l)]
-        FSTAB.write_text("\n".join(kept) + "\n")
+        atomic_write(FSTAB, "\n".join(kept) + "\n")
 
     SWAPFILE.unlink(missing_ok=True)
     run(["systemctl", "daemon-reload"])

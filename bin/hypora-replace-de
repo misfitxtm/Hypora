@@ -44,6 +44,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -274,22 +275,63 @@ def protection_file(marker):
     return None
 
 
+DISABLED_SUFFIX = ".hypora-disabled"
+
+
+def restore_stale_protection():
+    """Put back any protected.d file a previous run moved aside and never restored.
+
+    protection_lifted restores on any exit Python sees, but not on SIGKILL or a power cut
+    in the middle of a long dnf transaction. Checked at the start of every removal, before
+    protection_file() looks for markers — a file still sitting under its disabled name would
+    otherwise look like no protection at all. If the package has since reinstalled the
+    original, that copy is newer and wins.
+    """
+    if not PROTECTED_D.is_dir():
+        return
+    for moved in PROTECTED_D.glob(f"*.conf{DISABLED_SUFFIX}"):
+        original = moved.with_name(moved.name[:-len(DISABLED_SUFFIX)])
+        if original.exists():
+            moved.unlink()
+        else:
+            shutil.move(str(moved), str(original))
+            print(f"Restored {original}, left aside by an interrupted earlier run.")
+
+
 class protection_lifted:
-    """Move a protected.d file aside for the duration, and always put it back."""
+    """Move a protected.d file aside for the duration, and always put it back.
+
+    SIGHUP and SIGTERM are turned into a normal exit while it is held. Python's default
+    for both is to die on the spot without running __exit__, and SIGHUP is exactly what
+    closing the terminal sends — the likeliest way for a long removal to be cut short.
+    """
+
+    SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 
     def __init__(self, path):
         self.path = path
         self.moved = None
+        self.previous = {}
+
+    @staticmethod
+    def _exit(signum, frame):
+        raise SystemExit(128 + signum)
 
     def __enter__(self):
+        for s in self.SIGNALS:
+            self.previous[s] = signal.signal(s, self._exit)
         if self.path and self.path.is_file():
-            self.moved = self.path.with_suffix(".conf.hypora-disabled")
+            self.moved = self.path.with_name(self.path.name + DISABLED_SUFFIX)
             shutil.move(str(self.path), str(self.moved))
         return self
 
     def __exit__(self, *exc):
-        if self.moved and self.moved.is_file():
-            shutil.move(str(self.moved), str(self.path))
+        try:
+            if self.moved and self.moved.is_file():
+                shutil.move(str(self.moved), str(self.path))
+        finally:
+            for s, handler in self.previous.items():
+                signal.signal(s, handler)
         return False
 
 
@@ -590,6 +632,8 @@ def main(argv):
     if cmd == "check":
         return cmd_check()
     if cmd == "remove":
+        if os.geteuid() == 0:
+            restore_stale_protection()
         return cmd_remove(assume_yes="--yes" in argv or "-y" in argv,
                           session_only="--session-only" in argv,
                           do_autoremove="--no-autoremove" not in argv)
