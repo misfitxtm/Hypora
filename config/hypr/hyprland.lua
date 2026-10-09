@@ -85,14 +85,33 @@ hl.on("hyprland.start", function()
     --   error: [string "return hl.dispatch(movecursor 960 540)"]:1: ')' expected near '960'
     --   → Note: dispatch in lua is a shorthand for hl.dispatch(...)
     --
-    -- hl.dispatch takes the dispatcher and its arguments as one string. There is no
-    -- hl.dsp.focusmonitor: trying it first put `attempt to call a nil value` on the login
-    -- screen, because Hyprland reports the error even though pcall contains it.
+    -- Dispatched through hyprctl, deliberately, and NOT by calling hl.dispatch here.
     --
-    -- pcall stays so a future API change degrades to "starts on the wrong monitor" rather
-    -- than taking the rest of this config — every binding below it — down with it.
+    -- Three attempts got this wrong, each visibly:
+    --   1. `hyprctl dispatch focusmonitor NAME` — hyprctl wraps its argument in
+    --      hl.dispatch(...) and evaluates it as Lua, so this became the malformed
+    --      hl.dispatch(focusmonitor NAME). Silent no-op.
+    --   2. `hl.dsp.focusmonitor(NAME)` — no such member; `attempt to call a nil value`.
+    --   3. `pcall(hl.dispatch, ...)` — still raised a runtime Lua error that Hyprland
+    --      put on screen at every login, pcall notwithstanding.
+    --
+    -- The lesson from (3) is the important one: a Lua error raised in this file is the
+    -- compositor's problem and it will tell the user about it. hyprctl is a separate
+    -- process, so a wrong guess there prints to its own stdout and nobody sees a banner.
+    -- Quoting the dispatcher as a Lua *string* is what hyprctl's own error message asked
+    -- for: the text is evaluated, so it has to be an expression.
     if HYPORA_PRIMARY then
-        pcall(hl.dispatch, "focusmonitor " .. HYPORA_PRIMARY)
+        -- hl.dispatch takes a descriptor from hl.dsp.*, never a raw string. Lines further
+        -- down prove the shape: hl.dispatch(hl.dsp.focus({ workspace = ... })) and
+        -- hl.dsp.window.move({ monitor = ... }). Passing a string instead is what produced
+        -- the runtime error banner: the Lua call returned fine, then Hyprland failed while
+        -- processing the value, which pcall cannot catch because it is not a Lua throw.
+        --
+        -- Run through hyprctl rather than called here, until the descriptor is confirmed
+        -- on hardware: hyprctl is a separate process, so a wrong guess is a line in the
+        -- journal instead of a banner at every login. Move it in-process once proven.
+        hl.exec_cmd("hyprctl dispatch 'hl.dsp.focus({ monitor = \"" .. HYPORA_PRIMARY
+                    .. "\" })' 2>&1 | logger -t hypora-session")
     end
 end)
 
