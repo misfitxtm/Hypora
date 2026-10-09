@@ -119,6 +119,9 @@ Scope {
                 Keys.onEnterPressed: if (win.focused !== "") root.apply(win.focused)
                 // Anything else goes to the filter, so you can just start typing
                 Keys.onPressed: event => {
+                    // Before the filter catches everything: paging the carousel is a
+                    // navigation key, not something you meant to type.
+                    if (PageScroll.handle(event, carousel)) { event.accepted = true; return }
                     if (event.key === Qt.Key_Backspace) { win.filterText = win.filterText.slice(0, -1); event.accepted = true }
                     else if (event.text.length === 1 && event.text >= " ") { win.filterText += event.text; event.accepted = true }
                 }

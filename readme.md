@@ -204,7 +204,7 @@ One thing to know: **Nautilus hard-requires `localsearch`**, a background indexe
 - **Claude Code** comes from Anthropic's signed dnf repository (stable channel; `sudo dnf upgrade claude-code` to update) and needs a paid Claude plan. Answer ahead with `INSTALL_CLAUDE=yes ./install.sh`; a non-interactive run skips it, and a re-run detects an existing install rather than asking again. Run `claude` to log in; remove with `sudo dnf remove claude-code && sudo rm /etc/yum.repos.d/claude-code.repo`. The menu's **Tools > Claude Code** entry appears only when `claude` is on your `PATH`
 - Nothing else AI-related is installed, and nothing is installed without asking
 
-**Themes** — **Nord** (default), **Tokyo Night**, **Catppuccin Mocha**, **Gruvbox**, **Kanagawa** and **Osaka Jade**, each with its own wallpapers. Writing your own is a single `colors.toml`: see [Making a theme](docs/theming.md). A theme is one palette, `themes/<Name>/colors.toml`, applied everywhere: the Quickshell shell, kitty, Hyprland borders, hyprlock, GTK 3/4 (adw-gtk3 + libadwaita colours), Qt (qt6ct), the SDDM login screen, the Plymouth splash and the GRUB menu. Each theme's wallpapers live in `themes/<Name>/backgrounds/` and are copied to `~/.config/hypora/themes/<Name>/backgrounds/`; drop your own images in either place to add them to the rotation. Switch any time with the picker (**SUPER + ALT + T**) or `hypora-theme Gruvbox` (`hypora-theme` alone lists them). The shell, borders and terminals change immediately; other open apps pick it up when restarted.
+**Themes** — **Nord** (default), **Tokyo Night**, **Catppuccin Mocha**, **Gruvbox**, **Kanagawa** and **Osaka Jade**, each with its own wallpapers. Writing your own is a single `colors.toml`: see [Making a theme](docs/theming.md). A theme is one palette, `themes/<Name>/colors.toml`, applied everywhere: the Quickshell shell, kitty, Hyprland borders, hyprlock, GTK 3/4 (adw-gtk3 + libadwaita colours), Qt (qt6ct) — **including Qt apps that run as root**, such as btrfs-assistant, via `/etc/xdg/qt6ct` — the SDDM login screen, the Plymouth splash and the GRUB menu. Each theme's wallpapers live in `themes/<Name>/backgrounds/` and are copied to `~/.config/hypora/themes/<Name>/backgrounds/`; drop your own images in either place to add them to the rotation. Switch any time with the picker (**SUPER + ALT + T**) or `hypora-theme Gruvbox` (`hypora-theme` alone lists them). The shell, borders and terminals change immediately; other open apps pick it up when restarted.
 
 ## Keybindings
 
@@ -231,6 +231,7 @@ One thing to know: **Nautilus hard-requires `localsearch`**, a background indexe
 | SUPER + 1-0 / SUPER + SHIFT + 1-0 | Switch to / move window to workspace, on the monitor you're using |
 | SUPER + scroll | Cycle this monitor's workspaces |
 | SUPER + drag (left / right mouse) | Move / resize window |
+| Page Up / Page Down | Scroll any Hypora window's content — settings, the launcher, the clipboard, the theme picker. Keeps a sliver of the previous screenful for context |
 | Volume / brightness / media keys | As labelled on the keyboard |
 
 The programs behind these are set at the top of `config/hypr/hyprland.lua` (`terminal`, `browser`, `fileManager`). Every shortcut above can be rebound from **menu > Help > Keybindings**.

@@ -250,7 +250,13 @@ Scope {
                 focus: true
 
                 Keys.onPressed: event => {
-                    if (win.capturing === "") return
+                    // Not waiting for a chord: Page Up / Page Down scroll the list. Handled
+                    // here rather than on the Flickable because this item already owns the
+                    // window's focus for key capture, and two focus holders would fight.
+                    if (win.capturing === "") {
+                        event.accepted = PageScroll.handle(event, scroller)
+                        return
+                    }
                     event.accepted = true
                     if (event.key === Qt.Key_Escape) { win.capturing = ""; return }
                     const name = win.keyName(event)
@@ -359,6 +365,7 @@ Scope {
                     }
 
                     Flickable {
+                        id: scroller
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true

@@ -144,6 +144,9 @@ Rectangle {
                 clip: true
                 onTextChanged: list.currentIndex = 0
                 onAccepted: root.activate(root.items[list.currentIndex])
+                // Runs before the specific handlers below, and only claims the page keys,
+                // so arrows and Tab still reach them. The search field owns focus here.
+                Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
                 Keys.onUpPressed: list.decrementCurrentIndex()
                 Keys.onDownPressed: list.incrementCurrentIndex()
                 Keys.onTabPressed: list.incrementCurrentIndex()

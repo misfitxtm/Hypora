@@ -188,8 +188,13 @@ Scope {
                     }
 
                     Flickable {
+                        id: scroller
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        // Page Up / Page Down without reaching for the mouse. focus here
+                        // is safe: this window has no text input to compete with.
+                        focus: true
+                        Keys.onPressed: event => event.accepted = PageScroll.handle(event, scroller)
                         clip: true
                         contentHeight: body.implicitHeight
                         boundsBehavior: Flickable.StopAtBounds

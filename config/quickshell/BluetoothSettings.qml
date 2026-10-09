@@ -109,6 +109,9 @@ Scope {
                         id: list
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        // Page Up / Page Down; no text input in this window to compete with.
+                        focus: true
+                        Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
                         clip: true
                         spacing: 2
                         boundsBehavior: Flickable.StopAtBounds

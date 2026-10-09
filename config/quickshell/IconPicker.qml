@@ -126,6 +126,8 @@ Scope {
                     boundsBehavior: Flickable.StopAtBounds
                     Component.onCompleted: forceActiveFocus()
                     Keys.onEscapePressed: ShellState.iconPickerOpen = false
+                    // GridView is a Flickable too, so paging works the same way.
+                    Keys.onPressed: event => event.accepted = PageScroll.handle(event, grid)
 
                     delegate: Item {
                         id: cell
