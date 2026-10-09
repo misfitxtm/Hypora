@@ -214,6 +214,28 @@ else
     log "Desktop: $machine_kind — skipping battery, backlight and charger handling"
 fi
 
+# Release the dnf lock before any of the package work below.
+#
+# dnf5daemon-server takes the system repository lock, and every dnf command in this script
+# then waits for it — not with an error, but indefinitely, which reads as the installer
+# hanging on whatever step it happened to reach. On a real install it sat there for over an
+# hour on `dnf mark`, with a daemon that had been up since before the run started.
+#
+# Safe to stop: the unit is Type=dbus with BusName=org.rpm.dnf.v0 and no [Install] section,
+# so it is never "enabled" in the first place — it is activated on demand and anything that
+# wants it (GNOME Software, most often) brings it straight back afterwards. Stopped, not
+# disabled, for exactly that reason.
+#
+# `timeout` because its TimeoutStopSec is 5min: if it is mid-transaction, waiting that long
+# to start is worse than carrying on and letting the per-command timeouts handle it.
+for svc in dnf5daemon-server packagekit; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        log "Stopping $svc so it releases the dnf lock (D-Bus restarts it on demand)"
+        sudo timeout 60 systemctl stop "$svc" \
+            || warn "Could not stop $svc; dnf steps may stall waiting for its lock"
+    fi
+done
+
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
 
@@ -315,23 +337,41 @@ sudo dnf install -y "${REQUIRED[@]}"
 # missing module without even logging it.
 #
 # `dnf install` does not reliably change an existing package's reason, so mark explicitly.
-# Filtered to what is actually installed and marked one at a time: a single name that isn't
-# there must not cost the whole batch its protection, which is the failure mode that makes
-# this kind of guard worthless exactly when it is needed.
-log "Protecting required packages from dnf autoremove"
 PROTECT_USER=(
     gsettings-desktop-schemas xorg-x11-server-Xwayland
     gnome-keyring gnome-keyring-pam gcr
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
     gnome-calendar baobab simple-scan papers evince
 )
-protect_failed=()
+# Filter with rpm, which is instant, so dnf is only asked about packages that are really
+# there. That also means one unavailable name cannot cost the whole batch its protection.
+protect_now=()
 for p in "${PROTECT_USER[@]}"; do
-    rpm -q "$p" >/dev/null 2>&1 || continue
-    sudo dnf mark user "$p" >/dev/null 2>&1 || protect_failed+=("$p")
+    rpm -q "$p" >/dev/null 2>&1 && protect_now+=("$p")
 done
-[ ${#protect_failed[@]} -eq 0 ] \
-    || warn "Could not mark these user-installed; dnf autoremove may remove them: ${protect_failed[*]}"
+if [ ${#protect_now[@]} -gt 0 ]; then
+    log "Protecting ${#protect_now[@]} required packages from dnf autoremove"
+    # One dnf call, not one per package, and bounded. An earlier version ran `dnf mark` in a
+    # loop with its output redirected to /dev/null, which made the installer appear to hang
+    # here. Two separate costs were behind that, and only the second is a real stall:
+    #
+    #   * dnf start-up is ~7s even with -C, so fifteen invocations cost ~2 minutes of nothing
+    #     visible happening. Hence one call.
+    #   * `dnf mark` takes the system repository lock and then waits for it *indefinitely*.
+    #     Anything else touching dnf holds that lock — PackageKit or gnome-software doing a
+    #     background refresh is the usual culprit, and dnf-automatic is enabled by this very
+    #     script. That is the actual hang, and no amount of caching avoids it.
+    #
+    # So `timeout` is the fix, not an optimisation: this step is hardening, and it must never
+    # be the reason an install fails to finish. -C stays because a reason change touches only
+    # the local rpmdb and has nothing to resolve; the plain retry covers a missing cache.
+    if ! sudo timeout 45 dnf -C -y mark user "${protect_now[@]}" >/dev/null 2>&1 \
+       && ! sudo timeout 90 dnf -y mark user "${protect_now[@]}" >/dev/null 2>&1; then
+        warn "Could not mark packages user-installed (dnf was busy or locked), so a later"
+        warn "  'dnf autoremove' may remove them. Run this when nothing else is using dnf:"
+        warn "    sudo dnf mark user ${protect_now[*]}"
+    fi
+fi
 
 log "Installing virtualization (@virtualization group)"
 # Without virt-viewer: the group pulls it in, and its `remote-viewer` is a second, worse
