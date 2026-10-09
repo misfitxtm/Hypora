@@ -458,7 +458,11 @@ sudo rm -f /usr/local/bin/impala /usr/local/bin/bluetui
 
 # Hyprland reads hyprland.lua only from 0.55 on; older versions ignore it entirely
 # (no autostart, no keybinds) and generate a default hyprland.conf instead.
-hypr_ver=$(Hyprland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+# `|| true` because grep exits 1 when it matches nothing, pipefail carries that through,
+# and set -e would then abort the install on the assignment — before reaching the `-n`
+# check on the next line, which exists precisely because an empty answer is expected when
+# Hyprland is absent or prints a version in a shape this pattern does not recognise.
+hypr_ver=$(Hyprland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 if [ -n "$hypr_ver" ] && [ "$(printf '%s\n' 0.55.0 "$hypr_ver" | sort -V | head -1)" != 0.55.0 ]; then
     die "Hyprland $hypr_ver is too old for hyprland.lua (need 0.55+). Run: sudo dnf upgrade --refresh hyprland"
 fi
@@ -1010,13 +1014,42 @@ else
     fi
 fi
 
-# Fingerprint, only where there is a reader libfprint might drive.
-if "$REPO/bin/hypora-hardware" fingerprint >/dev/null 2>&1; then
-    log "Setting up the fingerprint reader"
-    sudo dnf install -y fprintd fprintd-pam \
-        && enable_authselect_feature with-fingerprint "fingerprint login" \
-        && log "  enrol a finger with: fprintd-enroll" \
-        || warn "Could not set up the fingerprint reader"
+# Fingerprint. Two questions, asked in order, because they are genuinely different:
+# is there a reader, and can libfprint drive it? A reader being present says nothing about
+# support — libfprint has no driver for several of the parts ThinkPads ship, and on those
+# `fprintd-enroll` answers `NoSuchDevice: No devices available`.
+#
+# --hardware first, because the authoritative check needs fprintd to answer and fprintd is
+# what we are deciding whether to install. Then ask properly, and only wire up PAM if the
+# answer is yes — enabling fingerprint login against a reader that cannot be enrolled would
+# leave an auth method that never works.
+if ! "$REPO/bin/hypora-hardware" fingerprint --hardware >/dev/null 2>&1; then
+    # Either no reader, or one from a vendor libfprint has no driver for (Synaptics). In
+    # the second case fprintd is not installed at all: it could never find a device, and a
+    # package that cannot work is worse than absent because it makes the failure look like
+    # a configuration problem. hypora-hardware says which it was.
+    # `|| true` is load-bearing: the command exits non-zero by design here, pipefail
+    # carries that through the pipe, and set -e would abort the whole install on the
+    # assignment — the exact failure that stopped the laptop install at monitors.lua.
+    fp_why=$("$REPO/bin/hypora-hardware" fingerprint --hardware 2>&1 | tail -1 || true)
+    case "$fp_why" in
+        *unsupported*) log "Skipping fingerprint setup: $fp_why" ;;
+    esac
+else
+    log "Fingerprint reader detected; installing fprintd to see whether it is supported"
+    if sudo dnf install -y fprintd fprintd-pam; then
+        if "$REPO/bin/hypora-hardware" fingerprint >/dev/null 2>&1; then
+            enable_authselect_feature with-fingerprint "fingerprint login" \
+                && log "  enrol a finger with: fprintd-enroll" \
+                || warn "Could not enable fingerprint login"
+        else
+            warn "Your fingerprint reader has no libfprint driver, so enrolment cannot"
+            warn "  work and fingerprint login was left off. Details:"
+            warn "  $("$REPO/bin/hypora-hardware" fingerprint 2>&1 | tail -1 || true)"
+        fi
+    else
+        warn "Could not install fprintd"
+    fi
 fi
 
 # ---------- terminal and session environment ----------

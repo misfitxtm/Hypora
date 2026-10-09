@@ -2,7 +2,8 @@
 """hypora-hardware: find hardware that isn't working, and fix what can be fixed.
 
     hypora-hardware probe     say what's present and what's wrong (no root)
-    hypora-hardware fingerprint  list fingerprint readers (exit 0 if one is present)
+    hypora-hardware fingerprint  exit 0 only if fprintd can actually drive a reader
+    hypora-hardware fingerprint --hardware   exit 0 if the hardware is present at all
     hypora-hardware fix       install missing firmware, load drivers, unblock radios (root)
 
 Written because a laptop install came up with no Wi-Fi and no Bluetooth. On Fedora that is
@@ -43,6 +44,22 @@ PCI_CLASSES = {
 FINGERPRINT_VENDORS = {
     "06cb": "Synaptics", "138a": "Validity", "04f3": "Elan",
     "27c6": "Goodix", "147e": "Upek", "08ff": "AuthenTec", "1c7a": "LighTuning",
+}
+
+# Vendors libfprint has no upstream driver for at all. Matching one means enrolment cannot
+# work, today or after any amount of configuration — `fprintd-enroll` answers
+# `NoSuchDevice: No devices available` and that is the correct, permanent answer.
+#
+# Synaptics is here because of a real ThinkPad: a 06cb reader detected, offered in the
+# menu, and dead on arrival. The only drivers that exist for these are out-of-tree builds
+# against libfprint-tod — unsigned third-party code in the authentication path, which is
+# not something Hypora installs on your behalf.
+#
+# This is a shortcut, not a veto: it exists so the installer can skip fprintd on hardware
+# that cannot use it. If fprintd is installed anyway and reports a device, that answer
+# wins — see cmd_fingerprint, which asks it directly.
+UNSUPPORTED_FINGERPRINT_VENDORS = {
+    "06cb": "Synaptics — no upstream libfprint driver exists for these",
 }
 
 VENDORS = {
@@ -355,19 +372,92 @@ def fix(devices):
     return 0
 
 
-def cmd_fingerprint():
-    """List fingerprint readers. Exit 0 if there is one, 1 if not.
+def fprintd_device_count():
+    """How many readers fprintd can actually drive. None if it could not be asked.
 
-    The exit status is the point: install.sh uses it to decide whether installing fprintd
-    is worth doing, so this has to be usable as a test as well as a report.
+    The USB scan above finds *hardware*; this finds *support*, and they are not the same
+    question. libfprint has no driver for several readers that ship in ThinkPads — the
+    Synaptics parts in particular — so a machine can have a reader sitting right there and
+    still answer `fprintd-enroll` with:
+
+        GDBus.Error:net.reactivated.Fprint.Error.NoSuchDevice: No devices available
+
+    fprintd is D-Bus activated, so this call starts it if it is not already running.
+    """
+    rc, out = run(["busctl", "--system", "--", "call",
+                   "net.reactivated.Fprint", "/net/reactivated/Fprint/Manager",
+                   "net.reactivated.Fprint.Manager", "GetDevices"], timeout=25)
+    if rc != 0:
+        return None
+    m = re.search(r"\bao\s+(\d+)", out)
+    return int(m.group(1)) if m else None
+
+
+def cmd_fingerprint(hardware_only=False):
+    """Report fingerprint support. Exit 0 only when enrolment would actually work.
+
+    The exit status is the point: install.sh uses it to decide whether fprintd is worth
+    installing, and the app menu uses it to decide whether to offer "Set up fingerprint".
+
+    It used to exit 0 on the USB scan alone, which made that menu entry a dead end on any
+    machine whose reader libfprint cannot drive — you got as far as a D-Bus error. Asking
+    fprintd is the only answer that matches what enrolment will do.
     """
     found = fingerprint_devices()
     for d in found:
         name = d["product"] or d["vendorName"]
         print(f"{d['vendor']}:{d['device']}  {name}")
-    if not found:
+
+    # --hardware answers "is there a reader worth installing fprintd for?" without needing
+    # fprintd to exist yet. install.sh asks that first; asking the authoritative question
+    # there would be circular, because the thing that answers it is the package not yet
+    # installed.
+    #
+    # A reader from a vendor libfprint has no driver for counts as no, so a machine whose
+    # only reader is a Synaptics part never installs fprintd at all.
+    if hardware_only:
+        if not found:
+            print("No fingerprint reader found.", file=sys.stderr)
+            return 1
+        usable_hw = [d for d in found
+                     if d["vendor"] not in UNSUPPORTED_FINGERPRINT_VENDORS]
+        if not usable_hw:
+            why = UNSUPPORTED_FINGERPRINT_VENDORS[found[0]["vendor"]]
+            print(f"Fingerprint reader found, but it is unsupported: {why}.",
+                  file=sys.stderr)
+            return 1
+        return 0
+
+    usable = fprintd_device_count()
+
+    if usable is None:
+        if found:
+            print("A reader is present, but fprintd could not be asked about it — it may "
+                  "not be installed, or the system bus is unreachable.", file=sys.stderr)
+        else:
+            print("No fingerprint reader found.", file=sys.stderr)
+        return 1
+
+    if usable > 0:
+        print(f"fprintd can drive {usable} reader{'' if usable == 1 else 's'}.")
+        return 0
+
+    if found:
+        ids = ", ".join(f"{d['vendor']}:{d['device']}" for d in found)
+        known = next((UNSUPPORTED_FINGERPRINT_VENDORS[d["vendor"]] for d in found
+                      if d["vendor"] in UNSUPPORTED_FINGERPRINT_VENDORS), None)
+        if known:
+            print(f"Fingerprint reader {ids} is a known-unsupported part: {known}. "
+                  f"Enrolment cannot work and fingerprint login is left off. Nothing here "
+                  f"is misconfigured — the driver does not exist upstream.", file=sys.stderr)
+        else:
+            print(f"A reader is present ({ids}) but fprintd reports no devices, so libfprint "
+                  f"has no driver for it and enrolment cannot work. Check whether yours is "
+                  f"listed at https://fprint.freedesktop.org/supported-devices.html",
+                  file=sys.stderr)
+    else:
         print("No fingerprint reader found.", file=sys.stderr)
-    return 0 if found else 1
+    return 1
 
 
 def main(argv):
@@ -376,7 +466,7 @@ def main(argv):
         print(__doc__, file=sys.stderr)
         return 0
     if cmd == "fingerprint":
-        return cmd_fingerprint()
+        return cmd_fingerprint(hardware_only="--hardware" in argv)
     if cmd not in ("probe", "fix"):
         print(__doc__, file=sys.stderr)
         return 2

@@ -123,9 +123,14 @@ Singleton {
         onExited: code => root.hasClaude = code === 0
     }
 
-    // Two conditions, because either one failing makes the menu entry a dead end: the
-    // machine needs a reader libfprint might drive, and fprintd has to be installed to
-    // enrol against it. hypora-hardware exits 0 only when it finds a reader.
+    // Two conditions, because either one failing makes the menu entry a dead end: fprintd
+    // has to be installed to enrol against, and it has to actually have a device.
+    //
+    // `hypora-hardware fingerprint` now asks fprintd rather than guessing from USB ids.
+    // It used to exit 0 on the USB scan alone, which offered the entry on machines whose
+    // reader libfprint cannot drive — several ThinkPad models — and enrolling there got
+    // as far as `NoSuchDevice: No devices available`. Hardware present is not the same
+    // question as hardware supported.
     property bool hasFingerprint: false
     Process {
         command: ["sh", "-c",
