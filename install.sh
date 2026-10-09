@@ -299,6 +299,9 @@ REQUIRED=(
     papirus-icon-theme breeze-icon-theme
     adw-gtk3-theme qt6ct
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
+    # How GIO starts Terminal=true apps. Its built-in fallback list has no kitty, so
+    # without this, opening a file in Neovim from Files (or Default Apps) does nothing.
+    xdg-terminal-exec
     # Network. nmtui is the fallback behind the Network window's "Advanced"
     NetworkManager NetworkManager-tui NetworkManager-wifi
     # Sound: PipeWire + WirePlumber, wiremix (sound TUI), pulseaudio compatibility
@@ -1020,6 +1023,7 @@ fi
 log "Installing kitty, uwsm, zsh, fastfetch and Neovim settings"
 put "$REPO/config/kitty/kitty.conf" "$CONF/kitty/kitty.conf"
 put "$REPO/config/uwsm/env" "$CONF/uwsm/env"
+put "$REPO/config/xdg-terminals.list" "$CONF/xdg-terminals.list"
 put "$REPO/config/hypr/hypridle.conf" "$CONF/hypr/hypridle.conf"
 put "$REPO/config/zsh/zshrc" "$HOME/.zshrc"
 put "$REPO/config/fastfetch/config.jsonc" "$CONF/fastfetch/config.jsonc"

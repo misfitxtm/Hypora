@@ -1,0 +1,3 @@
+# Which terminal runs apps marked Terminal=true (Neovim, htop, ...) when they are opened
+# from Files or anything else using GIO. Read by xdg-terminal-exec; first entry wins.
+kitty.desktop

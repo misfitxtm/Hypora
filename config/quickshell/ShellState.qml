@@ -53,6 +53,9 @@ Singleton {
     // Keyboard shortcuts window (KeybindHelp.qml)
     property bool keybindHelpOpen: false
 
+    // Default apps window (DefaultApps.qml)
+    property bool defaultAppsOpen: false
+
     // Sound window (AudioSettings.qml)
     property bool audioSettingsOpen: false
 

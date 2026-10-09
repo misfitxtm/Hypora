@@ -23,6 +23,7 @@ ShellRoot {
     NetworkSettings {}
     BluetoothSettings {}
     AudioSettings {}
+    DefaultApps {}
     KeybindHelp {}
     SecuritySettings {}
 }

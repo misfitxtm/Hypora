@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Default Apps
+Comment=Which app opens each kind of file
+Exec=qs ipc call defaults open
+Icon=preferences-desktop-default-applications
+Categories=Settings;
+Keywords=default;applications;open with;file type;extension;mime;
