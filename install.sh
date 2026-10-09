@@ -1393,6 +1393,25 @@ banner() {
     printf '\n'
 }
 
+# Record what was installed, so "is the machine running the code I just changed?" is a
+# question with an answer. Three separate debugging rounds were spent on fixes that were
+# written, committed, and never installed — the symptom is identical to the fix not working,
+# and the only way to tell them apart was comparing file timestamps by hand.
+STAMP="$CONF/hypora/installed.version"
+mkdir -p "$(dirname "$STAMP")"
+{
+    if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+        printf 'commit=%s\n' "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+        # A dirty tree means the installed files do not correspond to any commit, which is
+        # worth knowing before trusting `commit` above.
+        [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] \
+            && printf 'tree=dirty\n' || printf 'tree=clean\n'
+    else
+        printf 'commit=not-a-git-checkout\ntree=unknown\n'
+    fi
+    printf 'source=%s\ndate=%s\n' "$REPO" "$(date -Is)"
+} > "$STAMP"
+
 banner
 
 if [ ${#WARNINGS[@]} -eq 0 ]; then
@@ -1402,6 +1421,10 @@ else
     for w in "${WARNINGS[@]}"; do printf '   \033[1;33m!!\033[0m %s\n' "$w"; done
     printf '\n'
 fi
+
+printf ' Installed from %s (%s, %s).\n' \
+    "$REPO" "$(sed -n 's/^commit=//p' "$STAMP")" "$(sed -n 's/^tree=//p' "$STAMP")"
+printf ' Check later with: cat %s\n\n' "$STAMP"
 
 cat <<'EOF'
  Reboot to finish. The Hypora login screen starts the Hyprland session.
