@@ -133,6 +133,14 @@ pkill -USR1 -x kitty 2>/dev/null || true   # kitty reloads its config on SIGUSR1
 # login), so it updates when we can already ask for privileges: from a terminal, or during
 # install.sh. Switching theme from the GUI picker leaves the login screen as it was.
 SDDM_CONF=/usr/share/sddm/themes/hypora/theme.conf
+# Carry over the `primary` line hypora-greeter writes. It records which monitor shows the
+# login panel, which is nothing to do with the palette — but it lives in the same file,
+# because this SDDM build has no theme.conf.user to keep local settings separate. Without
+# this, switching theme would silently put the login screen back on every monitor.
+if [ -f "$SDDM_CONF" ]; then
+    keep_primary=$(grep -E '^primary[[:space:]]*=' "$SDDM_CONF" 2>/dev/null | head -1 || true)
+    [ -n "$keep_primary" ] && printf '%s\n' "$keep_primary" >> "$OUT/sddm-theme.conf"
+fi
 if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF"; then
     if [ -w "$SDDM_CONF" ]; then
         cat "$OUT/sddm-theme.conf" > "$SDDM_CONF"

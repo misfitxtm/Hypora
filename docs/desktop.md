@@ -14,10 +14,12 @@ The first two are stored in `~/.config/hypr/monitors.lua` as `HYPORA_PRIMARY`, r
 
 So `bin/hypora-greeter` — root-owned, reached through `pkexec` — writes one generated file next to the greeter's own config, which loads it if present. That file is root-owned on purpose: anything the greeter reads before login must not be writable by the user it is about to authenticate.
 
-Two deliberate choices in how little it does:
+It does two separate things, because **compositor focus alone cannot place the login screen**. SDDM instantiates the theme once per screen, so the clock and password field are drawn on every monitor no matter which one Hyprland focuses. That was the first attempt and it did not work.
 
-- It sets the output with `hyprctl dispatch focusmonitor`, not a monitor or window rule. This file is loaded by the config that draws the login screen, and a key some Hyprland version doesn't recognise would be a config error at the one moment there is no way to log in and fix it. A shell command that fails leaves the greeter exactly where it would have been.
-- The greeter's `hyprland.lua` checks the file exists and `pcall`s it. A login screen on the wrong monitor is a nuisance; no login screen is a rescue disk.
+- **Which screen shows the panel** is decided by the theme. `hypora-greeter` records the output as `primary` in the greeter's `theme.conf`, and `Main.qml` shows its panel only on the screen whose name matches, leaving the themed background on the others. This SDDM build has no `theme.conf.user` — confirmed with `strings` on its binaries — so the key shares a file with the colours, and `hypora-theme` preserves it when regenerating them.
+- **Keyboard focus** is moved with `hyprctl dispatch focusmonitor`, from a small generated Lua file the greeter's config `pcall`s. A shell command rather than a monitor or window rule: that file is loaded by the config that draws the login screen, and a key some Hyprland version doesn't recognise would be a config error at the one moment there is no way to log in and fix it.
+
+Both degrade safely. If the named output is not connected — unplugged since it was chosen — `Main.qml` falls back to showing the panel on **every** screen rather than none, because a login screen you cannot log in to is the one outcome worth engineering around. A login screen on the wrong monitor is a nuisance; no login screen is a rescue disk.
 
 The password prompt appears only when the main display actually changes — everything else in Display Settings applies without ever asking. Dismissing it costs the login screen's placement and nothing else, and the window says so. `install.sh` also re-applies whatever `monitors.lua` says on every run, so a dismissed prompt repairs itself next time you run the installer.
 
