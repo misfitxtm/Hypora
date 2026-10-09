@@ -123,6 +123,9 @@ Rectangle {
 
             ListView {
                 id: list
+                // Page Up / Page Down through the history without the mouse.
+                focus: true
+                Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
                 anchors {
                     left: parent.left; right: parent.right
                     top: heading.bottom; bottom: parent.bottom

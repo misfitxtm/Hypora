@@ -67,6 +67,10 @@ Scope {
                     focus: true
                     Component.onCompleted: forceActiveFocus()
 
+                    // The field has focus while you type, so paging the results below has
+                    // to be handled here rather than on the list itself.
+                    Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
+
                     onTextChanged: list.currentIndex = 0
                     onAccepted: if (list.count > 0) root.launch(results[list.currentIndex])
                     Keys.onEscapePressed: root.open = false

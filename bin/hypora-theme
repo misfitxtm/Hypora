@@ -178,6 +178,31 @@ if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CO
         || echo "Couldn't update the login screen colors; run: sudo install -m644 $OUT/sddm-theme.conf $SDDM_CONF" >&2
 fi
 
+# Qt apps that run as root. btrfs-assistant is the one Hypora ships that does: it launches
+# through pkexec, so it has root's environment, and root has no ~/.config/qt6ct — leaving it
+# the only window on the desktop in stock Fusion grey.
+#
+# /etc/xdg/qt6ct/qt6ct.conf is qt6ct's documented system-wide default (its README: "/etc/xdg/
+# qt6ct/qt6ct.conf - default configuration file"), so this themes any root Qt app, not just
+# that one. btrfs-assistant's launcher already forwards QT_QPA_PLATFORMTHEME through pkexec,
+# which is what makes qt6ct load at all on that side.
+#
+# The colours are copied to /etc/xdg rather than pointed at from there. The user's config
+# names a palette under $HOME, and a root process must not read a path its own user can
+# rewrite — that is the rule the root-owned helpers in /usr/local/bin exist to keep.
+QT_SYS_DIR=/etc/xdg/qt6ct
+sed "s|^color_scheme_path=.*|color_scheme_path=$QT_SYS_DIR/colors.conf|" \
+    "$OUT/qt6ct.conf" > "$OUT/qt6ct-system.conf"
+if [ -t 0 ] || [ -w "$QT_SYS_DIR" ]; then
+    if ! cmp -s "$OUT/qt6ct-system.conf" "$QT_SYS_DIR/qt6ct.conf" \
+       || ! cmp -s "$OUT/qt6ct-colors.conf" "$QT_SYS_DIR/colors.conf"; then
+        sudo install -d -m755 "$QT_SYS_DIR" 2>/dev/null \
+            && sudo install -m644 "$OUT/qt6ct-system.conf" "$QT_SYS_DIR/qt6ct.conf" 2>/dev/null \
+            && sudo install -m644 "$OUT/qt6ct-colors.conf" "$QT_SYS_DIR/colors.conf" 2>/dev/null \
+            || echo "Couldn't theme Qt apps that run as root (btrfs-assistant); run: sudo hypora-theme $NAME" >&2
+    fi
+fi
+
 # Boot screen. Root-owned like the login screen, and with the same rule: update it when we
 # can already ask for privileges (a terminal, or install.sh), and leave it alone when the
 # theme is switched from the GUI picker. The copy that actually renders at boot lives in the

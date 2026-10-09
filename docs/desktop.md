@@ -21,6 +21,8 @@ It does two separate things, because **compositor focus alone cannot place the l
 
 Both degrade safely. If the named output is not connected — unplugged since it was chosen — `Main.qml` falls back to showing the panel on **every** screen rather than none, because a login screen you cannot log in to is the one outcome worth engineering around. A login screen on the wrong monitor is a nuisance; no login screen is a rescue disk.
 
+The pointer is placed on that screen too, by a small generated script the greeter's config runs: working out the centre of a monitor means reading `hyprctl`'s JSON, which is best done in a script rather than quoted through Lua and then through `sh`. It accounts for scaling, and does nothing at all if the output is missing or `hyprctl` is unavailable.
+
 The password prompt appears only when the main display actually changes — everything else in Display Settings applies without ever asking. Dismissing it costs the login screen's placement and nothing else, and the window says so. `install.sh` also re-applies whatever `monitors.lua` says on every run, so a dismissed prompt repairs itself next time you run the installer.
 
 ```

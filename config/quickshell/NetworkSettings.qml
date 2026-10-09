@@ -225,6 +225,10 @@ Scope {
                         id: list
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        // Nothing else in this window holds focus by default; the password
+                        // prompt takes it only while it is open, and gets the keys then.
+                        focus: true
+                        Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
                         clip: true
                         spacing: 2
                         model: win.networks
