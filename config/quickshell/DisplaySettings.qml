@@ -387,7 +387,7 @@ Scope {
             // Moving the focus is the half of "main display" that can be shown immediately;
             // the rest only means anything from the next session, which is what the file is for.
             function focusPrimary() {
-                if (primary) Quickshell.execDetached(["hyprctl", "dispatch", "focusmonitor", primary])
+                if (primary) Quickshell.execDetached(["hyprctl", "dispatch", `hl.dsp.focus({ monitor = "${primary}" })`])
             }
             function evalLua(code) {
                 Quickshell.execDetached(["hyprctl", "eval", code])
