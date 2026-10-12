@@ -68,12 +68,14 @@ Scope {
 
                         Text {
                             text: card.modelData.appName
+                            textFormat: Text.PlainText
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
                             color: Theme.dim
                         }
                         Text {
                             Layout.fillWidth: true
                             text: card.modelData.summary
+                            textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                             font.family: Theme.font; font.pixelSize: Theme.fontSize; font.bold: true
                             color: Theme.fg
@@ -81,7 +83,10 @@ Scope {
                         Text {
                             Layout.fillWidth: true
                             visible: text !== ""
-                            text: card.modelData.body
+                            // Apps may send <b>, <i>, <u> and <br>. Any other "<" is escaped so it shows as
+                            // text: StyledText would otherwise fetch an <img src="http://..."> from
+                            // the network the moment the notification appears, even unterminated.
+                            text: card.modelData.body.replace(/<(?!\/?(?:b|i|u|br)\s*\/?>)/gi, "&lt;")
                             textFormat: Text.StyledText
                             wrapMode: Text.Wrap
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1

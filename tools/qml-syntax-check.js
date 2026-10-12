@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Catch ?? mixed with || or && in QML bindings, using Node's own parser.
 //
-// Written after `savedPrimary || (a ?? b)?.name ?? ""` shipped and stopped the entire shell
-// from loading. Mixing ?? with || or && in one expression is an ES2020 SyntaxError, not a
-// precedence subtlety; QML reports it as "Left-hand side may not contain || or &&". A brace
-// count cannot see it, and a hand-rolled scanner I tried first got it wrong — so this hands
-// every candidate expression to the real parser and believes what it says.
+// Mixing ?? with || or && in one expression is a JavaScript syntax error. QML reports it
+// as "Left-hand side may not contain || or &&", and one such line once stopped the whole
+// shell from loading. Counting braces cannot see it, so each expression is handed to
+// Node's parser.
 const fs = require("fs");
 
 // Blank comments and string bodies, preserving offsets and line breaks.
@@ -39,18 +38,18 @@ for (const path of process.argv.slice(2)) {
   const rawLines = raw.split("\n");
 
   for (let i = 0; i < lines.length; i++) {
-    // A binding: `name: expression`. Skip QML grouped properties (`anchors { ... }`) and
-    // anything whose value opens an object/closure block rather than an expression.
+    // A binding looks like `name: expression`. Skip grouped properties (`anchors { ... }`)
+    // and values that open an object or function block instead of an expression.
     const m = /^\s*(?:readonly\s+)?(?:property\s+\S+\s+)?([A-Za-z_][\w.]*)\s*:\s*(.*)$/.exec(lines[i]);
     if (!m) continue;
     let expr = m[2].trim();
     if (expr.startsWith("{")) continue;   // grouped property or closure body, not an expression
 
-    // Join continuation lines until the expression's brackets balance, so multi-line
-    // bindings are checked as the single expression QML actually compiles.
+    // Join continuation lines until the brackets balance, so multi-line bindings are checked
+    // as the one expression QML compiles.
     let j = i;
-    // An empty value means the expression begins on the next line — which is exactly the
-    // shape the original bug had, and exactly what an earlier version of this check skipped.
+    // An empty value means the expression starts on the next line. That was the shape of the
+    // original bug.
     while (j + 1 < lines.length
            && (expr === "" || !balanced(expr) || /(\?\?|\|\||&&|[+\-*/,.:?])$/.test(expr))) {
       j++;
@@ -63,11 +62,9 @@ for (const path of process.argv.slice(2)) {
       new Function(`return (${expr});`);
     } catch (e) {
       if (!(e instanceof SyntaxError)) continue;
-      // Only the ??-mixing class is reported. Everything else this parser objects to is a
-      // QML construct that is not a JS expression at all — `stdout: StdioCollector {}`,
-      // `delegate: Item {}`, `onTriggered: if (...)`, two statements separated by `;` — and
-      // a check that cries wolf nineteen times is a check nobody runs. Narrow and trusted
-      // beats broad and ignored.
+      // Report only the ??-mixing error. The parser also rejects QML syntax that is not a JS
+      // expression at all (`delegate: Item {}`, `onTriggered: if (...)`), and a check that
+      // complains about those is a check nobody runs.
       if (!/\?\?/.test(e.message)) continue;
       console.log(`${path}:${i + 1}: ${e.message}`);
       console.log(`    ${rawLines[i].trim()}`);

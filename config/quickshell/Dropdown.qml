@@ -2,11 +2,11 @@ import Quickshell
 import Quickshell.Wayland
 import QtQuick
 
-// Hosts a dropdown panel under the bar. It covers the whole screen with an invisible
-// layer, so a click anywhere outside the panel (the bar included) or Escape closes it.
+// Hosts a dropdown panel under the bar. An invisible layer covers the screen, so a click
+// anywhere outside the panel (the bar included) or Escape closes it.
 //
-// Horizontal placement, in order of precedence: centred under `anchorItem` if one is set,
-// otherwise alignCenter / alignRight / the left edge.
+// Horizontal placement, in order: centred under `anchorItem` if set, otherwise
+// alignCenter, alignRight or the left edge.
 PanelWindow {
     id: root
     property bool open: false
@@ -15,15 +15,14 @@ PanelWindow {
     property int barHeight: 30
     default property alias content: holder.data
 
-    // The bar widget this panel belongs to, so the panel opens under the thing you clicked
-    // rather than at a fixed edge. Both this window and the bar span the screen from x = 0,
-    // so the widget's scene position is also its screen position.
+    // The bar widget this panel belongs to, so the panel opens under what you clicked. This
+    // window and the bar both start at x = 0, so a scene position is a screen position.
     property Item anchorItem: null
     property real anchorCentre: 0
     readonly property int edgeMargin: 8
 
-    // mapToItem is a function call, not a binding, so it's refreshed each time the panel
-    // opens — the bar's own layout shifts as the clock text and the tray change width.
+    // mapToItem is a function call, not a binding, so it is refreshed each time the panel
+    // opens (the bar layout moves as the clock and tray change width).
     function refreshAnchor() {
         if (anchorItem)
             anchorCentre = anchorItem.mapToItem(null, anchorItem.width / 2, 0).x
@@ -76,7 +75,7 @@ PanelWindow {
         }
     }
 
-    // Before the panel can paint, so it doesn't appear at a stale position and slide across
+    // Before the panel can paint, so it does not appear in the wrong place and slide across
     onOpenChanged: if (open) refreshAnchor()
     onVisibleChanged: if (visible) { holder.forceActiveFocus(); appear.restart() }
 }

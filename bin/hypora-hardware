@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
-"""hypora-hardware: find hardware that isn't working, and fix what can be fixed.
+"""hypora-hardware: find hardware that is not working, and fix what can be fixed.
 
-    hypora-hardware probe     say what's present and what's wrong (no root)
-    hypora-hardware fingerprint  exit 0 only if fprintd can actually drive a reader
-    hypora-hardware fingerprint --hardware   exit 0 if the hardware is present at all
+    hypora-hardware probe     show what is present and what is wrong (no root)
+    hypora-hardware fingerprint  exit 0 only if fprintd can really drive a reader
+    hypora-hardware fingerprint --hardware   exit 0 if a usable reader exists at all
     hypora-hardware fix       install missing firmware, load drivers, unblock radios (root)
 
-Written because a laptop install came up with no Wi-Fi and no Bluetooth. On Fedora that is
-almost never one cause: the firmware package may be absent, the driver may have failed to
-bind, or the radio may simply be soft-blocked. Those need different fixes and look identical
-from the desktop, so this separates them.
+A laptop with no Wi-Fi or Bluetooth after install has one of three causes: the firmware
+package is missing, the driver did not bind, or the radio is soft-blocked. They look the
+same from the desktop, so this tells them apart.
 
-Everything in `probe` reads sysfs, which answers without privileges. It deliberately does not
-read the kernel log: `kernel.dmesg_restrict` is 1 on Fedora, so firmware errors need root to
-see, and a probe you have to sudo is a probe people don't run.
+`probe` only reads sysfs, so it needs no root. It does not read the kernel log, which
+needs root on Fedora.
 
-What it will not do is add a third-party repository. Where a chip needs firmware Fedora can't
-ship — Broadcom's wl being the usual one — it says so and names the package, and leaves the
-decision to you.
+It never adds a third-party repository. If a chip needs one (for example Broadcom's wl),
+it says so and leaves the decision to you.
 """
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,7 +25,7 @@ from pathlib import Path
 PCI = Path("/sys/bus/pci/devices")
 USB = Path("/sys/bus/usb/devices")
 
-# PCI class (high byte pair) -> what we call it
+# PCI class (two bytes after 0x) -> device kind
 PCI_CLASSES = {
     "0200": "ethernet",
     "0280": "wifi",
@@ -38,26 +34,18 @@ PCI_CLASSES = {
     "0d11": "bluetooth",
 }
 
-# Fingerprint readers present as vendor-specific USB (class ff), so unlike Bluetooth and
-# UVC there is no interface class to match on — the vendor id is the only signal. These are
-# the vendors libfprint has drivers for; a match means "worth trying", not "guaranteed".
+# Fingerprint readers report a vendor-specific USB class, so the vendor id is the only
+# clue. These are vendors libfprint has drivers for; a match means "worth trying".
 FINGERPRINT_VENDORS = {
     "06cb": "Synaptics", "138a": "Validity", "04f3": "Elan",
     "27c6": "Goodix", "147e": "Upek", "08ff": "AuthenTec", "1c7a": "LighTuning",
 }
 
-# Vendors libfprint has no upstream driver for at all. Matching one means enrolment cannot
-# work, today or after any amount of configuration — `fprintd-enroll` answers
-# `NoSuchDevice: No devices available` and that is the correct, permanent answer.
-#
-# Synaptics is here because of a real ThinkPad: a 06cb reader detected, offered in the
-# menu, and dead on arrival. The only drivers that exist for these are out-of-tree builds
-# against libfprint-tod — unsigned third-party code in the authentication path, which is
-# not something Hypora installs on your behalf.
-#
-# This is a shortcut, not a veto: it exists so the installer can skip fprintd on hardware
-# that cannot use it. If fprintd is installed anyway and reports a device, that answer
-# wins — see cmd_fingerprint, which asks it directly.
+# Vendors libfprint has no upstream driver for. Enrolment can never work on these.
+# Synaptics is here because of a real ThinkPad whose reader was detected but dead. Its
+# only drivers are unsigned out-of-tree builds, which Hypora will not install for you.
+# This is a shortcut so install.sh can skip fprintd; if fprintd reports a device anyway,
+# that answer wins (see cmd_fingerprint).
 UNSUPPORTED_FINGERPRINT_VENDORS = {
     "06cb": "Synaptics — no upstream libfprint driver exists for these",
 }
@@ -68,8 +56,7 @@ VENDORS = {
     "1814": "Ralink", "0bda": "Realtek", "8087": "Intel", "1d6b": "Linux Foundation",
 }
 
-# Fedora splits linux-firmware into per-vendor packages; this is which one covers what.
-# Only packages Fedora actually ships — nothing here pulls in a third-party repo.
+# (device kind, vendor id) -> Fedora's firmware package (linux-firmware is split by vendor)
 FIRMWARE = {
     ("wifi", "8086"): "iwlwifi-mvm-firmware",
     ("wifi", "14e4"): "brcmfmac-firmware",
@@ -89,7 +76,7 @@ FIRMWARE = {
     ("ethernet", "10ec"): "realtek-firmware",
 }
 
-# Chips whose firmware or driver Fedora cannot ship. Reported, never installed.
+# Chips whose driver Fedora cannot ship. Reported, never installed.
 NEEDS_THIRD_PARTY = {
     "14e4": ("Broadcom", "Most BCM43xx Wi-Fi needs the 'broadcom-wl' driver from RPM Fusion; "
                          "Fedora can only ship brcmfmac, which covers some models and not others."),
@@ -116,7 +103,7 @@ def pkg_installed(name):
 
 
 def resolve_module(modalias):
-    """The module udev would pick for this device, or "" if the kernel has none."""
+    """Return the kernel module udev would load for this device, or ''."""
     if not modalias:
         return ""
     rc, out = run(["modprobe", "-R", modalias], timeout=10)
@@ -131,7 +118,7 @@ def module_loaded(mod):
                 return True
     except OSError:
         pass
-    # Built into the kernel rather than a module
+    # it may be built into the kernel instead of being a module
     return Path(f"/sys/module/{want}").is_dir()
 
 
@@ -159,27 +146,23 @@ def pci_devices():
 
 
 def fingerprint_devices():
-    """Readers, found by vendor id rather than interface class.
+    """Find fingerprint readers by vendor id (they have no useful USB class).
 
-    Kept separate from usb_devices() because the matching rule is different: these identify
-    themselves as vendor-specific, so there is no class to filter on and the vendor id has
-    to carry it. Matching a whole vendor is looser than matching a class, which is why this
-    only ever reports — it never installs a driver on the strength of it.
+    This only reports. It never installs a driver, because matching a whole vendor is
+    looser than matching a class.
     """
     out = []
     if not USB.is_dir():
         return out
     for dev in sorted(USB.iterdir()):
-        if ":" in dev.name:                       # interface, not device
+        if ":" in dev.name:                       # an interface, not a device
             continue
         vid = read(dev / "idVendor")
         if vid not in FINGERPRINT_VENDORS:
             continue
-        # A vendor makes more than fingerprint readers — Synaptics touchpads and Elan
-        # touchscreens share these ids — so require the device to be vendor-specific
-        # (class ff), which a reader is and an input device is not. Interfaces are listed
-        # flat alongside devices in /sys/bus/usb/devices, the same way usb_devices() reads
-        # them; globbing inside the device directory finds nothing here.
+        # These vendors also make touchpads and touchscreens. Readers use the
+        # vendor-specific class ff on every interface; input devices do not.
+        # Interfaces are listed next to devices in /sys/bus/usb/devices.
         classes = {read(USB / n / "bInterfaceClass")
                    for n in os.listdir(USB) if n.startswith(dev.name + ":")}
         if classes != {"ff"}:
@@ -197,7 +180,7 @@ def fingerprint_devices():
 
 
 def usb_devices():
-    """USB interfaces we care about: Bluetooth (class e0/01/01) and UVC cameras (class 0e)."""
+    """Return Bluetooth adapters (class e0, protocol 01) and cameras (class 0e)."""
     out = []
     if not USB.is_dir():
         return out
@@ -206,7 +189,7 @@ def usb_devices():
         if cls not in ("e0", "0e"):
             continue
         if cls == "e0" and read(iface / "bInterfaceProtocol") != "01":
-            continue                              # wireless but not Bluetooth
+            continue                              # wireless, but not Bluetooth
         parent = iface.parent / iface.name.split(":")[0]
         kind = "bluetooth" if cls == "e0" else "camera"
         entry = {
@@ -219,7 +202,7 @@ def usb_devices():
             "modalias": read(iface / "modalias"),
             "name": read(parent / "product"),
         }
-        # One interface per function; a Bluetooth adapter shows several
+        # one device has several interfaces; list it once
         if not any(d["kind"] == kind and d["vendor"] == entry["vendor"]
                    and d["device"] == entry["device"] for d in out):
             out.append(entry)
@@ -227,7 +210,7 @@ def usb_devices():
 
 
 def rfkill():
-    """Soft/hard block per radio type — the reason a working driver still has no network."""
+    """Return soft/hard block state per radio type (a blocked radio has no network)."""
     out = {}
     base = Path("/sys/class/rfkill")
     if not base.is_dir():
@@ -270,7 +253,7 @@ def assess():
         elif rk.get("soft"):
             d["issues"].append(("rfkill-soft", "The radio is switched off (soft rfkill)."))
 
-        # Hypora can turn the camera off itself; say so rather than blaming the hardware
+        # Hypora's Security window can unload the camera driver; say so
         if d["kind"] == "camera" and not module_loaded("uvcvideo"):
             d["issues"].append(("camera-off",
                                 "uvcvideo isn't loaded — Menu > Security may have disabled it."))
@@ -335,7 +318,7 @@ def fix(devices):
 
     did = False
 
-    # 1. firmware Fedora ships
+    # 1. firmware that Fedora ships
     want = sorted({d["firmware"] for d in devices
                    if d["firmware"] and d["firmwareInstalled"] is False})
     if want:
@@ -344,7 +327,7 @@ def fix(devices):
         rc, out = run(["dnf", "install", "-y", "linux-firmware"] + want)
         print(out[-1500:] if rc != 0 else "  done")
 
-    # 2. drivers the kernel has but nothing bound
+    # 2. drivers that exist in the kernel but are not bound
     for d in devices:
         mod = d["wouldUse"]
         if d["driver"] or not mod:
@@ -354,7 +337,7 @@ def fix(devices):
         rc, out = run(["modprobe", mod], timeout=30)
         print("  done" if rc == 0 else f"  {C['r']}failed: {out}{C['x']}")
 
-    # 3. radios switched off in software
+    # 3. radios that are switched off in software
     blocks = rfkill()
     for t in ("wlan", "bluetooth"):
         b = blocks.get(t, {})
@@ -373,16 +356,11 @@ def fix(devices):
 
 
 def fprintd_device_count():
-    """How many readers fprintd can actually drive. None if it could not be asked.
+    """Return how many readers fprintd can drive, or None if it could not be asked.
 
-    The USB scan above finds *hardware*; this finds *support*, and they are not the same
-    question. libfprint has no driver for several readers that ship in ThinkPads — the
-    Synaptics parts in particular — so a machine can have a reader sitting right there and
-    still answer `fprintd-enroll` with:
-
-        GDBus.Error:net.reactivated.Fprint.Error.NoSuchDevice: No devices available
-
-    fprintd is D-Bus activated, so this call starts it if it is not already running.
+    The USB scan finds hardware; this finds support. libfprint has no driver for some
+    readers (for example Synaptics), which answer fprintd-enroll with "No devices
+    available". fprintd starts on demand when this is called.
     """
     rc, out = run(["busctl", "--system", "--", "call",
                    "net.reactivated.Fprint", "/net/reactivated/Fprint/Manager",
@@ -394,27 +372,18 @@ def fprintd_device_count():
 
 
 def cmd_fingerprint(hardware_only=False):
-    """Report fingerprint support. Exit 0 only when enrolment would actually work.
+    """Report fingerprint support. Exit 0 only when enrolment would work.
 
-    The exit status is the point: install.sh uses it to decide whether fprintd is worth
-    installing, and the app menu uses it to decide whether to offer "Set up fingerprint".
-
-    It used to exit 0 on the USB scan alone, which made that menu entry a dead end on any
-    machine whose reader libfprint cannot drive — you got as far as a D-Bus error. Asking
-    fprintd is the only answer that matches what enrolment will do.
+    install.sh uses the exit code to decide whether to install fprintd, and the app
+    menu uses it to decide whether to offer "Set up fingerprint".
     """
     found = fingerprint_devices()
     for d in found:
         name = d["product"] or d["vendorName"]
         print(f"{d['vendor']}:{d['device']}  {name}")
 
-    # --hardware answers "is there a reader worth installing fprintd for?" without needing
-    # fprintd to exist yet. install.sh asks that first; asking the authoritative question
-    # there would be circular, because the thing that answers it is the package not yet
-    # installed.
-    #
-    # A reader from a vendor libfprint has no driver for counts as no, so a machine whose
-    # only reader is a Synaptics part never installs fprintd at all.
+    # --hardware asks "is a usable reader present?" without fprintd. install.sh needs
+    # this first, because fprintd is what it is deciding whether to install.
     if hardware_only:
         if not found:
             print("No fingerprint reader found.", file=sys.stderr)

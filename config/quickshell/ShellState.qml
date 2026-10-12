@@ -8,15 +8,12 @@ Singleton {
     id: state
 
     // The main display, chosen in Display Settings and stored in ~/.config/hypr/monitors.lua
-    // as HYPORA_PRIMARY. Read here rather than in each component so there is one reader.
+    // as HYPORA_PRIMARY. It is read here so there is one reader.
     //
-    // Why this exists: the single-instance panels (app menu, clipboard history) have to pick
-    // one screen to live on, and `Quickshell.screens[0]` is enumeration order — which is the
-    // laptop panel on a docked machine as often as not, and changes when a cable moves. A
-    // name the user picked is stable across both.
+    // Single-instance panels (app menu, clipboard history) need one screen to live on.
+    // `Quickshell.screens[0]` is enumeration order, which changes when a cable moves.
     //
-    // Falls back to screens[0] when nothing is set or the saved output isn't connected, so a
-    // monitor named here and then unplugged doesn't leave the menu with nowhere to open.
+    // It falls back to screens[0] when nothing is saved or the saved output is unplugged.
     property string primaryName: ""
     readonly property var primaryScreen:
         Quickshell.screens.find(s => s.name === primaryName) ?? Quickshell.screens[0] ?? null
@@ -27,9 +24,8 @@ Singleton {
         path: Quickshell.env("HOME") + "/.config/hypr/monitors.lua"
         watchChanges: true
         printErrors: false
-        // Read synchronously, for the same reason SysInfo does: this singleton is created on
-        // first use, and an async load would let the first binding of primaryScreen fall back
-        // to screens[0] before the saved name arrives.
+        // Read synchronously, like SysInfo: this singleton is created on first use, and an async
+        // load would let the first binding of primaryScreen fall back to screens[0].
         blockLoading: true
         onFileChanged: reload()
         onLoaded: {

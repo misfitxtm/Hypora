@@ -1,0 +1,4 @@
+#!/bin/sh
+# hypora-install-plugin [SOURCE] [options]: shorthand for `hypora-plugin install`.
+# Clone a plugin, cd into it, and run this with no arguments.
+exec "$(dirname "$(readlink -f "$0")")/hypora-plugin" install "$@"

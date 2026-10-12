@@ -5,7 +5,7 @@ import QtQuick
 import QtQuick.Layouts
 
 // Network settings: Wi-Fi on/off, nearby networks, connect, disconnect and forget.
-// Covers everyday use; nmtui is still one click away under "Advanced".
+// Covers everyday use; nmtui is one click away under "Advanced".
 // Open from the menu (Settings > Network), the Wi-Fi tile's arrow, or:
 //     qs ipc call network open
 Scope {
@@ -31,17 +31,14 @@ Scope {
             readonly property var wifiDevice: Networking.devices.values.find(d => d.type === DeviceType.Wifi) ?? null
             readonly property var wired: Networking.devices.values.find(d => d.type !== DeviceType.Wifi && d.connected) ?? null
 
-            // A card whose radio is switched off drops out of Networking.devices entirely, so
-            // "no device" does not mean "no hardware" — reporting it that way sends you looking
-            // for a driver or firmware problem that isn't there. Net asks nmcli, which lists the
-            // card in every state, so it is the honest answer to "is there a Wi-Fi card".
+            // A card whose radio is off disappears from Networking.devices, so "no device" does not
+            // mean "no hardware". Net asks nmcli, which lists the card in every state.
             readonly property bool wifiPresent: wifiDevice !== null || Net.hasWifi
             // False only for a hard block: a physical switch, or the BIOS
             readonly property bool wifiBlocked: !Networking.wifiHardwareEnabled
 
-            // The radio goes through Net (nmcli) rather than the Networking module, because
-            // with the radio off there's no device object for the module to act on, which is
-            // exactly when you need the switch to work. Same path the control centre uses.
+            // The radio switch goes through Net (nmcli), not the Networking module: with the radio off
+            // there is no device object to act on, which is exactly when the switch must work.
             function setRadio(on) {
                 Net.setWifiEnabled(on)
                 Networking.requestSetWifiEnabled(on)
@@ -74,9 +71,9 @@ Scope {
                 else { pending = n; password.text = ""; password.forceActiveFocus() }
             }
 
-            // First-time join: create the profile with nmcli, then let Quickshell track it.
-            // The password goes in on stdin, never on the command line: arguments are
-            // world-readable in /proc/<pid>/cmdline for as long as the process lives.
+            // First-time join: create the profile with nmcli, then let Quickshell track it. The
+            // password goes in on stdin, never as an argument: arguments are readable by any user in
+            // /proc/<pid>/cmdline.
             property string secret: ""
 
             function joinWithPassword() {
@@ -191,6 +188,7 @@ Scope {
                             spacing: 8
                             Text {
                                 text: win.pending ? `Password for ${win.pending.name}` : ""
+                                textFormat: Text.PlainText
                                 font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                                 color: Theme.fg
                             }
@@ -225,8 +223,7 @@ Scope {
                         id: list
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        // Nothing else in this window holds focus by default; the password
-                        // prompt takes it only while it is open, and gets the keys then.
+                        // Nothing else here takes focus by default; the password prompt takes it only while open.
                         focus: true
                         Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
                         clip: true
@@ -257,6 +254,7 @@ Scope {
                                 Text {
                                     width: parent.width
                                     text: row.modelData.name
+                                    textFormat: Text.PlainText
                                     elide: Text.ElideRight
                                     font.family: Theme.font; font.pixelSize: Theme.fontSize
                                     font.bold: row.modelData.connected

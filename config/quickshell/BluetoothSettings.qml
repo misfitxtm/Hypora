@@ -150,6 +150,7 @@ Scope {
                                 Text {
                                     width: parent.width
                                     text: win.label(row.modelData)
+                                    textFormat: Text.PlainText
                                     elide: Text.ElideRight
                                     font.family: Theme.font; font.pixelSize: Theme.fontSize
                                     font.bold: row.modelData.connected

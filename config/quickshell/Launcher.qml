@@ -121,6 +121,7 @@ Scope {
                             width: Math.min(implicitWidth, row.width * 0.55)
                             elide: Text.ElideRight
                             text: row.modelData.name
+                            textFormat: Text.PlainText
                             font.family: Theme.font; font.pixelSize: Theme.fontSize + 1
                             color: row.ListView.isCurrentItem ? Theme.accent : Theme.fg
                         }
@@ -133,6 +134,7 @@ Scope {
                             // Apps.describe, not genericName: most .desktop files don't set
                             // GenericName, which left this column empty for half the list
                             text: Apps.describe(row.modelData)
+                            textFormat: Text.PlainText
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                             color: Theme.dim
                         }

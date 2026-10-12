@@ -6,14 +6,12 @@ import QtQuick.Window
 // Colors come from theme.conf, which hypora-theme generates from the active theme.
 Rectangle {
     id: root
-    // Fill whatever monitor SDDM puts this on, at its own resolution. SDDM sizes the
-    // root item itself, but binding to Screen keeps it right on mixed-DPI setups and
-    // when a monitor's mode is applied after the greeter has already started.
+    // Fill whatever monitor SDDM puts this on, at its own resolution. Binding to Screen keeps
+    // it right on mixed-DPI setups and when a mode is applied after the greeter starts.
     width: Screen.width
     height: Screen.height
-    // theme.conf is root-owned, but the greeter runs before anyone logs in, so take
-    // nothing on trust: accept only a plain #rrggbb colour and a conservative font name,
-    // and fall back to the built-in value for anything else.
+    // theme.conf is root-owned, but the greeter runs before anyone logs in, so trust nothing:
+    // accept only a plain #rrggbb colour and a simple font name, else use the built-in value.
     function colour(v, fallback) {
         return /^#[0-9a-fA-F]{6}$/.test(String(v || "")) ? String(v) : fallback
     }
@@ -26,21 +24,16 @@ Rectangle {
 
     // Which screen shows the login panel.
     //
-    // SDDM instantiates this file once per screen, so without this the clock and password
-    // field are drawn on every monitor and the "main display" chosen in Display Settings
-    // means nothing here. Compositor focus cannot fix that — there is a window per output
-    // either way — so the theme has to decide.
-    //
-    // `primary` is written into theme.conf by hypora-greeter. Validated like every other
-    // value from that file: the greeter runs before anyone has logged in, so take nothing
-    // on trust.
+    // SDDM creates this file once per screen, so without this the clock and password field
+    // would appear on every monitor. Compositor focus cannot change that, so the theme
+    // decides. `primary` is written into theme.conf by hypora-greeter and validated like
+    // every other value from that file.
     readonly property string wantScreen:
         /^[A-Za-z][A-Za-z0-9-]{0,31}$/.test(String(config.primary || "")) ? String(config.primary) : ""
 
-    // Is the named output actually connected? Each instance can only see its own Screen,
-    // so ask the application for the full list. A name that matches nothing — a monitor
-    // unplugged since it was chosen — must not mean the panel appears nowhere, which
-    // would be a login screen you cannot log in to.
+    // Is the named output connected? Each instance only sees its own Screen, so use the
+    // application's full list. A name that matches nothing (monitor unplugged) must not hide
+    // the panel everywhere, since that would leave a login screen you cannot use.
     readonly property bool wantScreenPresent: {
         if (wantScreen === "") return false
         const all = Qt.application.screens
@@ -49,8 +42,7 @@ Rectangle {
         return false
     }
 
-    // Show here when a main display was chosen and this is it; otherwise fall back to the
-    // old behaviour of showing on every screen.
+    // Show here when a main display was chosen and this is it; otherwise show on every screen.
     readonly property bool showPanel: !wantScreenPresent || Screen.name === wantScreen
 
     readonly property color surface: colour(config.surface, "#3b4252")

@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""hypora-plugin: install, list and remove Hypora plugins.
+
+    hypora-plugin install [SOURCE]   SOURCE is a cloned directory (default: this one) or a git URL
+    hypora-plugin remove ID          undo an install
+    hypora-plugin list [--json]      what is installed, and whether it is enabled
+    hypora-plugin enable ID          show a plugin in the bar again
+    hypora-plugin disable ID         hide it without removing anything
+    hypora-plugin update ID          install again from where it came from
+
+    install options:  --yes          do not ask (for scripts; you still see the summary)
+                      --ref REF      a branch or tag to clone (URLs only)
+                      --commit SHA   an exact commit to check out (URLs only)
+
+A plugin is a repository with a hypora-plugin.toml at its root (see docs/plugins.md). Installing
+shows you everything that will be written and every script that will run, then waits for a yes.
+A plugin is code that runs as you, inside the shell, so the question is real: read what you
+are about to trust. Nothing here ever uses root.
+
+Writes only under your home: the plugin's QML in ~/.config/quickshell, any commands in
+~/.local/bin, and bookkeeping in ~/.config/hypora/plugins/. The bar reads
+~/.config/hypora/plugins.json to know which plugins to show.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+MANIFEST_NAME = "hypora-plugin.toml"
+SLOTS = ("left", "center", "right")
+ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
+QML_FILE_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*\.qml$")
+BIN_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+URL_RE = re.compile(r"^(https://|ssh://git@|git@)[^\s]+$")
+# Hypora's own scripts that are installed root-owned; a plugin may not shadow them.
+ROOT_OWNED = {"hypora-security", "hypora-console", "hypora-hardware", "hypora-grub",
+              "hypora-power", "hypora-replace-de", "hypora-greeter"}
+MAX_FILE = 2_000_000
+BIN_PLACEHOLDER = "@BIN_DIR@"
+KNOWN_TOP = {"id", "name", "version", "description", "license", "widget", "bin", "setup"}
+
+
+class PluginError(Exception):
+    """Something the user can fix; reported as one line, no traceback."""
+
+
+def clean(text, limit=200):
+    """Manifest text goes to the terminal; drop control characters (escape sequences)."""
+    return "".join(c for c in str(text) if c.isprintable())[:limit]
+
+
+@dataclass
+class Paths:
+    home: Path
+
+    @classmethod
+    def from_env(cls):
+        return cls(Path(os.environ.get("HOME") or Path.home()))
+
+    @property
+    def config(self): return Path(os.environ.get("XDG_CONFIG_HOME") or self.home / ".config")
+    @property
+    def qs(self): return self.config / "quickshell"
+    @property
+    def bin(self): return self.home / ".local" / "bin"
+    @property
+    def plugins(self): return self.config / "hypora" / "plugins"
+    @property
+    def list_file(self): return self.config / "hypora" / "plugins.json"
+    @property
+    def core_manifest(self): return self.config / "hypora" / "installed.sha256"
+
+
+@dataclass
+class Manifest:
+    id: str
+    name: str
+    version: str
+    description: str
+    license: str
+    component: str
+    slot: str
+    qml_files: list = field(default_factory=list)
+    bin_files: list = field(default_factory=list)
+    setup_install: str = ""
+    setup_remove: str = ""
+    setup_env: dict = field(default_factory=dict)
+
+
+# ---------- manifest ----------
+def _str(table, key, required=True, default=""):
+    value = table.get(key, default)
+    if not isinstance(value, str) or (required and not value):
+        raise PluginError(f"{MANIFEST_NAME}: '{key}' must be a non-empty string")
+    return value
+
+
+def _rel(value, what):
+    """A path inside the repo: relative, no '..'. Existence is checked later."""
+    if not isinstance(value, str) or not value:
+        raise PluginError(f"{what}: paths must be strings")
+    p = Path(value)
+    if p.is_absolute() or ".." in p.parts or value.startswith("~"):
+        raise PluginError(f"{what}: '{value}' must be a path inside the plugin")
+    return value
+
+
+def parse_manifest(text):
+    if len(text) > 64_000:
+        raise PluginError(f"{MANIFEST_NAME} is too large")
+    try:
+        t = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise PluginError(f"{MANIFEST_NAME} is not valid TOML: {e}")
+    unknown = set(t) - KNOWN_TOP
+    if unknown:
+        raise PluginError(f"{MANIFEST_NAME}: unknown keys {sorted(unknown)}")
+    pid = _str(t, "id")
+    if not ID_RE.match(pid):
+        raise PluginError("id must be lowercase letters, digits and dashes, starting with a letter")
+    widget = t.get("widget")
+    if not isinstance(widget, dict):
+        raise PluginError("[widget] is required: a plugin adds a bar item")
+    component = _str(widget, "component")
+    slot = _str(widget, "slot")
+    if slot not in SLOTS:
+        raise PluginError(f"widget.slot must be one of {', '.join(SLOTS)}")
+    files = widget.get("files")
+    if not isinstance(files, list) or not files:
+        raise PluginError("widget.files must list the QML files to install")
+    qml = [_rel(f, "widget.files") for f in files]
+    names = [Path(f).name for f in qml]
+    for n in names:
+        if not QML_FILE_RE.match(n):
+            raise PluginError(f"QML file '{n}' must be named like a QML type, e.g. MyThing.qml")
+    if len(set(names)) != len(names):
+        raise PluginError("two QML files share a name; they all land in one directory")
+    if component + ".qml" not in names:
+        raise PluginError(f"widget.component '{component}' has no {component}.qml in widget.files")
+
+    bins = []
+    if "bin" in t:
+        b = t["bin"]
+        if not isinstance(b, dict) or set(b) - {"files"} or not isinstance(b.get("files"), list):
+            raise PluginError("[bin] takes only: files = [...]")
+        bins = [_rel(f, "bin.files") for f in b["files"]]
+        for f in bins:
+            n = Path(f).name
+            if not BIN_NAME_RE.match(n):
+                raise PluginError(f"command name '{n}' may use lowercase letters, digits, . _ -")
+            if n in ROOT_OWNED:
+                raise PluginError(f"'{n}' is one of Hypora's root-owned commands and cannot be replaced")
+        if len({Path(f).name for f in bins}) != len(bins):
+            raise PluginError("two commands share a name")
+
+    s_install = s_remove = ""
+    env = {}
+    if "setup" in t:
+        s = t["setup"]
+        if not isinstance(s, dict) or set(s) - {"install", "remove", "env"}:
+            raise PluginError("[setup] takes only: install, remove, env")
+        s_install = _rel(s["install"], "setup.install") if "install" in s else ""
+        s_remove = _rel(s["remove"], "setup.remove") if "remove" in s else ""
+        env = s.get("env", {})
+        if not isinstance(env, dict) or not all(
+                ENV_NAME_RE.match(k) and isinstance(v, str) for k, v in env.items()):
+            raise PluginError("setup.env must map NAMES to strings")
+
+    return Manifest(
+        id=pid, name=_str(t, "name", default=pid), version=_str(t, "version"),
+        description=_str(t, "description", required=False), license=_str(t, "license", required=False),
+        component=component, slot=slot, qml_files=qml, bin_files=bins,
+        setup_install=s_install, setup_remove=s_remove, setup_env=env)
+
+
+def read_source_file(root, rel):
+    """Bytes of a file in the plugin, refusing links and anything outside the repo."""
+    path = root / rel
+    if path.is_symlink() or not path.is_file():
+        raise PluginError(f"{rel} must be a regular file (not missing, not a link)")
+    real = path.resolve()
+    if root.resolve() not in real.parents:
+        raise PluginError(f"{rel} resolves outside the plugin")
+    if real.stat().st_size > MAX_FILE:
+        raise PluginError(f"{rel} is larger than {MAX_FILE // 1_000_000} MB")
+    return real.read_bytes()
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+# ---------- state ----------
+def state_path(paths, pid):
+    return paths.plugins / pid / "state.json"
+
+
+def load_state(paths, pid):
+    try:
+        return json.loads(state_path(paths, pid).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def all_states(paths):
+    out = []
+    if paths.plugins.is_dir():
+        for d in sorted(paths.plugins.iterdir()):
+            st = load_state(paths, d.name) if d.is_dir() else None
+            if st:
+                out.append(st)
+    return out
+
+
+def write_atomic(path, data, mode=0o644):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".hypora-tmp")
+    tmp.write_bytes(data if isinstance(data, bytes) else data.encode())
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def write_enabled_list(paths):
+    """The file the bar reads: enabled plugins, and only the fields it needs."""
+    entries = [{"id": s["id"], "component": s["component"], "slot": s["slot"]}
+               for s in all_states(paths) if s.get("enabled", True)]
+    write_atomic(paths.list_file, json.dumps(entries, indent=1) + "\n")
+
+
+def core_owned(paths):
+    """Paths the Hypora installer put in place; plugins must never overwrite those."""
+    owned = set()
+    try:
+        for line in paths.core_manifest.read_text().splitlines():
+            owned.add(line[66:])
+    except OSError:
+        pass
+    return owned
+
+
+# ---------- sources ----------
+def git(*args, cwd=None):
+    env = dict(os.environ, GIT_ALLOW_PROTOCOL="https:ssh", GIT_TERMINAL_PROMPT="0")
+    r = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise PluginError("git " + args[0] + " failed: " + clean(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""))
+    return r.stdout.strip()
+
+
+def checkout_url(url, dest, ref=None, commit=None):
+    if not URL_RE.match(url):
+        raise PluginError("only https://, ssh:// and git@ URLs are accepted")
+    if commit:
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise PluginError("--commit must be a full 40-character commit id")
+        git("init", "-q", str(dest))
+        git("remote", "add", "origin", url, cwd=dest)
+        git("fetch", "-q", "--depth", "1", "origin", commit, cwd=dest)
+        git("checkout", "-q", "FETCH_HEAD", cwd=dest)
+        if git("rev-parse", "HEAD", cwd=dest) != commit:
+            raise PluginError(f"{url} did not check out {commit}")
+    else:
+        args = ["clone", "-q", "--depth", "1"]
+        if ref:
+            args += ["--branch", ref]
+        git(*args, "--", url, str(dest))
+
+
+def describe_source(root):
+    """Commit and whether the working tree has uncommitted changes, if it is a git checkout."""
+    try:
+        commit = git("rev-parse", "HEAD", cwd=root)
+        dirty = bool(git("status", "--porcelain", cwd=root))
+        return commit, dirty
+    except (PluginError, FileNotFoundError):
+        return "", False
+
+
+# ---------- install ----------
+def plan_files(paths, m, root, previous):
+    """Every file this install would write: (dest, bytes, mode, kind). Checks collisions."""
+    foreign_ok = {f["path"] for f in previous.get("files", [])} if previous else set()
+    core = core_owned(paths)
+    bin_dir = str(paths.bin) + "/"
+    plan = []
+    for rel in m.qml_files:
+        data = read_source_file(root, rel).replace(BIN_PLACEHOLDER.encode(), str(paths.bin).encode())
+        plan.append((paths.qs / Path(rel).name, data, 0o644, "qml"))
+    for rel in m.bin_files:
+        plan.append((paths.bin / Path(rel).name, read_source_file(root, rel), 0o755, "bin"))
+    for dest, _, _, _ in plan:
+        d = str(dest)
+        if d in core:
+            raise PluginError(f"{d} belongs to Hypora itself; rename the file in the plugin")
+        if (dest.exists() or dest.is_symlink()) and d not in foreign_ok:
+            raise PluginError(f"{d} already exists and is not from this plugin; "
+                              f"move it away or rename the file in the plugin")
+        if d.startswith(bin_dir) and dest.parent != paths.bin:
+            raise PluginError(f"{d} is outside {paths.bin}")
+    return plan
+
+
+def summarize(m, root, plan, commit, dirty, source, previous):
+    lines = [f"  {clean(m.name)}  {clean(m.version)}   id: {m.id}", f"  {clean(m.description)}"] if m.description else \
+            [f"  {clean(m.name)}  {clean(m.version)}   id: {m.id}"]
+    if m.license:
+        lines.append(f"  licence: {clean(m.license)}")
+    lines.append(f"  from: {clean(source)}" + (f" @ {commit[:12]}" if commit else "") + ("  (UNCOMMITTED CHANGES)" if dirty else ""))
+    old_commit = (previous or {}).get("commit", "")
+    lines.append("  " + (("This replaces the installed version" + (f" ({old_commit[:12]})" if old_commit else "") + ".")
+                         if previous else "New install."))
+    lines.append(f"  adds a bar item in the {m.slot} of the bar")
+    lines.append("  files written:")
+    for dest, data, mode, kind in plan:
+        lines.append(f"    {dest}  [{kind}, sha256 {sha(data)[:12]}]")
+    for label, rel in (("install", m.setup_install), ("remove", m.setup_remove)):
+        if rel:
+            lines.append(f"  RUNS AS YOU on {label}: {rel}  [sha256 {sha(read_source_file(root, rel))[:12]}]")
+    if m.setup_env:
+        lines.append("  with environment: " + ", ".join(f"{k}={clean(v, 40)}" for k, v in m.setup_env.items()))
+    return "\n".join(lines)
+
+
+def confirm(question, assume_yes):
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        raise PluginError("not a terminal, so I cannot ask; read the summary above and re-run with --yes")
+    return input(f"{question} [y/N] ").strip().lower().startswith("y")
+
+
+def run_script(path, env_extra, cwd):
+    env = {k: v for k, v in os.environ.items()}
+    env.update(env_extra)
+    env["HYPORA_PLUGIN"] = "1"
+    return subprocess.run([str(path)], cwd=cwd, env=env).returncode
+
+
+def install(paths, source, assume_yes=False, ref=None, commit=None, out=print):
+    if os.geteuid() == 0:
+        raise PluginError("run this as your own user, not root")
+    tmp = None
+    try:
+        if source and URL_RE.match(source):
+            tmp = Path(tempfile.mkdtemp(prefix="hypora-plugin-"))
+            root = tmp / "src"
+            out(f"Fetching {clean(source)} ...")
+            checkout_url(source, root, ref, commit)
+        else:
+            if ref or commit:
+                raise PluginError("--ref and --commit apply to URLs only")
+            root = Path(source or ".").expanduser().resolve()
+            if not root.is_dir():
+                raise PluginError(f"{source} is not a directory")
+        mpath = root / MANIFEST_NAME
+        if not mpath.is_file():
+            raise PluginError(f"no {MANIFEST_NAME} in {root}")
+        m = parse_manifest(mpath.read_text())
+        previous = load_state(paths, m.id)
+        plan = plan_files(paths, m, root, previous)
+        commit_id, dirty = describe_source(root)
+        out("Plugin to install:\n" + summarize(m, root, plan, commit_id, dirty, source or str(root), previous))
+        if not confirm("Install this plugin?", assume_yes):
+            raise PluginError("cancelled; nothing was changed")
+
+        # Write. An edited file from an earlier install is saved aside, like the main installer does.
+        old = {f["path"]: f["sha256"] for f in (previous or {}).get("files", [])}
+        written = []
+        for dest, data, mode, kind in plan:
+            d = str(dest)
+            if dest.is_file() and sha(dest.read_bytes()) not in (sha(data), old.get(d)):
+                backup = dest.with_name(dest.name + f".bak.{int(time.time())}")
+                dest.rename(backup)
+                out(f"!! kept your edited {dest} as {backup.name}")
+            write_atomic(dest, data, mode)
+            written.append({"path": d, "sha256": sha(data), "kind": kind})
+        # Files an older version had and this one dropped.
+        keep = {f["path"] for f in written}
+        for f in (previous or {}).get("files", []):
+            p = Path(f["path"])
+            if f["path"] not in keep and p.is_file() and sha(p.read_bytes()) == f["sha256"]:
+                p.unlink()
+
+        state_dir = paths.plugins / m.id
+        remove_copy = ""
+        if m.setup_remove:
+            remove_copy = str(state_dir / "remove")
+            write_atomic(Path(remove_copy), read_source_file(root, m.setup_remove), 0o755)
+        state = {"id": m.id, "name": m.name, "version": m.version, "component": m.component,
+                 "slot": m.slot, "source": source or str(root), "commit": commit_id,
+                 "enabled": (previous or {}).get("enabled", True), "files": written,
+                 "remove_script": remove_copy, "setup_env": m.setup_env}
+        write_atomic(state_path(paths, m.id), json.dumps(state, indent=1) + "\n")
+        write_enabled_list(paths)
+
+        if m.setup_install:
+            out(f"Running {m.setup_install} ...")
+            script = (root / m.setup_install).resolve()
+            code = run_script(script, m.setup_env, root)
+            if code != 0:
+                raise PluginError(f"{m.setup_install} exited with {code}. The plugin's files are in place; "
+                                  f"fix the problem and run: hypora-plugin update {m.id}")
+        out(f"Installed {m.id}. The bar picks it up on its own.")
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def remove(paths, pid, assume_yes=False, out=print):
+    st = load_state(paths, pid)
+    if not st:
+        raise PluginError(f"'{pid}' is not installed")
+    out(f"Removing {clean(st['name'])} ({pid}):")
+    for f in st["files"]:
+        out(f"  {f['path']}")
+    script = st.get("remove_script", "")
+    if script:
+        out(f"  RUNS AS YOU: {script}  [sha256 {sha(Path(script).read_bytes())[:12]}]" if Path(script).is_file() else "  (its remove script is missing)")
+    if not confirm("Remove it?", assume_yes):
+        raise PluginError("cancelled; nothing was changed")
+    if script and Path(script).is_file():
+        if run_script(script, st.get("setup_env", {}), paths.plugins / pid) != 0:
+            out("!! the remove script reported a problem; continuing")
+    for f in st["files"]:
+        p = Path(f["path"])
+        if p.is_file():
+            if sha(p.read_bytes()) == f["sha256"]:
+                p.unlink()
+            else:
+                out(f"!! left {p} in place: you changed it")
+    shutil.rmtree(paths.plugins / pid, ignore_errors=True)
+    write_enabled_list(paths)
+    out(f"Removed {pid}.")
+
+
+def set_enabled(paths, pid, enabled, out=print):
+    st = load_state(paths, pid)
+    if not st:
+        raise PluginError(f"'{pid}' is not installed")
+    st["enabled"] = enabled
+    write_atomic(state_path(paths, pid), json.dumps(st, indent=1) + "\n")
+    write_enabled_list(paths)
+    out(f"{pid} {'enabled' if enabled else 'disabled'}.")
+
+
+def list_plugins(paths, as_json=False, out=print):
+    states = all_states(paths)
+    if as_json:
+        out(json.dumps(states, indent=1))
+        return
+    if not states:
+        out("No plugins installed.")
+    for s in states:
+        out(f"{s['id']:<24}{clean(s['version']):<10}{s['slot']:<8}{'enabled' if s.get('enabled', True) else 'disabled'}   {clean(s['name'])}")
+
+
+# ---------- command line ----------
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="hypora-plugin", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("install"); p.add_argument("source", nargs="?")
+    p.add_argument("--yes", action="store_true"); p.add_argument("--ref"); p.add_argument("--commit")
+    p = sub.add_parser("remove"); p.add_argument("id"); p.add_argument("--yes", action="store_true")
+    # no --yes for update: it fetches new code, so it always shows the summary and asks
+    p = sub.add_parser("update"); p.add_argument("id")
+    for name in ("enable", "disable"):
+        p = sub.add_parser(name); p.add_argument("id")
+    p = sub.add_parser("list"); p.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    paths = Paths.from_env()
+    try:
+        if a.cmd == "install":
+            install(paths, a.source, a.yes, a.ref, a.commit)
+        elif a.cmd == "remove":
+            remove(paths, a.id, a.yes)
+        elif a.cmd == "update":
+            st = load_state(paths, a.id)
+            if not st:
+                raise PluginError(f"'{a.id}' is not installed")
+            install(paths, st["source"], False, commit=None)
+        elif a.cmd in ("enable", "disable"):
+            set_enabled(paths, a.id, a.cmd == "enable")
+        else:
+            list_plugins(paths, a.json)
+    except PluginError as e:
+        print(f"hypora-plugin: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

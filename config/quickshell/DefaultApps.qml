@@ -4,11 +4,11 @@ import QtQuick
 import QtQuick.Layouts
 
 // Default apps: which app opens each kind of file, and a box to add a type of your own
-// (".qml opens in Neovim"). Everything goes through bin/hypora-defaults, which writes only
-// your ~/.config/mimeapps.list — the file Files, Firefox and xdg-open all read — so a
-// choice here holds everywhere and needs no password. Run `hypora-defaults list` to see
-// exactly what this window reads.
-// Open from the menu (Settings > Default Apps) or:  qs ipc call defaults open
+// (".qml opens in Neovim"). Everything goes through bin/hypora-defaults, which only writes
+// your ~/.config/mimeapps.list (the file Files, Firefox and xdg-open all read), so a choice
+// holds everywhere and needs no password. Run `hypora-defaults list` to see what this
+// window reads. Open it from the menu (Settings > Default Apps) or with:
+// qs ipc call defaults open
 Scope {
     id: root
 
@@ -191,8 +191,7 @@ Scope {
                         id: scroller
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        // Page Up / Page Down without reaching for the mouse. focus here
-                        // is safe: this window has no text input to compete with.
+                        // Page Up / Page Down without the mouse. Focus is safe here: no text input competes.
                         focus: true
                         Keys.onPressed: event => event.accepted = PageScroll.handle(event, scroller)
                         clip: true
@@ -270,8 +269,7 @@ Scope {
                         Text {
                             width: parent.width
                             elide: Text.ElideRight
-                            // A default belongs to the MIME type, so say which other
-                            // extensions a choice here also changes
+                            // A default belongs to the MIME type, so say which other extensions a choice also changes
                             text: !tr.data_ ? ""
                                 : tr.data_.description + (tr.data_.alsoCovers.length
                                     ? " · also ." + tr.data_.alsoCovers.join(", .") : "")
@@ -372,6 +370,7 @@ Scope {
                 Text {
                     anchors { left: arDot.right; right: parent.right; leftMargin: 12; rightMargin: 12; verticalCenter: parent.verticalCenter }
                     text: ar.text
+                    textFormat: Text.PlainText
                     elide: Text.ElideRight
                     font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
                     color: ar.current ? Theme.fg : Theme.dim

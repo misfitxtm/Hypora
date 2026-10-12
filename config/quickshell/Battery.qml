@@ -3,10 +3,9 @@ import QtQuick
 
 // Bar indicator, shown on laptops only. Turns red when low.
 //
-// Reads a real battery out of UPower.devices in preference to the DisplayDevice composite,
-// and shows nothing rather than a number it cannot stand behind. An earlier version read
-// the composite unguarded, so a device that was present but not yet populated rendered its
-// defaults as fact — a bar sitting at 100% while the battery drained.
+// It reads a real battery from UPower.devices in preference to the DisplayDevice composite,
+// and shows nothing rather than a number it cannot trust. (An unpopulated composite used to
+// show its defaults, so the bar read 100% while the battery drained.)
 Row {
     id: root
     readonly property var dev: {

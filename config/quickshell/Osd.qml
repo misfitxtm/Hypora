@@ -5,23 +5,17 @@ import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import QtQuick
 
-// The slider that appears at the bottom of the screen when you press a volume or
-// brightness key, and goes away again.
+// The slider at the bottom of the screen when you press a volume or brightness key.
 //
-// The two halves are driven differently, because the two sources are different:
+// The two halves work differently:
+//   * Volume is a PipeWire property, so it is simply watched. The slider also appears when
+//     the volume changes elsewhere (mouse wheel on the bar icon, control center).
+//   * Brightness is a sysfs file, which does not reliably send change events, so watching
+//     it would mean polling forever. Instead hyprland.lua calls
+//     `qs ipc call osd brightness` after brightnessctl, and the value is read once then.
 //
-//   Volume comes from PipeWire as a property, so it is simply watched. That costs nothing
-//   and means the slider also appears when the volume changes from somewhere else — the
-//   scroll wheel over the bar icon, or the control center.
-//
-//   Brightness has no such thing. The kernel exposes it as a sysfs file, and sysfs does not
-//   reliably raise inotify events, so watching it would mean polling a file several times a
-//   second forever to catch a keypress. Instead the keybind says so: hyprland.lua calls
-//   `qs ipc call osd brightness` right after brightnessctl, and this reads the value once,
-//   when it is actually wanted.
-//
-// Brightness is only wired up where there is a backlight to dim. A desktop has an empty
-// /sys/class/backlight, and a slider that cannot move is worse than no slider.
+// Brightness is only wired up where a backlight exists. A slider that cannot move is
+// worse than none.
 Scope {
     id: root
 
@@ -31,9 +25,8 @@ Scope {
     property string label: ""
     property bool hasBacklight: false
 
-    // Nothing should appear during startup just because the values were read for the first
-    // time. PipeWire publishes the current volume as soon as it connects, which without
-    // this would flash the slider on every login.
+    // Show nothing at startup just because values were read for the first time. PipeWire
+    // publishes the volume on connect, which would flash the slider at every login.
     property bool ready: false
     Component.onCompleted: settle.start()
     Timer { id: settle; interval: 1500; onTriggered: root.ready = true }
@@ -51,8 +44,8 @@ Scope {
 
     IpcHandler {
         target: "osd"
-        // Called by the brightness keybinds, after brightnessctl has already applied the
-        // change — so reading now gets the new value rather than the old one.
+        // Called by the brightness keybinds after brightnessctl has applied the change, so this
+        // reads the new value.
         function brightness(): void { if (root.hasBacklight) readBrightness.running = true }
         function volume(): void { root.showVolume() }
     }
@@ -79,8 +72,7 @@ Scope {
                 const cur = parseFloat(parts[2])
                 const max = parseFloat(parts[4])
                 if (!(max > 0)) return
-                // "sun", because that is the glyph Icon.qml has; there is no
-                // separate brightness one and inventing a name would draw nothing.
+                // "sun" is the glyph Icon.qml has; there is no separate brightness glyph.
                 root.show("sun", cur / max, Math.round(cur / max * 100) + "%")
             }
         }
@@ -94,8 +86,7 @@ Scope {
 
     function showVolume() {
         if (!audio) return
-        // One name, not two: Icon.qml draws the crossed-out speaker itself when level
-        // reaches zero, which is how the bar indicator shows muting too.
+        // One name, not two: Icon.qml draws the crossed-out speaker itself when the level is zero.
         show("volume",
              audio.muted ? 0 : audio.volume,
              audio.muted ? "Muted" : Math.round(audio.volume * 100) + "%")
@@ -119,8 +110,8 @@ Scope {
             implicitHeight: 120
             exclusionMode: ExclusionMode.Ignore
             WlrLayershell.layer: WlrLayer.Overlay
-            // Explicitly none: this is a readout, and taking the keyboard would swallow the
-            // next press of the very key that raised it.
+            // No keyboard focus: this is a readout, and taking focus would swallow the next press of
+            // the key that raised it.
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
             WlrLayershell.namespace: "hypora-osd"
             color: "transparent"
@@ -173,8 +164,7 @@ Scope {
                     id: pct
                     anchors { right: parent.right; rightMargin: 18; verticalCenter: parent.verticalCenter }
                     text: root.label
-                    // Fixed width so the slider doesn't shuffle sideways as the number
-                    // changes width between 9% and 100%
+                    // Fixed width, so the slider does not shift as the number goes from 9% to 100%
                     width: 42
                     horizontalAlignment: Text.AlignRight
                     font.family: Theme.font
