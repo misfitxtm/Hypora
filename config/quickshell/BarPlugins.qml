@@ -44,8 +44,10 @@ Row {
             id: item
             required property var modelData
             anchors.verticalCenter: parent.verticalCenter
-            // Collapse with the item, so a hidden plugin leaves no gap in the bar
-            visible: item.item ? item.item.visible : false
+            // Collapse with the item, so a hidden plugin leaves no gap in the bar. Not by hiding the
+            // Loader: a hidden parent makes the item report visible=false, so it could never come back.
+            width: item.item?.visible ? item.item.implicitWidth : 0
+            height: item.item?.visible ? item.item.implicitHeight : 0
             Component.onCompleted: setSource(modelData.component + ".qml", { window: root.window })
         }
     }

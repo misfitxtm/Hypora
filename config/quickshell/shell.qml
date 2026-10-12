@@ -22,6 +22,7 @@ ShellRoot {
     IconPicker {}
     NetworkSettings {}
     BluetoothSettings {}
+    BluetoothTrust {}
     AudioSettings {}
     DefaultApps {}
     KeybindHelp {}
