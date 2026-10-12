@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Widgets
 import Quickshell.Services.Notifications
 import QtQuick
 import QtQuick.Layouts
@@ -40,10 +41,18 @@ Scope {
                     id: card
                     required property var modelData
                     readonly property bool critical: modelData.urgency === NotificationUrgency.Critical
+                    // Sent image, then the app's icon (name or path), then its desktop entry's icon
+                    readonly property string iconSource: {
+                        if (modelData.image) return modelData.image
+                        const name = modelData.appIcon
+                            || (DesktopEntries.heuristicLookup(modelData.desktopEntry || modelData.appName)?.icon ?? "")
+                        if (name.startsWith("/")) return "file://" + name
+                        return Quickshell.iconPath(name || "dialog-information", "dialog-information")
+                    }
 
                     Layout.fillWidth: true
                     visible: shown(modelData)
-                    implicitHeight: content.implicitHeight + 24
+                    implicitHeight: Math.max(content.implicitHeight, icon.implicitHeight) + 24
                     radius: 8
                     color: Theme.surface
                     border.width: 1
@@ -61,9 +70,28 @@ Scope {
                         onClicked: card.modelData.dismiss()
                     }
 
+                    // The theme has no Claude icon, so Hypora's own logo stands in
+                    readonly property bool isClaude: /claude/i.test(modelData.appName + modelData.appIcon)
+
+                    Item {
+                        id: icon
+                        anchors { left: parent.left; top: parent.top; margins: 12 }
+                        implicitWidth: 40; implicitHeight: 40
+                        IconImage {
+                            anchors.fill: parent
+                            visible: !card.isClaude
+                            source: card.iconSource
+                        }
+                        Icon {
+                            anchors.centerIn: parent
+                            visible: card.isClaude
+                            name: "claude"; size: 32; color: Theme.accent
+                        }
+                    }
+
                     ColumnLayout {
                         id: content
-                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                        anchors { left: icon.right; right: parent.right; top: parent.top; margins: 12 }
                         spacing: 4
 
                         Text {
