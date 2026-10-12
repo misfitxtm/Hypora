@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# hypora-theme [NAME]: apply a Hypora theme everywhere: the Quickshell shell, kitty,
-# Hyprland borders, the lock screen, GTK and Qt apps, and the login screen.
-# Without NAME, lists the installed themes (* marks the current one).
-# Each theme's wallpapers are in ~/.config/hypora/themes/<NAME>/backgrounds/ (add your own there).
+# hypora-theme [NAME]: apply a Hypora theme to the shell, kitty, Hyprland, the lock
+# screen, GTK and Qt apps, and the login screen.
+# With no NAME it lists the installed themes (* marks the current one).
 #
-# Each theme is a palette, ~/.config/hypora/themes/<NAME>/colors.toml. The templates in
-# ~/.config/hypora/templates/ are rendered into ~/.config/hypora/current/, and each app's
-# config points there.
+# A theme is a palette file: ~/.config/hypora/themes/<NAME>/colors.toml. The templates in
+# ~/.config/hypora/templates/ are filled in from it and written to ~/.config/hypora/current/,
+# and each app's config points there. Wallpapers live in
+# ~/.config/hypora/themes/<NAME>/backgrounds/ (add your own there).
 set -euo pipefail
 
 DIR="$HOME/.config/hypora"
@@ -26,8 +26,7 @@ list() {
 
 if [ $# -eq 0 ]; then list; exit 0; fi
 NAME=$1
-# The same rule the root helpers apply to current/name, which this writes: checking it here
-# means a bad name is refused where it was typed, not later by something running as root.
+# Root helpers read this name later, so refuse anything but a plain name here
 if ! [[ $NAME =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,63}$ ]]; then
     echo "Not a plain theme name: '$NAME'" >&2
     exit 1
@@ -38,10 +37,11 @@ if [ ! -f "$COLORS" ]; then
     exit 1
 fi
 
+# value KEY: print the quoted value of KEY from colors.toml
 value() { sed -nE "s/^$1[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\1/p" "$COLORS"; }
 
-# Icon theme: whatever you picked in the menu (Style > Icons) wins over the palette's
-# default, so switching colour theme doesn't quietly change your icons back.
+# The icon theme picked in the menu wins over the palette's default,
+# so changing the colour theme does not change your icons back.
 icon_theme() {
     local chosen=$ICONS_CHOSEN
     if [ -n "$chosen" ] && [ -d "/usr/share/icons/$chosen" -o -d "$HOME/.local/share/icons/$chosen" ]; then
@@ -52,11 +52,9 @@ icon_theme() {
 }
 
 # ---------- validate ----------
-# Every value below is pasted into a sed script, and GNU sed's `e` flag runs text as a shell
-# command — so a value carrying `|` could break out of its substitution and run anything.
-# A colors.toml is something people share, which makes it untrusted input. Values are either
-# a colour or a plain name (fonts, GTK and icon themes, modes); refuse anything else rather
-# than trying to escape it.
+# Every value is pasted into a sed script, and a value containing `|` could break out and
+# run a command (sed's `e` flag). People share colors.toml files, so treat them as
+# untrusted: allow only a #rrggbb colour or a plain name, and refuse everything else.
 while read -r key val; do
     if ! [[ $val =~ ^#[0-9a-fA-F]{6}$ || $val =~ ^[A-Za-z0-9\ ._+-]*$ ]]; then
         echo "Refusing theme '$NAME': '$key' has an unexpected value: $val" >&2
@@ -65,7 +63,7 @@ while read -r key val; do
     fi
 done < <(sed -nE 's/^([a-z_]+)[[:space:]]*=[[:space:]]*"([^"]*)".*/\1 \2/p' "$COLORS")
 
-# The icon theme comes from its own file and lands in the same sed script
+# The icon theme name goes into the same sed script, so check it too
 ICONS_CHOSEN=$(cat "$DIR/icons" 2>/dev/null || true)
 if [ -n "$ICONS_CHOSEN" ] && ! [[ $ICONS_CHOSEN =~ ^[A-Za-z0-9\ ._+-]*$ ]]; then
     echo "Ignoring $DIR/icons: '$ICONS_CHOSEN' is not a plain icon theme name" >&2
@@ -73,7 +71,8 @@ if [ -n "$ICONS_CHOSEN" ] && ! [[ $ICONS_CHOSEN =~ ^[A-Za-z0-9\ ._+-]*$ ]]; then
 fi
 
 # ---------- render ----------
-# Every `key = "value"` becomes {{ key }}; colors also get {{ key_hex }} without the '#'.
+# Each `key = "value"` becomes {{ key }} in the templates. Colours also get {{ key_hex }}
+# (no '#') and {{ key_rgb }} ("R;G;B" in decimal, for terminal truecolor codes).
 subs=$(mktemp)
 trap 'rm -f "$subs"' EXIT
 {
@@ -84,10 +83,6 @@ trap 'rm -f "$subs"' EXIT
         printf 's|{{ %s }}|%s|g\n' "$key" "$val"
         if [[ $val == \#* ]]; then
             printf 's|{{ %s_hex }}|%s|g\n' "$key" "${val#\#}"
-            # {{ key_rgb }} as "R;G;B" decimals, for anything speaking ANSI truecolor —
-            # eza's EZA_COLORS wants 38;2;R;G;B. Doing the conversion here keeps those
-            # templates reading from the same palette as everything else, rather than
-            # falling back to the 16 ANSI slots and quietly drifting from the theme.
             h=${val#\#}
             if [ ${#h} -eq 6 ]; then
                 printf 's|{{ %s_rgb }}|%d;%d;%d|g\n' "$key" \
@@ -106,9 +101,8 @@ for tpl in "$TEMPLATES"/*.tpl; do
     fi
     mv "$out.new" "$out"
 done
-# Boot screen images. The .plymouth file is rendered by the template loop above, but the
-# passphrase field, bullets, padlock and watermark are PNGs, so they get drawn per palette.
-# Prefer the copy next to this script: during install.sh ~/.local/bin may not be on PATH yet
+# Boot screen images (passphrase field, bullets, padlock) are PNGs drawn from the palette.
+# Use the copy next to this script, because ~/.local/bin may not be on PATH during install.
 PLYGEN=$(command -v hypora-plymouth 2>/dev/null || true)
 [ -n "$PLYGEN" ] || PLYGEN="$(dirname "$(readlink -f "$0")")/hypora-plymouth"
 if [ -x "$PLYGEN" ]; then
@@ -119,14 +113,15 @@ if [ -x "$PLYGEN" ]; then
         || echo "warning: could not draw the boot screen images" >&2
 fi
 
-# Wallpapers: the shell shows current/backgrounds/; a new theme starts at its first one
+# Wallpapers: the shell reads current/backgrounds/. A new theme starts at its first image.
 [ "$(current)" = "$NAME" ] || rm -f "$OUT/wallpaper"
 mkdir -p "$THEMES/$NAME/backgrounds"
 ln -sfn "$THEMES/$NAME/backgrounds" "$OUT/backgrounds"
 echo "$NAME" > "$OUT/name"
 
 # ---------- point each app at the rendered files ----------
-link() {   # link <target> <path>: symlink, backing up a real file that's in the way
+# link TARGET PATH: symlink PATH to TARGET, keeping a backup of a real file in the way
+link() {
     mkdir -p "$(dirname "$2")"
     if [ -e "$2" ] && [ ! -L "$2" ]; then mv "$2" "$2.bak.$(date +%s)"; fi
     ln -sfn "$1" "$2"
@@ -156,14 +151,12 @@ if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
 fi
 pkill -USR1 -x kitty 2>/dev/null || true   # kitty reloads its config on SIGUSR1
 
-# Login screen colors. This file is root-owned on purpose (the greeter reads it before
-# login), so it updates when we can already ask for privileges: from a terminal, or during
-# install.sh. Switching theme from the GUI picker leaves the login screen as it was.
+# Login screen colours. The file is owned by root (the greeter reads it before anyone
+# logs in), so it is only updated when we can ask for sudo: from a terminal, or during
+# install.sh. Switching from the theme picker leaves the login screen unchanged.
 SDDM_CONF=/usr/share/sddm/themes/hypora/theme.conf
-# Carry over the `primary` line hypora-greeter writes. It records which monitor shows the
-# login panel, which is nothing to do with the palette — but it lives in the same file,
-# because this SDDM build has no theme.conf.user to keep local settings separate. Without
-# this, switching theme would silently put the login screen back on every monitor.
+# hypora-greeter stores a `primary` line (which monitor shows the login panel) in the same
+# file. Copy it across, or switching theme would show the login panel on every monitor.
 if [ -f "$SDDM_CONF" ]; then
     keep_primary=$(grep -E '^primary[[:space:]]*=' "$SDDM_CONF" 2>/dev/null | head -1 || true)
     [ -n "$keep_primary" ] && printf '%s\n' "$keep_primary" >> "$OUT/sddm-theme.conf"
@@ -178,18 +171,10 @@ if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CO
         || echo "Couldn't update the login screen colors; run: sudo install -m644 $OUT/sddm-theme.conf $SDDM_CONF" >&2
 fi
 
-# Qt apps that run as root. btrfs-assistant is the one Hypora ships that does: it launches
-# through pkexec, so it has root's environment, and root has no ~/.config/qt6ct — leaving it
-# the only window on the desktop in stock Fusion grey.
-#
-# /etc/xdg/qt6ct/qt6ct.conf is qt6ct's documented system-wide default (its README: "/etc/xdg/
-# qt6ct/qt6ct.conf - default configuration file"), so this themes any root Qt app, not just
-# that one. btrfs-assistant's launcher already forwards QT_QPA_PLATFORMTHEME through pkexec,
-# which is what makes qt6ct load at all on that side.
-#
-# The colours are copied to /etc/xdg rather than pointed at from there. The user's config
-# names a palette under $HOME, and a root process must not read a path its own user can
-# rewrite — that is the rule the root-owned helpers in /usr/local/bin exist to keep.
+# Qt apps that run as root (btrfs-assistant, started with pkexec) do not see
+# ~/.config/qt6ct, so they would stay unthemed. qt6ct also reads /etc/xdg/qt6ct, so put a
+# copy there. The colours are copied, not linked: root must not read a path in $HOME that
+# the user can change.
 QT_SYS_DIR=/etc/xdg/qt6ct
 sed "s|^color_scheme_path=.*|color_scheme_path=$QT_SYS_DIR/colors.conf|" \
     "$OUT/qt6ct.conf" > "$OUT/qt6ct-system.conf"
@@ -203,11 +188,8 @@ if [ -t 0 ] || [ -w "$QT_SYS_DIR" ]; then
     fi
 fi
 
-# Boot screen. Root-owned like the login screen, and with the same rule: update it when we
-# can already ask for privileges (a terminal, or install.sh), and leave it alone when the
-# theme is switched from the GUI picker. The copy that actually renders at boot lives in the
-# initramfs, so it only changes after dracut runs — which is slow enough not to do here
-# behind your back.
+# Boot screen. Same rule as the login screen: only update it when we can ask for sudo.
+# The copy used at boot is inside the initramfs, so it only changes after `dracut -f`.
 PLY_DIR=/usr/share/plymouth/themes/hypora
 if [ -d "$PLY_DIR" ] && [ -f "$OUT/plymouth.plymouth" ]; then
     if ! cmp -s "$OUT/plymouth.plymouth" "$PLY_DIR/hypora.plymouth"; then
@@ -226,16 +208,14 @@ if [ -d "$PLY_DIR" ] && [ -f "$OUT/plymouth.plymouth" ]; then
     fi
 fi
 
-# Console colours, if they were ever applied. Changing them means editing the kernel command
-# line and rebooting, so this only says so rather than doing it.
+# Console colours are kernel arguments, so just tell the user to re-apply them
 if grep -q "vt.default_red=" /proc/cmdline 2>/dev/null; then
     echo "Text console is still on the previous theme's colours; run: sudo hypora-console apply"
 fi
 
-# Boot menu, same reasoning: re-theming GRUB means regenerating grub.cfg as root, which is
-# far too much to do behind a theme switch. Compared rather than assumed stale — switching
-# between two themes and back would otherwise keep nagging about a menu already correct.
-# `print` prefixes a "# theme:" line, hence the tail.
+# Boot menu: regenerating grub.cfg needs root, so only say so. Compare with the installed
+# theme first, so switching away and back does not show a false warning.
+# (`hypora-grub print` adds a "# theme:" line at the top, which `tail` removes.)
 GRUB_THEME_FILE=/boot/grub2/themes/hypora/theme.txt
 if [ -f "$GRUB_THEME_FILE" ] && command -v hypora-grub >/dev/null 2>&1; then
     if ! hypora-grub print 2>/dev/null | tail -n +2 | cmp -s - "$GRUB_THEME_FILE"; then

@@ -24,11 +24,10 @@ Singleton {
         { id: "Settings", label: "Settings" }
     ]
 
-    // Control panels are dropped from the menu and launcher entirely. The freedesktop
-    // Settings category is the only signal available here — Quickshell doesn't expose
-    // OnlyShowIn — and on a Hyprland session these are GNOME's own panels, built for a
-    // shell that isn't running. Hypora's Settings section lists its own windows instead.
-    // This does not touch Files, Calculator, Disks or Software, which are plain apps.
+    // Control panels are left out of the menu and launcher. The freedesktop Settings category
+    // is the only signal available (Quickshell does not expose OnlyShowIn), and on Hyprland
+    // these are GNOME panels built for a shell that is not running. Hypora's Settings section
+    // lists its own windows. Plain apps (Files, Calculator, Disks, Software) are not affected.
     function isSettings(entry) { return entry.categories.includes("Settings") }
 
     readonly property var byName: DesktopEntries.applications.values
@@ -41,21 +40,17 @@ Singleton {
     // Categories that at least one installed app belongs to
     readonly property var categories: allCategories.filter(c => all.some(e => e.categories.includes(c.id)))
 
-    // Categories in order of how much they actually say about an app. System and Utility
-    // come last because they're what a .desktop file falls back to when it has nothing more
-    // specific to offer, so "Network" is a better answer than "Utility" for something
-    // claiming both.
+    // Categories ordered by how much they say about an app. System and Utility come last:
+    // they are the fallback when a .desktop file has nothing more specific, so "Network" is
+    // a better answer than "Utility".
     readonly property var describeCategories: [
         "AudioVideo", "Audio", "Video", "Development", "Education", "Game",
         "Graphics", "Network", "Office", "Science", "Settings", "System", "Utility"
     ]
 
     // One short phrase saying what an app is, for the launcher's right-hand column.
-    //
-    // GenericName is the field meant for exactly this, but fewer than half the .desktop
-    // files on a Fedora system set it — so the column was simply blank for things like
-    // Calculator, Disks and Document Viewer. Comment is set by most of the rest and reads
-    // well enough here; failing both, the app's main category at least places it.
+    // GenericName is meant for this, but under half the .desktop files on Fedora set it.
+    // Comment is set by most of the rest. Failing both, the main category is used.
     function describe(entry) {
         if (!entry) return ""
         if (entry.genericName) return entry.genericName
@@ -91,9 +86,8 @@ Singleton {
         Quickshell.execDetached(useUwsm ? ["uwsm", "app", "--", ...argv] : argv)
     }
 
-    // Run a shell command line in the theme's terminal. If it exits non-zero, hold the
-    // window open: a terminal tool that can't start prints why and quits straight away,
-    // and without this the window vanishes before you can read it.
+    // Run a shell command line in the theme's terminal. If it exits non-zero, keep the window
+    // open so you can read the error.
     readonly property string holdOnError:
         '; rc=$?; if [ $rc -ne 0 ]; then printf "\\n[exited with status %s]\\nPress Enter to close. " "$rc"; read _; fi'
 
@@ -113,9 +107,8 @@ Singleton {
         onExited: code => root.useUwsm = code === 0
     }
 
-    // The installer asks before installing Claude Code and defaults to no, so the menu has
-    // to find out rather than assume. Checked once at startup; installing it later shows up
-    // after a shell reload.
+    // The installer asks before installing Claude Code (default no), so the menu must check.
+    // Checked once at startup; after installing it, reload the shell.
     property bool hasClaude: false
     Process {
         command: ["sh", "-c", "command -v claude"]
@@ -123,14 +116,9 @@ Singleton {
         onExited: code => root.hasClaude = code === 0
     }
 
-    // Two conditions, because either one failing makes the menu entry a dead end: fprintd
-    // has to be installed to enrol against, and it has to actually have a device.
-    //
-    // `hypora-hardware fingerprint` now asks fprintd rather than guessing from USB ids.
-    // It used to exit 0 on the USB scan alone, which offered the entry on machines whose
-    // reader libfprint cannot drive — several ThinkPad models — and enrolling there got
-    // as far as `NoSuchDevice: No devices available`. Hardware present is not the same
-    // question as hardware supported.
+    // Two conditions, because either failing makes the menu entry a dead end: fprintd must be
+    // installed to enrol against, and must report a device. `hypora-hardware fingerprint` asks
+    // fprintd, because a reader being present does not mean libfprint supports it.
     property bool hasFingerprint: false
     Process {
         command: ["sh", "-c",

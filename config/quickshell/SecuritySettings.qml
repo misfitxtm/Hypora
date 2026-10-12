@@ -4,14 +4,13 @@ import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Layouts
 
-// Security and privacy: what the machine's security state actually is, and the switches
-// that genuinely change it. Every switch says what it covers — and what it doesn't.
+// Security and privacy: the machine's real security state, and the switches that change it.
+// Each switch says what it covers and what it does not.
 //
 // Readings and privileged changes go through /usr/local/bin/hypora-security. That path is
-// root-owned on purpose: pkexec runs it as root, and a helper sitting somewhere the user
-// can write would turn any write access to $HOME into root. Run `hypora-security status`
-// yourself to see exactly what this window is reading.
-// Open from the menu (Security) or:  qs ipc call security open
+// root-owned on purpose: pkexec runs it as root, so a copy the user can write would turn
+// any write access to $HOME into root. Run `hypora-security status` to see what this
+// window reads. Open it from the menu (Security) or with: qs ipc call security open
 Scope {
     id: root
 
@@ -35,9 +34,7 @@ Scope {
             property var info: null
             property var deepInfo: null        // result of the one privileged pass, if run
             property bool deepRunning: false
-            // Tracked per reading, not as one flag: the pass can come back with one half and
-            // not the other, and a half-filled result used to hide the button while the rows
-            // were still asking for it.
+            // Tracked per reading, not as one flag: the pass can return one half and not the other.
             readonly property bool haveFirmware: deepInfo !== null && !!deepInfo.firmware
             readonly property bool haveFirewallDetail: deepInfo !== null
                                                        && !!deepInfo.firewallDetail
@@ -50,23 +47,22 @@ Scope {
             readonly property var micAudio: source ? source.audio : null
             PwObjectTracker { objects: win.source ? [win.source] : [] }
 
-            // Only ever the unprivileged pass: deepInfo is kept separately, so refreshing
-            // after a toggle never blanks the privileged rows and never re-prompts.
+            // Only the unprivileged pass. deepInfo is kept apart, so refreshing after a toggle never
+            // blanks the privileged rows and never asks for a password again.
             function refresh() {
                 if (probe.running) return
                 loading = info === null
                 probe.running = true
             }
 
-            // Privileged changes go through pkexec, which raises Hypora's polkit prompt.
-            // argv, not a shell string: nothing here is word-split or glob-expanded, and
-            // the helper validates each value against a fixed list anyway.
+            // Privileged changes go through pkexec (Hypora's polkit prompt). The command is an argv
+            // list, not a shell string, so nothing is split or expanded; the helper also checks each
+            // value against a fixed list.
             readonly property string helper: "/usr/local/bin/hypora-security"
 
-            // What the user just asked for, before the system has caught up. A row shows
-            // this in preference to the last reading, so a switch moves under the cursor
-            // instead of sitting still until the next poll. Cleared by the next reading, or
-            // rolled back if the command fails -- so it is a head start, never a lie.
+            // What the user just asked for, before the system catches up. A row shows this instead of
+            // the last reading, so a switch moves right away. The next reading clears it, and a
+            // failed command rolls it back.
             property var pending: ({})
 
             function setPending(key, value) {
@@ -82,10 +78,7 @@ Scope {
                 return pending[key] === undefined ? actual : pending[key]
             }
 
-            // One process for changes, so the refresh happens the moment the change is
-            // actually done. The old version fired and forgot, then re-read on a 1.5s
-            // timer -- which is where the lag came from: the work took milliseconds and
-            // the window waited anyway.
+            // One process for changes, so the refresh runs as soon as the change is done (no timer).
             Process {
                 id: action
                 property var keys: []
@@ -93,14 +86,11 @@ Scope {
                 stderr: StdioCollector { id: actionErr }
                 onExited: code => {
                     if (code === 0) {
-                        // Show what it said even when it worked. A command can succeed and
-                        // still have something worth reading, and discarding stderr on
-                        // success once meant the single message that mattered — a warning
-                        // that the next boot would hang — went nowhere at all.
+                        // Show the output even when the command worked: it can still hold a warning worth reading.
                         const said = actionErr.text.trim()
                         win.notice = said !== "" ? said.split("\n")[0] : ""
                     } else {
-                        // It didn't happen, so stop claiming it did
+                        // It did not happen, so stop claiming it did
                         win.dropPending(action.keys)
                         const why = actionErr.text.trim()
                         win.notice = code === 126 ? "Authentication cancelled."
@@ -111,8 +101,8 @@ Scope {
                 }
             }
 
-            // `key`/`optimistic` are optional: pass them for a row whose own control should
-            // move straight away, leave them off for an action with no switch of its own.
+            // `key` and `optimistic` are optional. Pass them for a row whose own control should move
+            // at once; leave them off for an action with no switch.
             function admin(args, what, key, optimistic) {
                 if (action.running) return
                 notice = what
@@ -123,7 +113,7 @@ Scope {
                 action.running = true
             }
 
-            // Same shape as admin(), without pkexec: these are the user's own settings.
+            // Same as admin(), without pkexec: these are the user's own settings.
             Process {
                 id: userAction
                 property var keys: []
@@ -146,9 +136,8 @@ Scope {
                         pendingKey, optimistic)
             }
 
-            // Plain `status` makes no call that can reach polkit, so this is safe to run
-            // whenever. The two readings that can — fwupd's BIOS settings and firewalld's
-            // zone — live in the separate privileged pass below.
+            // Plain `status` cannot reach polkit, so this is safe to run any time. The two readings
+            // that can (fwupd's BIOS settings and firewalld's zone) are in the privileged pass below.
             Process {
                 id: probe
                 command: [win.helper, "status"]
@@ -156,23 +145,19 @@ Scope {
                     onStreamFinished: {
                         try { win.info = JSON.parse(text) } catch (e) { win.info = null }
                         win.loading = false
-                        // This reading is now the truth, so the optimistic state has done
-                        // its job. Not while a change is still running: that reading would
-                        // predate it and would flip the control back under the cursor.
+                        // This reading is now the truth, so the optimistic state is done. Not while a change is
+                        // still running: that reading would predate it and flip the control back.
                         if (!action.running && !userAction.running) win.pending = ({})
                     }
                 }
                 onExited: code => { if (code !== 0 && win.info === null) win.loading = false }
             }
 
-            // The two readings that need root, gathered by one privileged process so there is
-            // one password prompt rather than one per service. pkexec runs the root-owned
-            // helper; `deep` deliberately re-reads nothing of yours, so running it as root
-            // can't substitute root's settings for your own.
+            // The two readings that need root, gathered by one process so there is one password
+            // prompt. It re-reads nothing of yours, so root's settings cannot replace your own.
             //
-            // This is why the shell itself never runs as root: Quickshell is a single process
-            // loading QML out of ~/.config/quickshell, which you can write — privileged code
-            // must not live on a path its user can edit.
+            // The shell itself never runs as root: Quickshell loads QML from ~/.config/quickshell,
+            // which you can write, and privileged code must not live on a path its user can edit.
             Process {
                 id: deepProbe
                 command: ["pkexec", win.helper, "deep"]
@@ -197,10 +182,8 @@ Scope {
                 deepProbe.running = true
             }
 
-            // There is no periodic refresh on purpose. Re-reading on a timer is what turned a
-            // single password prompt into one every fifteen seconds; the window reloads when
-            // it opens and when a change it made has finished, which it now knows about
-            // because it waits on the process rather than guessing at a delay.
+            // No periodic refresh, on purpose: a timer once caused a password prompt every fifteen
+            // seconds. The window reloads when it opens and when one of its changes finishes.
             Component.onCompleted: refresh()
 
             Rectangle {
@@ -242,8 +225,7 @@ Scope {
                         id: scroller
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        // Page Up / Page Down without reaching for the mouse. focus here
-                        // is safe: this window has no text input to compete with.
+                        // Page Up / Page Down without the mouse. Focus is safe here: no text input competes.
                         focus: true
                         Keys.onPressed: event => event.accepted = PageScroll.handle(event, scroller)
                         visible: win.info !== null
@@ -256,9 +238,7 @@ Scope {
                             width: parent.width
                             spacing: 4
 
-                            // A banner, not a pill in a row: it unlocks rows in two separate
-                            // sections, and as a small button it read as a footnote to whichever
-                            // section it happened to sit next to.
+                            // A banner, not a small button: it unlocks rows in two sections.
                             Rectangle {
                                 id: deepBanner
                                 Layout.fillWidth: true
@@ -313,17 +293,13 @@ Scope {
                             }
 
                             // ---------- Security ----------
-                            // Everything about the state of the machine. The things that are
-                            // about you rather than it are under Privacy, further down.
+                            // Everything about the state of the machine. Things about you are under Privacy below.
                             Heading { text: "Security" }
 
                             StatusRow {
                                 readonly property var sb: win.info ? win.info.secureBoot : null
-                                // Setup Mode is its own state, not a flavour of "Off". The
-                                // firmware menu says Enabled while nothing is being verified,
-                                // so reporting a bare "Off" reads as though the switch never
-                                // took — and amber rather than red, because it is half done
-                                // rather than untouched.
+                                // Setup Mode is its own state, not a kind of "Off": the firmware menu says Enabled but
+                                // nothing is verified. Shown amber, not red, because it is half done.
                                 readonly property bool sbSetup: sb !== null && !sb.enabled
                                                                 && sb.setupMode === true
                                 icon: !sb ? "shield" : sb.enabled ? "shield-check" : "shield-alert"
@@ -343,17 +319,13 @@ Scope {
                                         : "The firmware will run any bootloader. Turn Secure Boot on in your UEFI setup screen."
                             }
 
-                            // Reports / and /home separately, because they answer different
-                            // questions and are commonly not the same answer: encrypting
-                            // only the volume your files live on is a deliberate and
-                            // reasonable layout, and saying "not encrypted" at someone who
-                            // did exactly that is simply wrong.
+                            // / and /home are reported separately: encrypting only the volume your files are on is a
+                            // reasonable layout, and "not encrypted" would be wrong for it.
                             StatusRow {
                                 readonly property var enc: win.info ? win.info.encryption : null
                                 readonly property int exposed: enc && enc.unencryptedSwap ? enc.unencryptedSwap.length : 0
-                                // Your files are the thing worth protecting, so they decide
-                                // the colour; an unencrypted system volume is a warning, not
-                                // a failure.
+                                // Your files matter most, so they decide the colour. An unencrypted system volume is a
+                                // warning, not a failure.
                                 readonly property bool dataSafe: enc !== null && enc.homeEncrypted
                                 readonly property bool allSafe: dataSafe && enc.rootEncrypted && exposed === 0
 
@@ -408,15 +380,10 @@ Scope {
                                 }
                             }
 
-                            // Swap holds whatever was in memory, so plaintext swap is a
-                            // hole straight through disk encryption. The fix offered here
-                            // is a swapfile on the encrypted root rather than encrypting a
-                            // swap partition in place: the latter needed a crypttab entry,
-                            // a GPT type change and the removal of resume=, three pieces of
-                            // boot-critical state, and getting them wrong left a machine
-                            // unbootable. A swapfile inside the encrypted root is encrypted
-                            // because of where it lives, and the only persistent change is
-                            // one fstab line carrying nofail.
+                            // Swap holds whatever was in memory, so plaintext swap defeats disk encryption. The fix
+                            // offered is a swapfile on the encrypted root: it is encrypted by where it lives, and the
+                            // only permanent change is one fstab line with nofail. (Encrypting a swap partition in
+                            // place needed three boot-critical changes and once left a machine unbootable.)
                             ColumnLayout {
                                 id: swapFix
                                 Layout.fillWidth: true
@@ -436,9 +403,8 @@ Scope {
                                 visible: canAdd || haveFile || exposed !== ""
                                 property bool confirming: false
 
-                                // Plaintext swap partitions are reported, not offered a fix.
-                                // Removing a partition is destructive and belongs in an
-                                // installer, not behind a button in a settings window.
+                                // Plaintext swap partitions are reported, not fixed. Removing a partition is destructive
+                                // and belongs in an installer.
                                 Text {
                                     Layout.fillWidth: true
                                     visible: swapFix.exposed !== ""
@@ -549,8 +515,7 @@ Scope {
                                         : "Not passing: " + fw.failed.map(f => `${f.name} (${f.result})`).join(", ")
                             }
 
-                            // Firmware updates are the one thing here that writes to the
-                            // hardware, so they're a button rather than anything automatic.
+                            // Firmware updates write to the hardware, so they are a button, never automatic.
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.leftMargin: 12
@@ -562,11 +527,9 @@ Scope {
                                     small: true
                                     onClicked: {
                                         win.notice = "Firmware updater opened."
-                                        // --title, not the escape sequence the script also sets:
-                                        // Hyprland decides float/pin when the window is mapped, and
-                                        // a title set afterwards by the program is too late, so the
-                                        // window ends up tiled. Apps.run rather than inTerminal
-                                        // because the script already waits for a keypress itself.
+                                        // Use --title, not only the escape sequence the script sets: Hyprland decides float/pin
+                                        // when the window is mapped, so a title set later leaves it tiled. Apps.run is used
+                                        // instead of inTerminal because the script already waits for a keypress.
                                         Apps.run([Theme.terminal, "--title", "Firmware Update",
                                                   "-e", "hypora-firmware"])
                                     }
@@ -642,7 +605,7 @@ Scope {
                             }
 
                             StatusRow {
-                                // Running state is free; zone and ports come from the privileged pass
+                                // Running state is cheap; zone and ports come from the privileged pass
                                 readonly property var fwl: {
                                     const base = win.info ? win.info.firewall : null
                                     if (!base) return null
@@ -723,8 +686,7 @@ Scope {
                                 tone: !se || !se.available ? Theme.dim
                                     : se.mode === "enforcing" ? Theme.accent
                                     : se.mode === "permissive" ? Theme.warn : Theme.error
-                                // "Mode" on its own meant nothing once the SELinux heading
-                                // above it went away
+                                // "Mode" alone meant nothing once the SELinux heading above it was removed
                                 title: "SELinux"
                                 value: !se ? "" : !se.available ? "Not installed"
                                      : se.mode.charAt(0).toUpperCase() + se.mode.slice(1)
@@ -786,7 +748,7 @@ Scope {
                                     color: Theme.dim
                                 }
                                 Repeater {
-                                    model: ["Enforcing", "Permissive", "Disabled"]
+                                    model: ["Enforcing", "Permissive"]
                                     Pill {
                                         required property string modelData
                                         readonly property string want: modelData.toLowerCase()
@@ -795,18 +757,15 @@ Scope {
                                         current: win.shown("selinuxBoot",
                                                     win.info ? win.info.selinux.boot : "") === want
                                         onClicked: win.admin(["selinux-boot", want],
-                                            want === "disabled" ? "Will be off after a reboot…"
-                                                                : "Will relabel on the next boot…",
+                                            "Will relabel on the next boot…",
                                             "selinuxBoot", want)
                                     }
                                 }
                             }
 
                             // ---------- Privacy ----------
-                            // The sensors that can observe you, and the record of what you
-                            // opened. Grouped by who the subject is, not by what kind of
-                            // component it happens to be -- a camera and a microphone belong
-                            // with location services, not with the disk and the firewall.
+                            // The sensors that can observe you, and the record of what you opened. Grouped by subject
+                            // (camera and microphone with location), not by component type.
                             Heading { text: "Privacy" }
 
                             ToggleRow {
@@ -830,11 +789,9 @@ Scope {
                                 readonly property var cam: win.info ? win.info.camera : null
                                 icon: "camera"
                                 title: "Camera"
-                                // present and controllable are separate: a camera that
-                                // exists but isn't a USB one can't be switched off by
-                                // unloading uvcvideo, and a camera that is switched off is
-                                // still present — which is what keeps this switch usable
-                                // once you have used it once.
+                                // `present` and `controllable` are separate: a camera that is not USB cannot be switched
+                                // off by unloading uvcvideo, and a switched-off camera is still present, so the switch
+                                // stays usable.
                                 available: cam !== null && cam.present && cam.controllable
                                 checked: win.shown("camera", cam !== null && cam.enabled)
                                 detail: !cam ? ""
@@ -850,8 +807,7 @@ Scope {
                                                      "camera", !checked)
                             }
 
-                            // Already instant: this sets a PipeWire property directly rather
-                            // than shelling out, so there is nothing to be optimistic about.
+                            // Instant: this sets a PipeWire property directly, so nothing needs to be optimistic.
                             ToggleRow {
                                 icon: win.micAudio && win.micAudio.muted ? "mic-off" : "mic"
                                 title: "Microphone"

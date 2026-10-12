@@ -92,14 +92,12 @@ Image {
         case "calendar":
             return '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/>'
                  + '<line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'
-        // Weather, keyed to what hypora-weather reports.
+        // Weather, matching what hypora-weather reports.
         //
-        // These two are drawn to fill the viewBox like the rest of the set: an earlier cloud
-        // filled only 13.4 of the 24 units, so next to the clipboard or lock at the same
-        // nominal size it looked half as big. The arcs are elliptical because a cloud is
-        // wider than it is tall — a circular one tall enough to match would run off the
-        // sides. The composites below keep the older, smaller cloud body on purpose, since
-        // their precipitation marks need the bottom of the box.
+        // These fill the viewBox like the rest of the set (an earlier cloud filled only 13.4 of 24
+        // units and looked half-size). The arcs are elliptical because a cloud is wider than tall.
+        // The combined icons below keep the smaller cloud, since their rain and snow marks need
+        // the bottom of the box.
         case "cloud":
             return '<path d="M16.7 20.3H9.4a6 8.3 0 1 1 5.8-10.6h1.5a3.9 5.3 0 1 1 0 10.6z"/>'
         case "partly":

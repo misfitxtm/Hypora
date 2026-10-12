@@ -27,6 +27,8 @@ This edits the file that decides whether you can log in, so it is done carefully
 - **The original is backed up** to `/etc/pam.d/sddm.hypora-<timestamp>` before anything is written, and the installer prints the path.
 - **It is idempotent** — a second run detects the lines and leaves them alone.
 
+The `password` line goes in `/etc/authselect/system-auth` (what `/etc/pam.d/system-auth` links to) **before** the `pam_unix` password line, not after: `pam_unix` is `sufficient`, so a successful change ends the stack there and a line placed after it never runs. `authselect apply-changes` rewrites that file; re-run `./install.sh` to put the line back.
+
 Skip it with `KEYRING_AUTOUNLOCK=no ./install.sh`, or undo it by deleting those three lines.
 
 If you are **still** asked for a keyring password after this, the usual cause is a login keyring that already exists with a *different* password — PAM is offering your login password and the keyring wants the old one. Either change the keyring's password to match your login password in Seahorse (`gnome-keyring` ships it as **Passwords and Keys**), or delete `~/.local/share/keyrings/login.keyring` and let it be recreated, which loses whatever was stored in it.

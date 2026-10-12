@@ -2,27 +2,19 @@
 """hypora-grub: put the active theme's colours on the GRUB boot menu.
 
     hypora-grub print      show the theme.txt that would be written (no root)
-    hypora-grub status     show what GRUB is currently configured to do
+    hypora-grub status     show what GRUB is configured to do now
     hypora-grub apply      install the theme and switch GRUB to graphics mode (root)
-    hypora-grub remove     take it back off and restore the text menu (root)
+    hypora-grub remove     remove the theme and restore the text menu (root)
 
-A deliberately plain menu: the wordmark, the entries, one accent bar on the selected one,
-and the keys along the bottom. No window chrome, no distro branding, nothing that moves.
+Three GRUB facts explain why this is more than copying a file:
 
-Three things about GRUB make this more than dropping a file in place:
+  * A theme does nothing in text mode. Fedora uses GRUB_TERMINAL_OUTPUT="console", so
+    `apply` switches it to gfxterm.
+  * GRUB cannot use system fonts. It reads its own .pf2 format, so fonts are converted
+    with grub2-mkfont. If that fails GRUB uses its built-in font.
+  * A selected row cannot be filled with a colour, so the accent mark is a small PNG.
 
-  * **A theme does nothing in text mode.** Fedora ships GRUB_TERMINAL_OUTPUT="console",
-    which is exactly that, so a theme installed without changing it is invisible and looks
-    like the theme is broken. `apply` switches it to gfxterm and sets a gfxmode.
-  * **GRUB has no system fonts.** It reads its own .pf2 format, so a font has to be
-    converted with grub2-mkfont. If that fails the theme still works — GRUB falls back to
-    its built-in font, which is legible but small.
-  * **The selected row cannot be filled with a colour.** selected_item_color sets the text,
-    not the background, so the accent bar behind the current entry has to be an image. It is
-    a 1x1 PNG, stretched by GRUB's nine-slice scaler.
-
-Everything here is written with the standard library, PNG included, so it adds no
-dependency beyond grub2-mkconfig and (optionally) grub2-mkfont.
+Only the standard library is used (the PNG is written by hand).
 """
 import os
 import re
@@ -30,20 +22,21 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import zlib
 from pathlib import Path
 
 THEME_NAME = "hypora"
 GRUB_DEFAULT = Path("/etc/default/grub")
-# The keys apply() owns. Anything else in /etc/default/grub is left exactly as it was.
+# The keys `apply` owns. Everything else in /etc/default/grub is left alone.
 MANAGED = ("GRUB_THEME", "GRUB_TERMINAL_OUTPUT", "GRUB_GFXMODE", "GRUB_GFXPAYLOAD_LINUX")
 
-# Palette keys this needs. A theme missing one of these isn't usable here.
+# Palette keys the theme needs
 KEYS = ("background", "surface", "foreground", "dim", "accent", "selection")
 
 
 def home():
-    """The invoking user's home, not root's — apply() runs under sudo."""
+    """The invoking user's home (not root's), since `apply` runs under sudo."""
     who = os.environ.get("SUDO_USER")
     if who:
         import pwd
@@ -55,18 +48,15 @@ def home():
 
 
 def palette():
-    """(theme name, {key: '#rrggbb'}) for the theme that is currently applied."""
+    """Return (theme name, {key: '#rrggbb'}) for the theme that is applied now."""
     conf = home() / ".config/hypora"
     try:
         name = (conf / "current/name").read_text().strip()
     except OSError:
         sys.exit("No theme is applied yet; run hypora-theme first.")
 
-    # The name comes from ~/.config/hypora/current/name, which is writable by the user,
-    # while this runs as root. It is used as a path component below — and in hypora-grub,
-    # written into a file GRUB parses at boot — so it is validated rather than trusted.
-    # Without this, anything able to write that one file could steer a root-run script's
-    # reads with "..", or break out of the quoted string it lands in.
+    # This file is writable by the user but we run as root, and the name becomes a path
+    # and text in a GRUB file. So only accept a plain name.
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}", name):
         sys.exit(f"Theme name {name!r} is not a plain name; refusing to use it as root.")
 
@@ -89,20 +79,7 @@ def palette():
 # ---------- the theme ----------
 
 def theme_txt(colors, theme_name=""):
-    """GRUB's theme format. Percentages throughout, so it holds at any resolution.
-
-    Laid out after Limine's menu, which is what Omarchy actually boots with: title centred
-    along the top, key legends in the two top corners, the entries alone in open space, and
-    the theme name in the bottom corner. Nothing boxed, nothing centred-and-boxed, no
-    distro furniture.
-
-    Two things GRUB cannot do that Limine can, so they are not attempted:
-      * an expandable tree. GRUB submenus are a separate screen you descend into, not an
-        inline node, and Fedora sets GRUB_DISABLE_SUBMENU=true anyway.
-      * mixed colour inside one label. Limine draws "ARROWS" accent and "Select" plain in
-        one line; a GRUB label has a single colour, and splitting each legend into two
-        absolutely-positioned labels to fake it would break the moment a font changed.
-    """
+    """Return GRUB theme text. Sizes are percentages, so it fits any resolution."""
     c = colors
     return f"""# Hypora boot menu — generated by hypora-grub from the active theme.
 # Do not edit: `hypora-theme <name>` rewrites this. Change bin/hypora-grub instead.
@@ -126,9 +103,8 @@ terminal-height: "80%"
     font = "Hypora Mono Regular 16"
 }}
 
-# Key legends, one in each top corner. Deliberately spelled out rather than using arrow
-# glyphs: whether the converted font has U+2191 depends on which TTF was found, and a
-# missing glyph here is an invisible legend.
+# Key legends in the top corners. Written as words, not arrow symbols, because the
+# font may not have the arrow glyphs.
 + label {{
     top = 7%
     left = 4%
@@ -149,7 +125,7 @@ terminal-height: "80%"
     font = "Hypora Mono Regular 13"
 }}
 
-# The entries, alone in the middle of the screen
+# The menu entries
 + boot_menu {{
     left = 25%
     width = 50%
@@ -166,10 +142,7 @@ terminal-height: "80%"
     icon_width = 0
     icon_height = 0
 
-    # A rule down the left edge of the current entry rather than a bar behind it. This is
-    # the west slice of a nine-slice with a transparent centre: the west slice stretches
-    # only vertically, so a plain vertical rule scales exactly, where an arrow glyph would
-    # be smeared by the same stretch.
+    # A thin vertical line on the left edge of the selected entry
     selected_item_pixmap_style = "select_*.png"
 
     scrollbar = true
@@ -177,7 +150,7 @@ terminal-height: "80%"
     scrollbar_thumb = "thumb_*.png"
 }}
 
-# Theme name, bottom left, where Limine puts its version
+# Theme name, bottom left
 + label {{
     top = 94%
     left = 4%
@@ -188,7 +161,7 @@ terminal-height: "80%"
     font = "Hypora Mono Regular 13"
 }}
 
-# Countdown, bottom right. Only drawn while the timeout is running.
+# Countdown, bottom right. Only shown while the timeout runs.
 + label {{
     id = "__timeout__"
     top = 94%
@@ -205,18 +178,14 @@ terminal-height: "80%"
 # ---------- PNG ----------
 
 def write_png(path, width, height, pixels):
-    """An RGBA PNG. `pixels` is a flat list of w*h*4 bytes, top row first.
-
-    Hand-rolled because this is three chunks and a CRC, and pulling in an imaging library
-    to emit a few bytes of pixel data would be the larger cost by far.
-    """
+    """Write an RGBA PNG. `pixels` is a flat list of width*height*4 bytes, top row first."""
     def chunk(tag, data):
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff))
 
     stride = width * 4
     raw = b"".join(bytes([0]) + bytes(pixels[y * stride:(y + 1) * stride])
-                   for y in range(height))      # filter type 0 per scanline
+                   for y in range(height))      # each row starts with filter type 0
     png = (b"\x89PNG\r\n\x1a\n"
            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
            + chunk(b"IDAT", zlib.compress(raw, 9))
@@ -234,24 +203,22 @@ def rgb(hexstr):
 
 
 def write_assets(dest, colors):
-    """The nine-slice pieces GRUB asks for. Missing slices are treated as empty.
+    """Write the nine-slice images GRUB uses for the selected row and the scrollbar.
 
-    The selection is a rule down the left edge, not a filled bar: `_c` is transparent and
-    `_w` carries the accent. GRUB stretches the west slice vertically only, so a uniform
-    vertical rule scales exactly at any item height — which is also why this is a rule and
-    not the arrow glyph Limine draws. An arrow in that slice would be stretched into a
-    smear the moment item_height changed.
+    The selection is a thin line on the left edge: the centre slice is transparent and
+    the west slice carries the accent. GRUB stretches the west slice only vertically,
+    so a plain line scales cleanly at any row height.
     """
     accent = rgb(colors["accent"])
     solid(dest / "select_c.png", [0, 0, 0, 0])            # transparent centre
-    solid(dest / "select_w.png", accent + [255], 3, 1)    # the rule, 3px wide
+    solid(dest / "select_w.png", accent + [255], 3, 1)    # the line, 3px wide
     solid(dest / "thumb_c.png", rgb(colors["dim"]) + [255])
 
 
 # ---------- font ----------
 
 def find_font():
-    """A TTF to convert. Hypora installs the Nerd Font system-wide; fall back to anything."""
+    """Find a TTF to convert, preferring the Nerd Font Hypora installs."""
     candidates = [
         "/usr/local/share/fonts/JetBrainsMonoNerdFont/JetBrainsMonoNerdFont-Regular.ttf",
         "/usr/local/share/fonts/JetBrainsMonoNerdFont/JetBrainsMonoNLNerdFont-Regular.ttf",
@@ -262,7 +229,7 @@ def find_font():
     for p in candidates:
         if Path(p).is_file():
             return Path(p)
-    # Anything monospace, rather than giving up
+    # otherwise any monospace font
     rc, out = run(["fc-match", "-f", "%{file}", "monospace"])
     if rc == 0 and out and Path(out).is_file():
         return Path(out)
@@ -270,11 +237,11 @@ def find_font():
 
 
 def make_fonts(dest):
-    """Convert to .pf2 at the sizes theme.txt asks for. Returns a list of what failed.
+    """Convert the font to .pf2 at the sizes theme.txt uses. Return a list of problems.
 
-    GRUB has no concept of scaling a font: each size is a separate file, and a size the
-    theme names but the directory lacks silently falls back to the built-in font. So the
-    sizes here and the sizes in theme_txt() have to agree.
+    GRUB cannot scale fonts: each size is its own file. A size the theme names but the
+    folder lacks silently falls back to the built-in font, so the sizes here must match
+    theme_txt().
     """
     if shutil.which("grub2-mkfont") is None:
         return ["grub2-mkfont is not installed"]
@@ -282,15 +249,9 @@ def make_fonts(dest):
     if regular is None:
         return ["no usable TTF found to convert"]
 
-    # -n takes the *family* only. grub2-mkfont appends the style and size itself, reading
-    # the style from the font file — so "Hypora Mono" plus a bold TTF at 28 becomes
-    # "Hypora Mono Bold 28", which is what theme.txt asks for. Passing the full name here
-    # instead produces "Hypora Mono Regular 16 Regular 16", which matches nothing in the
-    # theme, and GRUB answers that by silently using its built-in font.
+    # -n takes only the family name. grub2-mkfont adds the style and size itself
+    # ("Hypora Mono Regular 16"), which is the name theme.txt asks for.
     FAMILY = "Hypora Mono"
-    # Exactly the sizes theme_txt names, no more. GRUB cannot scale a font, so every size
-    # is a separate file — and a size the theme asks for but the directory lacks falls back
-    # to the built-in font with no error, so these two lists have to stay in step.
     jobs = [(regular, s, f"regular-{s}.pf2") for s in (13, 16)]
 
     problems = []
@@ -305,14 +266,11 @@ def make_fonts(dest):
 # ---------- helpers ----------
 
 def atomic_write(path, text):
-    """Replace a file the boot depends on without ever leaving it half-written.
+    """Replace a file so it is never left half-written.
 
-    write_text truncates first, so a crash or power cut part-way through leaves an empty
-    fstab, grub default or kernel command line — a machine that boots to an emergency shell,
-    or not at all. Writing a sibling, flushing it to disk and renaming it over the original
-    means the file is always either the old version or the new one, because a rename is
-    atomic. Mode and owner are carried over, and the SELinux label is restored: a new file
-    takes its directory's label, which is not always the one the original had.
+    Write a temporary file next to it, flush it to disk, then rename it over the
+    original (a rename is atomic). After a crash the file is the old or the new version,
+    never an empty one. Owner, mode and the SELinux label are kept.
     """
     path = Path(path)
     tmp = path.with_name(f".{path.name}.hypora-tmp")
@@ -344,14 +302,7 @@ def atomic_write(path, text):
 
 
 def run(cmd, timeout=120):
-    """(returncode, output) — never raises.
-
-    The timeout is a parameter rather than a constant so callers can say what they expect:
-    grub2-mkconfig on a machine with several kernels is legitimately slow, grubby is not.
-    This signature matches the run() in the other hypora-* helpers, which is what it should
-    have been from the start — writing _kernel_args against the other one's signature is
-    exactly how it came to be called with an argument this did not accept.
-    """
+    """Return (exit code, output). Never raises. Slow commands can pass a longer timeout."""
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -366,7 +317,7 @@ def need_root():
 
 
 def grub_dir():
-    """Fedora keeps GRUB's files in /boot/grub2 on both BIOS and UEFI since F34."""
+    """Fedora keeps GRUB's files in /boot/grub2 (BIOS and UEFI)."""
     for p in ("/boot/grub2", "/boot/grub"):
         if Path(p).is_dir():
             return Path(p)
@@ -374,49 +325,29 @@ def grub_dir():
 
 
 def grub_cfg(gdir):
-    """What to regenerate.
-
-    On Fedora /boot/efi/EFI/fedora/grub.cfg is a stub that chain-loads this one, so this is
-    the only file that needs rewriting — writing the stub instead is the classic way to end
-    up with a menu that never changes.
-    """
+    """The grub.cfg to regenerate. The one under /boot/efi is only a stub that points here."""
     return gdir / "grub.cfg"
 
 
-# Lines this script owns carry MARK, so a later run can tell its own work from yours; any
-# pre-existing value is parked on a SAVE line directly above. That distinction is the whole
-# point: without it, every theme switch commented out the previous switch's line, and three
-# switches left nine dead lines that `remove` then restored as live config.
+# Lines we write end with MARK, so a later run can tell them from yours. A value that
+# was there before is kept on a SAVE line above ours and restored by `remove`.
 MARK = "# set by hypora-grub"
 SAVE = "# was, before hypora-grub: "
 
 
-# The screen does not clear between the bootloader and the login screen unless something
-# makes it. That is deliberate kernel behaviour, not a bug: when a firmware framebuffer is
-# present, fbcon defers binding so the bootloader's image survives into early boot and the
-# handoff looks seamless. On a themed GRUB that image is the menu, and it keeps resurfacing
-# — once while GRUB prints its loading messages, and again when Plymouth exits and the
-# console reclaims the display underneath it.
-#
-# fbcon=nodefer turns the preservation off: fbcon binds immediately, and binding clears.
-# The cost is a brief blank console before Plymouth starts rather than a stale menu after
-# it, which is the right way round.
-#
-# Two earlier attempts at this missed, and both are worth recording. Dropping
-# GRUB_GFXPAYLOAD_LINUX=keep was BIOS-era reasoning — on UEFI, GRUB draws on the GOP buffer
-# and the kernel inherits it whatever that setting says. Passing --retain-splash to
-# plymouth-quit fixes a Plymouth-to-display-manager gap, which this is not: the console
-# takes the display back regardless of what Plymouth does on the way out.
+# fbcon=nodefer makes the kernel console clear the screen immediately. Without it the
+# bootloader's last frame (the GRUB menu) can reappear between the splash and the login
+# screen. The cost is a brief blank console before the splash starts.
 KERNEL_ARGS = ["fbcon=nodefer"]
 KERNEL_CMDLINE = Path("/etc/kernel/cmdline")
 
 
 def _kernel_args(add):
-    """Add or remove KERNEL_ARGS in all three places Fedora keeps them. (ok, detail)
+    """Add or remove KERNEL_ARGS everywhere Fedora keeps kernel arguments. Return (ok, detail).
 
-    grubby covers the entries that already exist, /etc/kernel/cmdline is what new ones are
-    built from, and GRUB_CMDLINE_LINUX is read when grub2-mkconfig regenerates. Missing any
-    one of them means the argument comes back — or fails to — at the next kernel update.
+    There are three places: grubby (existing boot entries), /etc/kernel/cmdline (new
+    kernels) and GRUB_CMDLINE_LINUX (when grub.cfg is regenerated). Missing one makes the
+    argument come back, or vanish, at the next kernel update.
     """
     args = " ".join(KERNEL_ARGS)
     done = []
@@ -442,7 +373,7 @@ def _kernel_args(add):
         except OSError as e:
             return False, f"cannot rewrite {KERNEL_CMDLINE}: {e}"
 
-    # GRUB_CMDLINE_LINUX is a quoted shell value, so the argument goes inside the quotes
+    # GRUB_CMDLINE_LINUX is a quoted value, so edit inside the quotes
     try:
         text = GRUB_DEFAULT.read_text()
     except OSError:
@@ -461,7 +392,7 @@ def _kernel_args(add):
 
 
 def set_keys(text, values):
-    """Set each key, preserving any pre-existing value once and only once."""
+    """Set each KEY=value line, keeping any earlier value of yours once on a SAVE line."""
     lines = text.splitlines()
     for key, val in values.items():
         ours = f"{key}={val}  {MARK}"
@@ -478,15 +409,14 @@ def set_keys(text, values):
 
 
 def unset_keys(text, keys):
-    """Drop our lines and put back whatever was there before them."""
+    """Remove our lines and restore what was there before them."""
     out = []
     for line in text.splitlines():
         if MARK in line and any(re.match(rf"^\s*{k}=", line) for k in keys):
             continue
         m = re.match(rf"^{re.escape(SAVE)}(.*)$", line)
-        # Only restore a saved line if it belongs to a key being unset. Restoring every
-        # saved line regardless meant unsetting one key resurrected another key's original
-        # alongside the version we had set, leaving two live lines for it.
+        # Only restore saved lines for the keys being unset; restoring all of them would
+        # bring back a second live line for keys we still own.
         if m and any(re.match(rf"^\s*{k}=", m.group(1)) for k in keys):
             out.append(m.group(1))
             continue
@@ -547,34 +477,22 @@ def cmd_apply():
     write_assets(dest, colors)
     problems = make_fonts(dest)
 
-    # /etc/default/grub. Backed up once per run, since getting this wrong is a machine that
-    # boots to a GRUB rescue prompt.
+    # Back up /etc/default/grub: a mistake here can leave the machine at a GRUB prompt
     try:
         text = GRUB_DEFAULT.read_text()
     except OSError as e:
         sys.exit(f"Cannot read {GRUB_DEFAULT}: {e}")
-    import time
     backup = GRUB_DEFAULT.with_name(GRUB_DEFAULT.name + time.strftime(".hypora-%Y%m%d-%H%M%S"))
     shutil.copy2(GRUB_DEFAULT, backup)
 
-    # GRUB_GFXPAYLOAD_LINUX is deliberately *removed* rather than set.
-    #
-    # An earlier version set it to "keep", on the reasoning that handing GRUB's graphics
-    # mode to the kernel would avoid a flash back to text. What "keep" actually does is
-    # hand over the framebuffer with GRUB's last frame still in it — so that image sits in
-    # memory and resurfaces every time nothing else is drawing: once between GRUB and
-    # Plymouth, and again between Plymouth quitting and the login screen appearing. The
-    # menu looked like it was coming back twice, because it was.
-    #
-    # Without it GRUB tears its mode down on the way out, the screen goes black, and the
-    # kernel brings up a fresh framebuffer. Fedora does not set this key either. The
-    # removal is active rather than passive so that a machine which already has our old
-    # line gets it taken back out on the next apply.
+    # Remove GRUB_GFXPAYLOAD_LINUX instead of setting it. "keep" hands the kernel GRUB's
+    # last frame, which then reappears between the splash and the login screen. Removing
+    # it also cleans up the line an older version of this script added.
     text = unset_keys(text, ["GRUB_GFXPAYLOAD_LINUX"])
 
     new = set_keys(text, {
         "GRUB_THEME": str(dest / "theme.txt"),
-        # The one that actually matters: a theme in console mode is invisible
+        # a theme is invisible in console mode
         "GRUB_TERMINAL_OUTPUT": '"gfxterm"',
         "GRUB_GFXMODE": "auto",
     })
@@ -610,7 +528,6 @@ def cmd_remove():
     except OSError as e:
         sys.exit(f"Cannot read {GRUB_DEFAULT}: {e}")
 
-    import time
     backup = GRUB_DEFAULT.with_name(GRUB_DEFAULT.name + time.strftime(".hypora-%Y%m%d-%H%M%S"))
     shutil.copy2(GRUB_DEFAULT, backup)
     atomic_write(GRUB_DEFAULT, unset_keys(text, MANAGED))

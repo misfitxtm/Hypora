@@ -26,11 +26,9 @@ STROKE = 1.9
 
 COLS, ROWS = 34, 20
 
-# A terminal cell is about twice as tall as it is wide, so the crossbar's 1.9-unit
-# stroke is only ~1.7 rows thick while its whole rise is ~2 rows -- at this size the
-# curve flattens into a straight bar. Exaggerating it is what redrawing a mark small
-# normally involves; 1.5 reads as a wave, and by 1.9 it starts tearing a gap in the
-# upright it joins.
+# A terminal cell is about twice as tall as wide, so the crossbar's 1.9-unit stroke is
+# only ~1.7 rows thick and the wave flattens into a straight bar. The wave is exaggerated
+# to 1.5, which reads as a wave. At 1.9 it tears a gap in the upright it joins.
 WAVE_GAIN = 1.5
 
 
@@ -89,9 +87,9 @@ def on_glyph(pt, r):
     )
 
 
-# Coverage -> character. The edge characters are picked by where inside the cell the
-# coverage actually sits, so a top edge gets a high glyph and a bottom edge a low one;
-# that is what keeps the hexagon's points from looking chewed.
+# Coverage -> character. Edge characters are chosen by where in the cell the coverage
+# sits (a top edge gets a high glyph, a bottom edge a low one), so the hexagon's points
+# do not look chewed.
 def body_char(cov, vy):
     if cov >= 0.80:
         return 'c'

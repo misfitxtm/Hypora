@@ -39,6 +39,7 @@ Variants {
 
             AppMenu { window: bar; anchors.verticalCenter: parent.verticalCenter }
             Item { width: 4; height: 1 }
+            BarPlugins { slot: "left"; window: bar; anchors.verticalCenter: parent.verticalCenter }
 
             Repeater {
                 model: bar.workspaceIds
@@ -76,6 +77,7 @@ Variants {
             Clipboard { window: bar; anchors.verticalCenter: parent.verticalCenter }
             Clock { window: bar; anchors.verticalCenter: parent.verticalCenter }
             Weather { window: bar; anchors.verticalCenter: parent.verticalCenter }
+            BarPlugins { slot: "center"; window: bar; anchors.verticalCenter: parent.verticalCenter }
         }
 
         // Right: tray, then the status icons that open the control center
@@ -83,6 +85,7 @@ Variants {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 6 }
             spacing: 10
 
+            BarPlugins { slot: "right"; window: bar; anchors.verticalCenter: parent.verticalCenter }
             Tray { window: bar; anchors.verticalCenter: parent.verticalCenter }
             SystemUsage { window: bar; anchors.verticalCenter: parent.verticalCenter }
             ControlCenter { window: bar; anchors.verticalCenter: parent.verticalCenter }

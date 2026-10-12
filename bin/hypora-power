@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
-"""hypora-power: measure what the laptop is drawing, and spend less of it.
+"""hypora-power: measure what the laptop draws, and spend less of it.
 
-    hypora-power status     what it is drawing now, and which savings are in effect
+    hypora-power status     show the current draw and which savings are active
     hypora-power apply      apply the settings for the active profile (needs root)
     hypora-power auto       pick a profile from the AC state, then apply (root; used by udev)
-    hypora-power install    apply them, and follow both the charger and the profile (root)
-    hypora-power remove     stop switching automatically, and undo the settings (root)
+    hypora-power install    apply, and follow the charger and the profile (root)
+    hypora-power remove     stop switching automatically and undo the settings (root)
     hypora-power is-laptop  exit 0 on a laptop, 1 otherwise
 
-Deliberately small, because most of this is already solved and duplicating it would mean
-fighting it. `tuned` ships a powersave profile that covers the CPU governor, the energy
-performance preference, the audio codec timeout, SATA link power management and panel
-power savings. What is missing on a Hyprland desktop is two things:
+`tuned` already covers the CPU governor, audio and disk power settings. Two things are
+missing on a Hyprland desktop:
 
-  * **Nothing switches the profile.** GNOME flips power-profiles-daemon to power-saver when
-    the charger comes out; it does that in the shell, so a session without GNOME Shell gets
-    no switching at all and sits in `balanced` on battery forever.
-  * **Four knobs tuned leaves alone.** Its [net] and [disk] sections are empty and it never
-    writes PCIe ASPM, USB autosuspend or PCI runtime power management. On a ThinkPad those
-    are worth more than everything else here put together.
+  * Nothing switches the profile when the charger is unplugged. GNOME does that inside
+    its shell, so without it the laptop stays on `balanced` on battery.
+  * tuned never sets PCIe ASPM, USB autosuspend or PCI runtime power management.
 
-So this switches the profile, sets those four, and reports the draw in watts so the effect
-is measured rather than hoped for.
+This script switches the profile, sets those, and reports the draw in watts.
 """
 import os
 import re
@@ -34,9 +28,8 @@ POWER_SUPPLY = Path("/sys/class/power_supply")
 UDEV_RULE = Path("/etc/udev/rules.d/60-hypora-power.rules")
 ASPM = Path("/sys/module/pcie_aspm/parameters/policy")
 
-# USB interface class 03 is HID. Autosuspending a mouse or keyboard is the classic way to
-# make a laptop feel broken -- the first movement after an idle moment is swallowed while
-# the device wakes. The saving from a HID device is negligible anyway, so they are skipped.
+# USB class 03 is HID (mice, keyboards). Autosuspending them swallows the first movement
+# after an idle moment, and saves almost nothing, so they are skipped.
 USB_HID_CLASS = "03"
 
 
@@ -56,7 +49,7 @@ def read(p, default=""):
 
 
 def write(p, value):
-    """Best effort. Many of these are read-only depending on kernel and firmware."""
+    """Try to write a sysfs file. Many are read-only, so return False instead of failing."""
     try:
         p.write_text(value)
         return True
@@ -66,24 +59,18 @@ def write(p, value):
 
 # ---------- measurement ----------
 
-# SMBIOS chassis types. 8-14 and 30-32 are the portable ones; the rest are desks, racks
-# and appliances. This is the authoritative answer to "is this a laptop" and it does not
-# depend on anything being plugged in.
+# SMBIOS chassis types: 8-14 and 30-32 are portable, the rest are desktops, racks, etc.
 LAPTOP_CHASSIS = {"8", "9", "10", "11", "14", "30", "31", "32"}
 DESKTOP_CHASSIS = {"3", "4", "5", "6", "7", "13", "15", "16", "17", "23", "24", "25", "28"}
 CHASSIS_TYPE = Path("/sys/class/dmi/id/chassis_type")
 
 
 def is_laptop():
-    """(bool, reason).
+    """Return (is it a laptop, reason).
 
-    Chassis type first, because "has a battery" is not the same question: a desktop with a
-    UPS, or one paired with a wireless mouse, reports type=Battery too. Those are marked
-    scope=Device or sit behind a USB HID driver, but the chassis never lies about what the
-    machine is.
-
-    Falls back to looking for a system-scope battery only when DMI says nothing useful,
-    which is mostly virtual machines.
+    The chassis type decides, not "has a battery": a desktop with a UPS or a wireless
+    mouse also reports a battery. Only when DMI says nothing (mostly virtual machines)
+    do we look for a system battery.
     """
     chassis = read(CHASSIS_TYPE)
     if chassis in LAPTOP_CHASSIS:
@@ -91,7 +78,6 @@ def is_laptop():
     if chassis in DESKTOP_CHASSIS:
         return False, f"chassis type {chassis} is not portable"
 
-    # DMI unhelpful: fall back to an internal battery
     for b in batteries():
         if read(b / "scope", "System") != "Device":
             return True, f"no usable chassis type, but {b.name} is a system battery"
@@ -104,7 +90,7 @@ def batteries():
 
 
 def on_ac():
-    """True on mains. Falls back to 'no battery is discharging' if no AC adapter is listed."""
+    """True on mains. If no AC adapter is listed, true when no battery is discharging."""
     for d in sorted(POWER_SUPPLY.glob("*")):
         if read(d / "type") == "Mains":
             v = read(d / "online")
@@ -116,9 +102,8 @@ def on_ac():
 def draw_watts():
     """Current draw in watts, or None.
 
-    power_now is the direct reading. Batteries that don't publish it give current_now and
-    voltage_now instead, which multiply out to the same thing -- both are microunits, hence
-    the 1e12.
+    Uses power_now, or current_now x voltage_now when a battery lacks it (both are
+    micro-units, hence 1e12).
     """
     total = 0.0
     found = False
@@ -136,7 +121,7 @@ def draw_watts():
 
 
 def remaining():
-    """(percent, hours left) using the measured draw, or (None, None)."""
+    """Return (percent, hours left at the current draw), or (None, None)."""
     for b in batteries():
         pct = read(b / "capacity")
         energy = read(b / "energy_now")
@@ -154,7 +139,7 @@ def remaining():
 # ---------- the profile ----------
 
 def profile_tool():
-    """powerprofilesctl talks to whichever daemon is running; tuned-adm is the fallback."""
+    """Use powerprofilesctl if present (it talks to whichever daemon runs), else tuned-adm."""
     if shutil.which("powerprofilesctl"):
         return "ppd"
     if shutil.which("tuned-adm"):
@@ -174,8 +159,7 @@ def current_profile():
     return ""
 
 
-# tuned and power-profiles-daemon name the same three things differently, and tuned-ppd
-# maps between them. Everything below works in these terms.
+# tuned and power-profiles-daemon name the same three modes differently
 SAVER, BALANCED, PERFORMANCE = "saver", "balanced", "performance"
 
 PROFILE_ALIASES = {
@@ -187,19 +171,17 @@ PROFILE_ALIASES = {
 
 
 def normalised_profile():
-    """Which of the three modes is in effect, however it is spelled."""
+    """Return the active mode as SAVER, BALANCED or PERFORMANCE."""
     return PROFILE_ALIASES.get(current_profile().strip().lower(), BALANCED)
 
 
 def set_profile(battery):
-    # Asking for the profile that is already active still costs a full tuned-adm run, which
-    # is seconds of CPU for no change at all.
+    # Setting a profile that is already active still costs seconds of CPU, so skip it
     want_mode = SAVER if battery else BALANCED
     if normalised_profile() == want_mode:
         return True, f"already {want_mode}"
     tool = profile_tool()
     if tool == "ppd":
-        # power-saver and balanced are the two every implementation has
         want = "power-saver" if battery else "balanced"
         rc, out = run(["powerprofilesctl", "set", want])
         return (rc == 0), f"{want} (power-profiles-daemon)" if rc == 0 else out.strip()[:120]
@@ -210,27 +192,16 @@ def set_profile(battery):
     return False, "no power profile daemon found"
 
 
-# ---------- the knobs tuned does not set ----------
+# ---------- the settings tuned does not manage ----------
 
-# PCI classes that are never given runtime power management, however idle they look.
-#
-#   0600 host bridge, 0604 PCI bridge   the fabric everything else hangs off
-#   0601 ISA/LPC bridge                 the embedded controller sits behind this, and on a
-#                                       ThinkPad the EC is what reports battery, thermals
-#                                       and the state of the lid
-#   0c05 SMBus                          the same traffic by another route
-#
-# Suspending these buys approximately nothing and is a known way to get stale or wrong
-# sensor readings — the class of problem `powertop --auto-tune` has a reputation for. The
-# original version here set every PCI device without exception, which was careless.
+# PCI classes that never get runtime power management: bridges (0600, 0604), the
+# ISA/LPC bridge (0601) and SMBus (0c05). The embedded controller reports battery,
+# temperature and lid state through these, and suspending them gives stale readings.
 RUNTIME_PM_EXCLUDE = {"0600", "0601", "0604", "0c05"}
 
 
 def set_runtime_pm():
-    """Let idle PCI devices suspend, apart from the ones that carry sensor traffic.
-
-    Not AC-conditional: an idle device sleeping costs nothing on mains either.
-    """
+    """Let idle PCI devices suspend, except the ones that carry sensor traffic."""
     done = skipped = 0
     for dev in sorted(Path("/sys/bus/pci/devices").glob("*")):
         cls = read(dev / "class")
@@ -243,7 +214,7 @@ def set_runtime_pm():
 
 
 def set_usb_autosuspend():
-    """Same for USB, minus anything presenting a HID interface."""
+    """Same for USB devices, except those with a HID interface."""
     done = skipped = 0
     for dev in sorted(Path("/sys/bus/usb/devices").glob("*")):
         if ":" in dev.name:                       # an interface, not a device
@@ -259,11 +230,10 @@ def set_usb_autosuspend():
 
 
 def set_aspm(mode):
-    """PCIe Active State Power Management.
+    """Set PCIe Active State Power Management.
 
-    Often read-only: the kernel refuses unless the firmware handed ASPM over, or
-    pcie_aspm=force is on the command line. Reported rather than forced, because overriding
-    a platform that declined ASPM is a known way to produce hard-to-trace instability.
+    Often read-only because the firmware did not hand ASPM to the kernel. We report
+    that instead of forcing it, which can cause hard-to-trace instability.
     """
     if not ASPM.exists():
         return False, "not available"
@@ -335,20 +305,17 @@ def cmd_status():
 
 
 def cmd_apply():
-    """Apply the tunables matching whichever profile is active.
+    """Apply the settings for whichever profile is active.
 
-    Keyed off the profile rather than the AC state, so that one path serves both triggers:
-    the Control Center's power buttons set the profile, the charger coming out sets the
-    profile, and either way this runs and the settings follow. Nothing in the window had to
-    change for that to work, and no polkit prompt appears when you press a button.
+    It follows the profile, not the AC state, so both the charger and the Control
+    Center's power buttons end up here, with no password prompt.
     """
     need_root()
     mode = normalised_profile()
     print(f"Applying settings for the {mode} profile"
           f" ({'mains' if on_ac() else 'battery'}).")
 
-    # Runtime power management is not profile-dependent: letting an idle device sleep costs
-    # nothing on mains either, so it is applied the same way in all three modes.
+    # Runtime PM is the same in every mode: an idle device sleeping costs nothing on mains
     n, skipped = set_runtime_pm()
     print(f"  PCI runtime PM       {n} devices set to auto, {skipped} skipped "
           "(bridges and SMBus — the embedded controller reads the battery through those)")
@@ -369,33 +336,28 @@ def cmd_apply():
     return 0
 
 
+# Last AC state we handled. In /run because it only holds for the current boot.
 STATE_FILE = Path("/run/hypora-power.state")
 
 
 def cmd_auto():
-    """Pick a profile from the AC state, then let cmd_apply follow it. Called by udev.
+    """Pick a profile from the AC state, then apply. Called by udev.
 
-    Exits immediately when the AC state has not changed since the last run. This matters
-    more than it looks: a power_supply uevent is not only emitted when the charger moves —
-    the subsystem raises change events as the battery drains, so a rule attached to it
-    fires repeatedly all day. Without this guard each of those spawned a `tuned-adm
-    profile`, which takes seconds. One boot ran it 49 times.
-
-    /run rather than /etc because this is state for the current boot only: the settings it
-    describes are sysfs values that firmware resets at power-on, so remembering them across
-    a reboot would mean skipping the first real application.
+    Power-supply events fire often (also while the battery drains), so exit early if
+    the AC state has not changed since the last successful run.
     """
     need_root()
     battery = not on_ac()
     want = "battery" if battery else "mains"
     if read(STATE_FILE) == want:
         return 0
-    STATE_FILE.write_text(want)
     ok, detail = set_profile(battery)
+    # Remember the state only on success. Otherwise a profile daemon that is not up yet
+    # would make every later event look like "nothing changed".
+    if ok:
+        STATE_FILE.write_text(want)
     print(f"On {'battery' if battery else 'mains'}: profile {detail}")
-    # Changing the profile rewrites /etc/tuned/active_profile, which the path unit watches,
-    # so the tunables would follow on their own — but not every system has tuned, and a
-    # second idempotent pass costs milliseconds.
+    # Apply again in case there is no tuned (its path unit would not fire); it is cheap
     return cmd_apply()
 
 
@@ -404,7 +366,7 @@ UNIT_DIR = Path("/etc/systemd/system")
 
 
 def cmd_is_laptop():
-    """Exit 0 on a laptop, 1 otherwise. install.sh uses this so the test lives in one place."""
+    """Exit 0 on a laptop, 1 otherwise. install.sh uses this."""
     laptop, why = is_laptop()
     print(f"{'laptop' if laptop else 'not a laptop'} ({why})")
     return 0 if laptop else 1
@@ -417,22 +379,10 @@ def cmd_install():
         sys.exit(f"This is {why}, so there is nothing here worth following a charger for. "
                  "Run `hypora-power apply` by hand if you want the runtime power management "
                  "anyway — it helps a little on mains too.")
-    # udev calls this directly rather than going through systemd: the work is a handful of
-    # sysfs writes and takes milliseconds, where asking systemd to start a unit from a udev
-    # rule is the kind of thing that deadlocks at boot.
     UDEV_RULE.parent.mkdir(parents=True, exist_ok=True)
-    # SYSTEMD_WANTS, not RUN+=. This is the difference between a laptop that suspends and
-    # one that does not.
-    #
-    # A udev RUN command blocks its worker until it exits, and switching profiles takes
-    # seconds. The moment the AC state actually changes is the moment a suspend begins —
-    # you unplug, or you close the lid and the adapter goes away — so a slow RUN lands
-    # precisely on the suspend transition and can delay or abort it. A laptop that believes
-    # it suspended, did not, and goes into a bag will drain itself flat.
-    #
-    # SYSTEMD_WANTS hands the work to systemd, which starts the unit asynchronously and
-    # lets the udev worker return immediately. It is what udev(7) points at for this, and
-    # unlike calling systemctl from RUN it cannot deadlock.
+    # The rule uses SYSTEMD_WANTS, not RUN+=. A RUN command blocks udev until it exits,
+    # and switching profiles takes seconds. That would land exactly when a suspend
+    # starts (unplugging, or closing the lid) and could delay or abort it.
     UDEV_RULE.write_text(
         '# Installed by hypora-power. Picks a power profile when the charger goes in or\n'
         '# comes out, which nothing else does on a session without GNOME Shell.\n'
@@ -454,9 +404,8 @@ def cmd_install():
     run(["udevadm", "control", "--reload-rules"])
     print(f"Installed {UDEV_RULE}")
 
-    # And follow the profile itself, so the Control Center's power buttons apply the same
-    # settings the charger does. tuned rewrites this file on every profile change, which
-    # makes a path unit enough — no daemon, and no polkit prompt behind a button press.
+    # Also follow profile changes made from the Control Center. tuned rewrites this
+    # file on every change, so a systemd path unit can watch it.
     if TUNED_ACTIVE.exists():
         (UNIT_DIR / "hypora-power.service").write_text(
             "[Unit]\n"

@@ -4,10 +4,10 @@ import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Layouts
 
-// Sound: output and input devices, and the volume of each app that's playing.
-// Talks to PipeWire directly through Quickshell, so there's no pavucontrol here. The
-// wiremix TUI is still one click away under "Advanced" for anything this doesn't cover.
-// Open from the menu (Settings > Sound), the control centre's mixer button, or:
+// Sound: output and input devices, and the volume of each app that is playing.
+// Talks to PipeWire directly through Quickshell. The wiremix TUI is one click away under
+// "Advanced" for anything else. Open from the menu (Settings > Sound), the control
+// center's mixer button, or:
 //     qs ipc call audio open
 Scope {
     id: root
@@ -64,8 +64,7 @@ Scope {
                         id: scroller
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        // Page Up / Page Down without reaching for the mouse. focus here
-                        // is safe: this window has no text input to compete with.
+                        // Page Up / Page Down without the mouse. Focus is safe here: no text input competes.
                         focus: true
                         Keys.onPressed: event => event.accepted = PageScroll.handle(event, scroller)
                         clip: true
@@ -246,6 +245,7 @@ Scope {
                 Text {
                     anchors { left: drDot.right; right: parent.right; leftMargin: 12; rightMargin: 12; verticalCenter: parent.verticalCenter }
                     text: dr.text
+                    textFormat: Text.PlainText
                     elide: Text.ElideRight
                     font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
                     color: dr.current ? Theme.fg : Theme.dim

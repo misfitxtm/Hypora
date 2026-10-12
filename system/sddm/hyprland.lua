@@ -8,19 +8,16 @@ hl.monitor({
     scale    = "auto",
 })
 
--- The main display chosen in Hypora's Display Settings, if one was set. Written by
--- hypora-greeter into this directory; absent until someone picks a main display.
+-- The main display chosen in Display Settings, if any. hypora-greeter writes it into this
+-- directory; it does not exist until a main display is picked.
 --
--- pcall and a plain existence check, because this is the config that draws the login
--- screen: if the generated file is ever malformed, the greeter must still come up. A
--- login screen on the wrong monitor is a nuisance; no login screen is a rescue disk.
--- pcall alone, with no io.open existence check: dofile on a missing file raises, pcall
--- catches it, and that covers both "not written yet" and "written badly" in one step
--- without assuming Hyprland's Lua exposes the io library at all.
+-- pcall around dofile: a missing file (not written yet) or a broken one (written badly)
+-- must not stop the greeter. A login screen on the wrong monitor is a nuisance; no login
+-- screen is a rescue disk. This also avoids assuming Hyprland's Lua has the io library.
 --
--- This only moves keyboard focus. Which monitor *shows* the login panel is decided by
--- Main.qml reading `primary` from theme.conf, because SDDM instantiates the theme once
--- per screen and no amount of compositor focus changes that.
+-- This only moves keyboard focus. Which monitor shows the login panel is decided by
+-- Main.qml reading `primary` from theme.conf, because SDDM creates the theme once per
+-- screen.
 pcall(dofile, "/usr/share/sddm/themes/hypora/primary-monitor.lua")
 
 hl.config({

@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """hypora-security: report and change the system's security settings.
 
-    hypora-security status                      print the state as JSON; never authenticates
+    hypora-security status                      print the state as JSON, never asks for a password
     hypora-security deep                        the two readings that need root, as JSON
-    hypora-security status --deep               status plus those, run as whoever calls it
+    hypora-security status --deep               status plus those two, run as the caller
     hypora-security firmware                    only the fwupd firmware checks
     hypora-security selinux <enforcing|permissive>   change the running mode
-    hypora-security selinux-boot <enforcing|permissive|disabled>   change it for next boot
+    hypora-security selinux-boot <enforcing|permissive>   change it for next boot
     hypora-security camera <on|off>             load or unload the webcam driver
     hypora-security location <on|off>           unmask or mask geoclue
-    hypora-security add-swapfile [size]         make an encrypted swapfile on the root
-                                                volume (default 4g) and switch it on
+    hypora-security add-swapfile [size]         make an encrypted swapfile (default 4g)
     hypora-security remove-swapfile             switch it off and delete it
 
-Only `status` and `firmware` run unprivileged; the rest need root and are meant to be run
-with pkexec, which puts the request through Hypora's polkit prompt. Run `status` yourself to
-see exactly what the Security window is reading.
+`status` and `firmware` run without root. The other commands need root and are meant
+to be run with pkexec.
 
-Plain `status` is deliberately prompt-free. Two readings can raise a polkit prompt and are
-behind `--deep`: `fwupdmgr security`, which reads BIOS settings (polkit guards that with
-auth_admin_keep), and firewall-cmd's zone and port queries. The Security window runs plain
-`status` when it opens and `--deep` only when you press "Run the deeper checks", so opening
-the window never asks for a password.
+Plain `status` never triggers a polkit prompt, so the Security window can open without
+asking for a password. Two checks can prompt, so they only run with `--deep`:
+`fwupdmgr security` (reads BIOS settings) and firewall-cmd's zone and port queries.
 """
 import json
 import os
@@ -38,14 +34,11 @@ SELINUX_CONFIG = Path("/etc/selinux/config")
 
 
 def atomic_write(path, text):
-    """Replace a file the boot depends on without ever leaving it half-written.
+    """Replace a file so it is never left half-written.
 
-    write_text truncates first, so a crash or power cut part-way through leaves an empty
-    fstab, grub default or kernel command line — a machine that boots to an emergency shell,
-    or not at all. Writing a sibling, flushing it to disk and renaming it over the original
-    means the file is always either the old version or the new one, because a rename is
-    atomic. Mode and owner are carried over, and the SELinux label is restored: a new file
-    takes its directory's label, which is not always the one the original had.
+    Write a temporary file next to it, flush it to disk, then rename it over the
+    original (a rename is atomic). After a crash the file is the old or the new version,
+    never an empty one. Owner, mode and the SELinux label are kept.
     """
     path = Path(path)
     tmp = path.with_name(f".{path.name}.hypora-tmp")
@@ -77,7 +70,7 @@ def atomic_write(path, text):
 
 
 def run(cmd, timeout=10):
-    """(returncode, stdout) — never raises."""
+    """Return (exit code, stdout). Never raises."""
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return p.returncode, p.stdout.strip()
@@ -86,7 +79,7 @@ def run(cmd, timeout=10):
 
 
 def efivar_bool(name):
-    """Last byte of an efivar, past the 4-byte attribute header."""
+    """Read an EFI variable as a boolean (its last byte, after a 4-byte header)."""
     try:
         data = (EFIVARS / f"{name}-{SB_GUID}").read_bytes()
     except OSError:
@@ -102,18 +95,13 @@ def secure_boot():
                 "note": "This machine booted in legacy BIOS mode, where Secure Boot does not apply."}
     out = {"firmware": "uefi", "supported": True}
 
-    # Read this whichever way `enabled` is determined. Setup Mode is the difference between
-    # "Secure Boot is off" and "Secure Boot is switched on in the firmware menu but has no
-    # keys to check anything against", and those need different answers from the person
-    # reading this. The second is easy to hit on a ThinkPad: setting Secure Boot to Enabled
-    # does not by itself enrol a platform key, and until one exists SecureBoot reads 0 while
-    # the BIOS screen still says Enabled. Reporting a bare "Off" at someone who just turned
-    # it on is accurate and useless.
+    # Setup Mode means Secure Boot is switched on but has no keys, so it checks nothing.
+    # That needs a different message from plain "off".
     setup = efivar_bool("SetupMode")
     if setup is not None:
         out["setupMode"] = setup
 
-    # mokutil is the authoritative answer; the efivar is the fallback
+    # mokutil is the best source; the EFI variable is the fallback
     if shutil.which("mokutil"):
         rc, text = run(["mokutil", "--sb-state"])
         if rc == 0 and text:
@@ -138,7 +126,7 @@ def secure_boot():
 
 
 def firmware_checks():
-    """fwupd's Host Security ID — the same checks GNOME's Device Security shows."""
+    """fwupd's Host Security ID checks (the same ones GNOME's Device Security shows)."""
     if not shutil.which("fwupdmgr"):
         return {"available": False, "note": "fwupd is not installed, so firmware checks can't be read."}
     rc, text = run(["fwupdmgr", "security", "--json"], timeout=30)
@@ -169,7 +157,7 @@ def firmware_checks():
 
 
 def crypttab_random_keyed():
-    """Mapper names in /etc/crypttab that take a fresh key from /dev/urandom each boot."""
+    """Names in /etc/crypttab that get a fresh random key on every boot."""
     names = set()
     try:
         text = Path("/etc/crypttab").read_text()
@@ -186,12 +174,7 @@ def crypttab_random_keyed():
 
 
 def swap_files():
-    """Swap that lives in a file rather than on its own device.
-
-    lsblk reports the device holding the file, not the file, so these never show up in the
-    tree walk below. A swapfile on an encrypted root is already covered by that encryption;
-    one on a plaintext root is the least of that system's problems.
-    """
+    """Swap that lives in a file. lsblk only shows devices, so these are read separately."""
     out = []
     try:
         lines = Path("/proc/swaps").read_text().splitlines()[1:]
@@ -205,15 +188,15 @@ def swap_files():
 
 
 def encryption():
-    """Is / on an encrypted volume, and does any swap reach the disk unencrypted?
+    """Report whether / and /home are encrypted and whether any swap reaches the disk in clear.
 
-    Walks lsblk's tree rather than asking about a device directly: a device only counts as
-    encrypted if a LUKS/crypt layer sits somewhere above it. zram swap lives in RAM, so it
-    never reaches the disk and isn't a leak.
+    A device counts as encrypted if a crypt (LUKS) layer sits above it in lsblk's tree.
+    zram swap lives in RAM, so it is safe.
     """
     cols = "NAME,PATH,TYPE,FSTYPE,UUID,PARTUUID,MOUNTPOINTS"
     rc, out = run(["lsblk", "-J", "-o", cols])
     if rc != 0 or not out:
+        # older lsblk has MOUNTPOINT, not MOUNTPOINTS
         rc, out = run(["lsblk", "-J", "-o", cols.replace("MOUNTPOINTS", "MOUNTPOINT")])
     if rc != 0 or not out:
         return {"available": False, "note": "lsblk did not report the disk layout."}
@@ -242,9 +225,6 @@ def encryption():
                 if m == "/" and root is None:
                     root = {"device": n["name"], "encrypted": "crypt" in kinds}
                 elif m == "/home" and home is None:
-                    # Tracked separately because it is the answer to a different question.
-                    # "Is the system encrypted" and "are my files encrypted" are only the
-                    # same question when /home has no filesystem of its own.
                     home = {"device": n["name"], "encrypted": "crypt" in kinds}
                 elif m == "[SWAP]":
                     zram = n["name"].startswith("zram")
@@ -255,11 +235,9 @@ def encryption():
                         "uuid": n.get("uuid") or "",
                         "partuuid": n.get("partuuid") or "",
                         "kind": "zram" if zram else (n.get("type") or "device"),
-                        # zram is RAM-backed, so nothing is written to the disk
                         "safe": zram or crypt,
                         "encrypted": crypt,
-                        # A LUKS swap keeps its key across boots; a plain random-key one
-                        # is unreadable the moment the machine powers off.
+                        # a swap with a random key is unreadable once power is off
                         "randomKey": crypt and n["name"] in random_keyed,
                     })
             walk(n.get("children") or [], here)
@@ -267,7 +245,7 @@ def encryption():
     walk(tree, [])
     exposed = [s for s in swaps if not s["safe"]]
     files = swap_files()
-    # With no separate /home, the home directory lives on / and inherits whatever / has.
+    # Without a separate /home, home lives on / and shares its encryption
     home_sep = home is not None
     home_enc = bool(home["encrypted"]) if home_sep else bool(root and root["encrypted"])
     return {
@@ -280,19 +258,15 @@ def encryption():
         "swap": swaps,
         "unencryptedSwap": [s["name"] for s in exposed],
         "swapFiles": files,
-        # Everything the window needs to decide which swapfile button to show, kept here
-        # so that decision lives in one place rather than being re-derived in QML.
         "swapfile": swapfile_state(),
     }
 
 
 def dns():
-    """Are lookups going through systemd-resolved, and are they encrypted?
+    """Report whether lookups go through systemd-resolved and whether they are encrypted.
 
-    The DNS-over-TLS mode comes from resolved's own D-Bus property rather than the config
-    file, because a config file says what was asked for and the property says what is
-    actually in effect (`resolvectl dnsovertls` can change it at runtime, which is how you
-    get past a captive portal).
+    The mode is read from resolved's live D-Bus property, not the config file, because
+    it can be changed at runtime (for example to get past a captive portal).
     """
     rc, state = run(["systemctl", "is-active", "systemd-resolved.service"])
     if state != "active":
@@ -313,7 +287,7 @@ def dns():
     rc, text = run(["resolvectl", "status", "--no-pager"])
     if rc == 0 and text:
         if out["mode"] == "unknown":
-            # Older resolved versions don't expose the property; the status text still says
+            # older resolved has no property; the status text still says
             if "+DNSOverTLS" in text:
                 out["mode"] = "yes"
             elif "-DNSOverTLS" in text:
@@ -333,13 +307,11 @@ def dns():
 
 
 def mac_addresses():
-    """Is each network card presenting something other than its permanent address?
+    """Check whether each network card uses an address other than its permanent one.
 
-    Reads the live addresses rather than the policy: NetworkManager's default can be
-    overridden per connection, so the only honest answer comes from comparing what the
-    card is using now against what is burned into it. A device that isn't connected
-    usually shows its permanent address, which is not a leak in itself — nothing is being
-    broadcast — so it's reported as such rather than as a failure.
+    This compares the live address with the permanent one, because NetworkManager's
+    policy can be overridden per connection. A card that is not connected usually shows
+    its permanent address; that is not a leak, since nothing is sent.
     """
     if not shutil.which("nmcli"):
         return {"available": False, "note": "nmcli is not installed, so MAC addresses can't be read."}
@@ -368,7 +340,7 @@ def mac_addresses():
             "name": name,
             "kind": kind,
             "connected": state == "connected",
-            # Some drivers don't report a permanent address; then there's nothing to compare
+            # some drivers do not report a permanent address, so there is nothing to compare
             "known": bool(now and perm and perm != "(unknown)"),
             "randomized": bool(now and perm and perm != "(unknown)" and now.lower() != perm.lower()),
         })
@@ -387,14 +359,14 @@ def mac_addresses():
         "note": "" if devices else "No Wi-Fi or ethernet device to report on.",
         "policy": policy,
         "devices": devices,
-        # Only count devices that are actually on a network: a parked card tells us nothing
+        # only connected devices count; a parked card tells us nothing
         "activeLeaks": [d["name"] for d in devices
                         if d["connected"] and d["known"] and not d["randomized"]],
     }
 
 
 def _automatic_conf():
-    """dnf5's merged automatic settings: packaged defaults, then the host's overrides."""
+    """Merge dnf5-automatic's settings: packaged defaults first, then local overrides."""
     import configparser
     parser = configparser.ConfigParser(interpolation=None)
     for path in ("/usr/share/dnf5/dnf5-plugins/automatic.conf",
@@ -410,10 +382,10 @@ def _automatic_conf():
 
 
 def updates():
-    """Are security updates installing on their own — for packages and for flatpaks?
+    """Report whether security updates install on their own, for packages and flatpaks.
 
-    Two timers, because neither covers the other: dnf never sees flatpaks, and the flatpak
-    timer never sees the system.
+    There are two timers because dnf cannot see flatpaks and the flatpak timer cannot
+    see system packages.
     """
     out = {"available": True}
 
@@ -447,14 +419,10 @@ def updates():
 
 
 def firewall_detail():
-    """The default zone and its open ports, read from firewalld's own configuration.
+    """Read the default zone and its open ports from firewalld's config files.
 
-    Root only — /etc/firewalld is mode 0750. Reading the files rather than asking firewalld
-    over D-Bus means this half of the privileged pass cannot produce a polkit prompt of its
-    own, which is the whole point of running it under a single pkexec.
-
-    These are the files `firewall-cmd --permanent` writes, which is what install.sh uses, so
-    they are the right source for "what is Hypora's firewall set to".
+    Needs root (/etc/firewalld is mode 0750). Reading files instead of asking firewalld
+    over D-Bus means this cannot raise a second polkit prompt.
     """
     out = {}
     try:
@@ -467,7 +435,7 @@ def firewall_detail():
     out["permissive"] = zone == "FedoraWorkstation"
 
     ports = []
-    # A zone the admin has changed lives in /etc; otherwise it's the stock one in /usr/lib
+    # a zone edited locally is in /etc; otherwise use the stock one in /usr/lib
     for base in ("/etc/firewalld/zones", "/usr/lib/firewalld/zones"):
         path = Path(base) / f"{zone}.xml"
         if not path.is_file():
@@ -484,24 +452,16 @@ def firewall_detail():
 
 
 def deep():
-    """The two readings that need privilege, gathered in one go.
+    """The two readings that need root. Run as `pkexec hypora-security deep`.
 
-    Meant to be run as `pkexec hypora-security deep`: one polkit prompt for pkexec, and then
-    nothing inside asks again. Deliberately does NOT call status() — that reads the user's
-    own gsettings and recently-used list, which under pkexec would be root's, not yours.
+    It does not call status(): that reads the user's own settings, which would be root's
+    under pkexec.
     """
     return {"firmware": firmware_checks(), "firewallDetail": firewall_detail()}
 
 
 def firewall(deep=False):
-    """Is firewalld running, and (only when asked) which zone and ports.
-
-    Whether the service is up comes from systemd, which answers any user without
-    authenticating. The zone and the open ports come from firewall-cmd, which goes to
-    firewalld over D-Bus — read-only calls that polkit's shipped policy allows outright, but
-    they are kept behind `deep` anyway so that merely opening the Security window can never
-    produce a password prompt.
-    """
+    """Report whether firewalld runs. With `deep`, also its zone and open ports."""
     if not shutil.which("firewall-cmd"):
         return {"available": False, "deep": deep, "note": "firewalld is not installed."}
     _, state = run(["systemctl", "is-active", "firewalld.service"])
@@ -515,7 +475,7 @@ def firewall(deep=False):
     rc, ports = run(["firewall-cmd", f"--zone={zone}", "--list-ports"]) if zone else (1, "")
     out["zone"] = zone
     out["openPorts"] = ports.split() if rc == 0 and ports else []
-    # FedoraWorkstation permits 1025-65535 on TCP and UDP; public is closed by default
+    # FedoraWorkstation opens ports 1025-65535; public is closed by default
     out["permissive"] = zone == "FedoraWorkstation"
     return out
 
@@ -535,19 +495,16 @@ def selinux():
             out["policy"] = m.group(1)
     except OSError:
         pass
-    # Going from disabled to enforcing needs a full filesystem relabel on the next boot
+    # going from disabled to enforcing needs a full relabel on the next boot
     out["needsRelabel"] = out["mode"] == "disabled"
     return out
 
 
-# The USB Video Class lives on the *interface*, not the device: a webcam enumerates as a
-# composite device whose bDeviceClass is 0xef (miscellaneous), so reading the device class
-# misses every one of them.
+# The video class is on the USB interface, not the device. A webcam's device class is
+# 0xef (miscellaneous), so checking the device would miss every one.
 USB_VIDEO_CLASS = "0e"
 
-# Intel's IPU6 and similar MIPI camera complexes are PCI multimedia controllers driven by
-# intel-ipu6, not uvcvideo. Recent ThinkPads use these, and nothing about uvcvideo applies
-# to them — including this window's off switch.
+# Intel MIPI/IPU cameras are PCI controllers driven by intel-ipu6, not uvcvideo.
 PCI_CAMERA_CLASSES = ("0400", "0480")
 
 
@@ -559,13 +516,11 @@ def _sysread(p):
 
 
 def camera():
-    """Is there a camera, is it usable, and can this window actually switch it off?
+    """Report whether there is a camera, whether it is usable and whether we can switch it off.
 
-    Asks sysfs what hardware exists rather than inferring it from whether a driver happens
-    to be loaded. The previous version looked only at /dev/video* and uvcvideo, both of
-    which are *consequences* of the driver being loaded — so turning the camera off made it
-    report "no camera found on this machine", which disabled the very switch that would
-    have turned it back on. A one-way off switch is worse than no switch at all.
+    This asks sysfs which hardware exists. It does not rely on /dev/video* or the driver
+    being loaded: after switching the camera off both disappear, and the window would
+    then claim there is no camera and hide the switch to turn it back on.
     """
     nodes = sorted(str(p) for p in Path("/dev").glob("video*"))
     try:
@@ -574,7 +529,7 @@ def camera():
         mods = ""
     uvc_loaded = bool(re.search(r"^uvcvideo ", mods, re.M))
 
-    # USB cameras. Still listed here with the driver unbound, which is the point.
+    # USB cameras (still listed when the driver is unloaded)
     uvc = []
     usb = Path("/sys/bus/usb/devices")
     if usb.is_dir():
@@ -586,26 +541,25 @@ def camera():
                        or _sysread(iface / "interface")
                        or iface.name)
 
-    # MIPI/IPU camera complexes
+    # MIPI/IPU cameras
     mipi = []
     pci = Path("/sys/bus/pci/devices")
     if pci.is_dir():
         for dev in sorted(pci.iterdir()):
-            cls = _sysread(dev / "class")            # 0xCCSSPP
+            cls = _sysread(dev / "class")            # format 0xCCSSPP
             if len(cls) < 6 or cls[2:6] not in PCI_CAMERA_CLASSES:
                 continue
             drv = ""
             if (dev / "driver").is_symlink():
                 drv = Path(os.readlink(dev / "driver")).name
-            # A PCI multimedia controller can equally be a capture card or an audio DSP, so
-            # only count it when something camera-shaped drives it, or nothing does yet.
-            # Guessing more freely would put a camera row on machines that have no camera.
+            # The same PCI class is used by capture cards and audio DSPs, so only count
+            # devices with no driver yet or a camera driver.
             if drv and not drv.startswith(("intel-ipu", "ipu")):
                 continue
             mipi.append(dev.name)
 
     present = bool(uvc or mipi or nodes or uvc_loaded)
-    # The switch works by unloading uvcvideo, so it only governs a USB camera
+    # the switch unloads uvcvideo, so it only controls USB cameras
     controllable = bool(uvc) or uvc_loaded
 
     out = {
@@ -654,9 +608,7 @@ def file_history():
 def status(deep=False):
     """Everything the Security window shows.
 
-    Without --deep this makes no call that can ask polkit for a password, so the window can
-    open — and refresh — without a prompt. --deep adds the two that can: fwupd's host
-    security attributes, and firewalld's zone and ports.
+    Without `deep`, no call here can ask polkit for a password.
     """
     out = {
         "secureBoot": secure_boot(),
@@ -695,8 +647,10 @@ def set_selinux(mode):
 
 def set_selinux_boot(mode):
     need_root()
-    if mode not in ("enforcing", "permissive", "disabled"):
-        sys.exit("mode must be enforcing, permissive or disabled")
+    # "disabled" is not accepted on purpose: turning SELinux off is not something a
+    # settings window should offer. Edit /etc/selinux/config by hand if you need it.
+    if mode not in ("enforcing", "permissive"):
+        sys.exit("mode must be enforcing or permissive")
     try:
         text = SELINUX_CONFIG.read_text()
     except OSError as e:
@@ -705,9 +659,8 @@ def set_selinux_boot(mode):
     if n == 0:
         new = text.rstrip("\n") + f"\nSELINUX={mode}\n"
     atomic_write(SELINUX_CONFIG, new)
-    # Ask for a relabel so the next boot can actually enforce
-    if mode in ("enforcing", "permissive"):
-        Path("/.autorelabel").touch()
+    # relabel on the next boot so enforcing can work
+    Path("/.autorelabel").touch()
     print(f"SELINUX={mode} set for the next boot")
 
 
@@ -739,18 +692,10 @@ def set_location(state):
 
 # ---------- swapfile on the encrypted root ----------
 #
-# This replaces an earlier "encrypt swap in place" action, and the reason is worth keeping:
-# that one put a dm-crypt layer over an existing swap *partition*, which meant a crypttab
-# entry, a GPT type change, and removing resume= from the kernel command line. Three pieces
-# of boot-critical state, and getting any of them wrong left the machine unbootable — which
-# it duly did.
-#
-# A swapfile inside the encrypted root is encrypted by construction. No crypttab, no
-# partition table, no resume=. The only persistent change is one fstab line carrying
-# nofail, so the worst failure is a machine that boots without swap.
-#
-# It is only offered when / is encrypted. A swapfile on a plaintext root is plaintext swap,
-# which is the problem rather than the fix.
+# A swapfile inside the encrypted root is encrypted with it. The only persistent change
+# is one fstab line with `nofail`, so the worst failure is a boot without swap. (An older
+# version encrypted a swap partition in place and could leave the machine unbootable.)
+# It is only offered when / is encrypted.
 
 FSTAB = Path("/etc/fstab")
 SWAP_SUBVOL = Path("/swap")
@@ -759,7 +704,7 @@ DEFAULT_SWAPFILE_SIZE = "4g"
 
 
 def _backup(path):
-    """Timestamped copy of a file the boot depends on, before touching it."""
+    """Copy a boot-critical file to a timestamped backup before editing it."""
     if not path.exists():
         return None
     dest = path.with_name(path.name + time.strftime(".hypora-%Y%m%d-%H%M%S"))
@@ -768,7 +713,7 @@ def _backup(path):
 
 
 def root_encrypted():
-    """Is / backed by a dm-crypt layer? Asks what the mounted source is."""
+    """True if / sits on a dm-crypt (LUKS) volume."""
     rc, src = run(["findmnt", "-fno", "SOURCE", "/"])
     if rc != 0 or not src:
         return False
@@ -778,7 +723,7 @@ def root_encrypted():
 
 
 def swapfile_state():
-    """What the window needs to decide which button, if any, to show."""
+    """What the window needs to decide which swapfile button to show."""
     rc, fstype = run(["findmnt", "-fno", "FSTYPE", "/"])
     fstype = fstype.strip() if rc == 0 else ""
     active = False
@@ -794,7 +739,6 @@ def swapfile_state():
         "active": active,
         "rootFs": fstype,
         "rootEncrypted": root_encrypted(),
-        # btrfs needs its own handling; anything else takes the plain path
         "supported": fstype in ("btrfs", "ext4", "xfs"),
     }
 
@@ -816,11 +760,7 @@ def add_swapfile(arg=""):
     if not st["supported"]:
         sys.exit(f"Don't know how to make a swapfile on {st['rootFs'] or 'this filesystem'}.")
 
-    # Create everything under a restrictive umask rather than relaxing it afterwards.
-    # fallocate honours the umask and would otherwise make the file 0644 for the moment
-    # between creating it and the chmod below. It holds no swap data in that window, so
-    # nothing actually leaks — but a world-readable swapfile is bad enough that the window
-    # is worth not having at all.
+    # A strict umask from the start, so the file is never briefly world-readable
     old_umask = os.umask(0o077)
     try:
         _create_swapfile(st, size)
@@ -833,7 +773,7 @@ def add_swapfile(arg=""):
         SWAPFILE.unlink(missing_ok=True)
         sys.exit(f"Could not activate the swapfile, so it was removed: {out.strip()[:200]}")
 
-    # Persist only after it is proven working, same order as everything else here.
+    # Only write fstab once the swapfile is known to work
     _backup(FSTAB)
     text = FSTAB.read_text() if FSTAB.exists() else ""
     if not re.search(rf"^\s*{re.escape(str(SWAPFILE))}\s", text, re.M):
@@ -849,19 +789,16 @@ def add_swapfile(arg=""):
 
 def _create_swapfile(st, size):
     if st["rootFs"] == "btrfs":
-        # Its own subvolume, so snapshots never capture it. A swapfile caught in a snapshot
-        # pins its full size in extents for as long as that snapshot lives.
+        # Own subvolume, so snapshots never capture the swapfile
         if not SWAP_SUBVOL.exists():
             rc, out = run(["btrfs", "subvolume", "create", str(SWAP_SUBVOL)], timeout=60)
             if rc != 0:
                 sys.exit(f"Could not create {SWAP_SUBVOL}: {out.strip()[:200]}")
-        # mkswapfile sets NOCOW, disables compression and formats it — all of which btrfs
-        # requires of a swapfile and none of which a plain fallocate would do.
+        # mkswapfile sets the NOCOW and no-compression flags btrfs requires for swap
         rc, out = run(["btrfs", "filesystem", "mkswapfile", "--size", size, str(SWAPFILE)],
                       timeout=300)
         if rc != 0:
-            # A failure part-way can leave a partial file, and add_swapfile refuses to run
-            # while one exists — so without this, every retry would say "already exists".
+            # remove a partial file, or every retry would say "already exists"
             SWAPFILE.unlink(missing_ok=True)
             sys.exit(f"Could not create the swapfile: {out.strip()[:300]}")
     else:
@@ -883,10 +820,8 @@ def remove_swapfile(arg=""):
         print(f"No {SWAPFILE} to remove.")
         return
     run(["swapoff", str(SWAPFILE)], timeout=120)
-    # Asked of /proc/swaps rather than swapoff's exit code, which is also non-zero for a
-    # file that was never active. If it is still in use — swapoff fails when there is not
-    # enough free memory to take its pages back — stop here, with fstab and the file as
-    # they were, rather than report a removal that did not happen.
+    # Check /proc/swaps, not swapoff's exit code (which is also non-zero if it was never
+    # active). If it is still in use, stop and change nothing.
     if swapfile_state()["active"]:
         sys.exit(f"{SWAPFILE} is still in use, so nothing was changed. This usually means "
                  "there is not enough free memory to take its contents back; close some "

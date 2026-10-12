@@ -5,15 +5,15 @@ import Quickshell.Wayland
 import QtQuick
 import Qt.labs.folderlistmodel
 
-// Theme picker (SUPER + ALT + T, or menu > Style > Theme), as a sliding carousel: one theme
-// at a time, centred and large, with its neighbours peeking in at either side.
+// Theme picker (SUPER + ALT + T, or menu > Style > Theme): a sliding carousel with one
+// theme centred and its neighbours peeking in at each side.
 //
-// Each card is a live preview rather than a screenshot — the theme's own first wallpaper
-// behind a miniature desktop drawn in that theme's colours, so what you see is generated
-// from the same colors.toml that hypora-theme will apply.
+// Each card is a live preview, not a screenshot: the theme's first wallpaper behind a
+// miniature desktop drawn in that theme's colours from the same colors.toml that
+// hypora-theme applies.
 //
 // Left/Right or scroll to slide, Enter or click to apply, Esc to close. Typing filters.
-// Also:  qs ipc call themes toggle
+// Also: qs ipc call themes toggle
 Scope {
     id: root
 
@@ -74,8 +74,8 @@ Scope {
                 sortField: FolderListModel.Name
             }
 
-            // FolderListModel can't filter on a typed string, so the carousel runs off a
-            // plain list built from it — which also makes "no match" easy to show.
+            // FolderListModel cannot filter on typed text, so the carousel uses a plain list built
+            // from it. That also makes "no match" easy to show.
             readonly property var allNames: {
                 const out = []
                 for (let i = 0; i < themes.count; i++) out.push(themes.get(i, "fileName"))
@@ -89,7 +89,7 @@ Scope {
                                                && carousel.currentIndex < shown.length
                                                ? shown[carousel.currentIndex] : ""
 
-            // Land on the theme in use the first time the list arrives
+            // Start on the theme in use the first time the list arrives
             property bool positioned: false
             onShownChanged: {
                 if (!positioned && shown.length > 0) {
@@ -119,19 +119,16 @@ Scope {
                 Keys.onEnterPressed: if (win.focused !== "") root.apply(win.focused)
                 // Anything else goes to the filter, so you can just start typing
                 Keys.onPressed: event => {
-                    // Before the filter catches everything: paging the carousel is a
-                    // navigation key, not something you meant to type.
+                    // Checked before the filter takes every key: paging is navigation, not typing.
                     if (PageScroll.handle(event, carousel)) { event.accepted = true; return }
                     if (event.key === Qt.Key_Backspace) { win.filterText = win.filterText.slice(0, -1); event.accepted = true }
                     else if (event.text.length === 1 && event.text >= " ") { win.filterText += event.text; event.accepted = true }
                 }
             }
 
-            // Laid out against the window, not stacked in a Column. A Column takes the
-            // width of its widest child, which here is the full-width carousel, so the
-            // heading and dots ended up at its left edge and the strip itself was pushed
-            // off centre. Anchoring each piece independently keeps the selected card on
-            // the middle of the monitor whatever the screen width is.
+            // Laid out against the window, not in a Column. A Column is as wide as its widest child
+            // (the full-width carousel), which pushed the heading and dots to its left edge. Anchoring
+            // each piece keeps the selected card in the middle of the monitor at any width.
             Item {
                 id: stage
                 anchors.fill: parent
@@ -181,8 +178,8 @@ Scope {
                 // ---------- the carousel ----------
                 ListView {
                     id: carousel
-                    // Full width so the centred card lands on the centre of the screen, and
-                    // so the neighbours have somewhere to show
+                    // Full width, so the centred card lands in the middle of the screen and the neighbours
+                    // have room to show
                     anchors { left: parent.left; right: parent.right }
                     y: (parent.height - height) / 2
                     height: win.cardHeight + 24
@@ -191,8 +188,8 @@ Scope {
                     model: win.shown
                     spacing: 26
                     clip: false
-                    // Snap the current card to the middle; this is what makes it slide
-                    // rather than scroll, and it keeps keyboard and wheel in agreement.
+                    // Snap the current card to the middle: this makes it slide, not scroll, and keeps
+                    // keyboard and wheel in agreement.
                     snapMode: ListView.SnapOneItem
                     highlightRangeMode: ListView.StrictlyEnforceRange
                     preferredHighlightBegin: (width - win.cardWidth) / 2
@@ -200,7 +197,7 @@ Scope {
                     highlightMoveDuration: 260
                     highlightMoveVelocity: -1
                     boundsBehavior: Flickable.StopAtBounds
-                    // Only the visible cards plus one either side get built
+                    // Only the visible cards plus one on each side are built
                     cacheBuffer: win.cardWidth * 2
 
                     delegate: Item {
@@ -215,7 +212,7 @@ Scope {
                         width: win.cardWidth
                         height: carousel.height
 
-                        // Neighbours sit back and dim, so the centre card reads as the subject
+                        // Neighbours sit back and dim, so the centre card stands out
                         scale: selected ? 1 : 0.9
                         opacity: selected ? 1 : 0.45
                         Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }

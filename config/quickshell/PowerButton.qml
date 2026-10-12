@@ -24,15 +24,12 @@ Rectangle {
 
     Timer { id: reset; interval: 3000; onTriggered: root.armed = false }
 
-    // Arming is exclusive across the row. Each button used to hold its own state with no
-    // coordination, so arming Power off and then moving to Restart left two buttons red at
-    // once for the full three seconds. That is not only untidy: the hint underneath picks
-    // the first armed button it finds, so it could name a different action than the one the
-    // next click would actually run.
+    // Arming is exclusive across the row. Before, each button kept its own state, so arming
+    // Power off and then moving to Restart left two buttons red. The hint under the row uses
+    // the first armed button, so it could name a different action than the next click ran.
     //
-    // Done by walking the siblings rather than by wiring the four buttons together in
-    // ControlPanel, so the component stays self-contained and a fifth button needs no
-    // bookkeeping. Anything in the row without an `armed` property is skipped.
+    // This walks the sibling buttons, so the component stays self-contained. Anything in the
+    // row without an `armed` property is skipped.
     function disarmSiblings() {
         if (!parent) return
         for (let i = 0; i < parent.children.length; i++) {
@@ -42,8 +39,8 @@ Rectangle {
     }
 
     onArmedChanged: if (armed) disarmSiblings()
-    // Closing the panel with a button still armed would leave it armed on reopen, one click
-    // away from firing something you armed by accident a while ago.
+    // Closing the panel with a button armed would leave it armed when reopened, one click
+    // from running something armed by accident long ago.
     onVisibleChanged: if (!visible) armed = false
 
     MouseArea {
@@ -51,8 +48,8 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        // Moving to another button is the clearest signal that you changed your mind, so it
-        // stands the armed one down rather than waiting out its timer.
+        // Moving to another button means you changed your mind, so stand the armed one down
+        // instead of waiting for its timer.
         onEntered: root.disarmSiblings()
         onClicked: {
             if (root.confirm && !root.armed) { root.armed = true; reset.restart() }

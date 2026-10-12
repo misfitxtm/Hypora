@@ -6,9 +6,9 @@ import QtQuick.Layouts
 
 // Keyboard shortcuts: what they are, and a way to change them.
 // Changes are written to ~/.config/hypr/keybinds.lua, which hyprland.lua merges over its
-// defaults, then Hyprland is reloaded. The action names below must match the `keys` table
-// in config/hypr/hyprland.lua.
-// Open from the menu (Help > Keybindings) or:  qs ipc call help open
+// defaults, then Hyprland reloads. The action names below must match the `keys` table in
+// config/hypr/hyprland.lua. Open from the menu (Help > Keybindings) or with:
+// qs ipc call help open
 Scope {
     id: root
 
@@ -27,13 +27,13 @@ Scope {
             implicitWidth: 560
             implicitHeight: 680
             color: Theme.bg
-            // Clearing `capturing` first matters: its handler is what gives the keyboard back
+            // Clear `capturing` first: its handler is what gives the keyboard back
             onClosed: {
                 capturing = ""
                 ShellState.keybindHelpOpen = false
             }
 
-            // Rebindable actions, grouped the way they're explained
+            // Rebindable actions, grouped the way they are explained
             readonly property var groups: [
                 { title: "Apps", items: [
                     { action: "terminal",    label: "Terminal",        def: "SUPER + Return" },
@@ -70,7 +70,7 @@ Scope {
                 ]}
             ]
 
-            // Shown for reference; these aren't single keys, so they're set in hyprland.lua
+            // Shown for reference only; these are not single keys, so they are set in hyprland.lua
             readonly property var fixed: [
                 { label: "Switch to workspace 1-10",     key: "SUPER + 1 … 0" },
                 { label: "Move window to workspace",     key: "SUPER + SHIFT + 1 … 0" },
@@ -89,34 +89,25 @@ Scope {
 
             function keyFor(action, fallback) { return overrides[action] || fallback }
 
-            // ---------- holding the keyboard while we wait for a chord ----------
+            // ---------- holding the keyboard while waiting for a chord ----------
             //
-            // Hyprland handles binds itself, before any client is offered the key. So while
-            // this window waits for a new chord, every combination that is already bound
-            // runs its action instead of reaching us: pressing SUPER + Q to rebind "Close
-            // window" closed the window, and SUPER + Q was never captured.
+            // Hyprland handles its binds before any app sees the key. So while this window waits for
+            // a new chord, an already-bound combination runs its action instead (SUPER + Q would
+            // close the window instead of being captured).
             //
-            // keyboard-shortcuts-inhibit is the Wayland protocol built for precisely this —
-            // a client asks the compositor to stop acting on its own shortcuts while this
-            // surface has keyboard focus. Two things make it the right tool rather than the
-            // `hyprctl dispatch submap` trick that was here before:
-            //
-            //   * `active` reports whether the compositor actually agreed. The submap call
-            //     had no return path at all, so when Hyprland ignored it — which it did,
-            //     because the submap was never defined anywhere — nothing said so and the
-            //     binds simply kept firing.
-            //   * The inhibition is tied to this surface. When the window closes, or the
-            //     shell exits, or it crashes, the compositor drops it and shortcuts come
-            //     back on their own. The submap was global state that had to be unwound by
-            //     hand, and anything that killed the shell mid-capture left a desktop with
-            //     no working keys.
+            // keyboard-shortcuts-inhibit is the Wayland protocol for this: the window asks the
+            // compositor to stop using its shortcuts while this window has focus. It is better than
+            // the `hyprctl dispatch submap` trick used before because:
+            //   * `active` says whether the compositor agreed (the submap call gave no answer).
+            //   * It is tied to this window. If the window closes or the shell crashes, the
+            //     shortcuts come back on their own (the submap was global state).
             ShortcutInhibitor {
                 id: inhibitor
                 window: win
                 enabled: win.capturing !== ""
 
-                // The compositor can revoke it; say so rather than silently capturing the
-                // action a key is bound to.
+                // The compositor can revoke it. Say so, rather than silently capturing the action a key
+                // is bound to.
                 onCancelled: {
                     win.capturing = ""
                     win.notice = "The compositor took the keyboard back, so nothing changed."
@@ -124,8 +115,8 @@ Scope {
                 }
             }
 
-            // A chord takes a moment to press, not a quarter of an hour. If capture is still
-            // open after this, assume it was forgotten and release the keyboard.
+            // A chord takes a moment to press. If capture is still open after this, assume it was
+            // forgotten and release the keyboard.
             Timer {
                 id: captureTimeout
                 interval: 15000
@@ -137,11 +128,9 @@ Scope {
                 }
             }
 
-            // Every chord more than one action now wants. A duplicate is allowed — refusing
-            // the edit made it impossible to swap two shortcuts, since whichever you set
-            // first collided with the other — but Hyprland keeps only the last bind for a
-            // chord, so the earlier one silently stops working. Hence saying so, loudly and
-            // for as long as it's true, rather than a notice that fades after two seconds.
+            // Every chord that more than one action wants. A duplicate is allowed (refusing it would
+            // make swapping two shortcuts impossible), but Hyprland keeps only the last bind for a
+            // chord, so the earlier one stops working. Warn for as long as that is true.
             readonly property var clashes: {
                 const byKey = {}
                 for (const g of groups)
@@ -250,9 +239,8 @@ Scope {
                 focus: true
 
                 Keys.onPressed: event => {
-                    // Not waiting for a chord: Page Up / Page Down scroll the list. Handled
-                    // here rather than on the Flickable because this item already owns the
-                    // window's focus for key capture, and two focus holders would fight.
+                    // Not waiting for a chord: Page Up / Page Down scroll the list. Handled here because this
+                    // item already owns the window's focus for key capture.
                     if (win.capturing === "") {
                         event.accepted = PageScroll.handle(event, scroller)
                         return
@@ -305,9 +293,8 @@ Scope {
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
-                        // When capture is armed the text reports whether the compositor
-                        // actually handed the keyboard over. If it didn't, saying so beats
-                        // letting you discover it by having a window close under you.
+                        // While capture is armed, say whether the compositor handed the keyboard over. If it did
+                        // not, a window could close under you.
                         text: win.notice !== "" ? win.notice
                             : win.capturing === "" ? "Click a shortcut to change it."
                             : inhibitor.active

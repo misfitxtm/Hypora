@@ -80,8 +80,8 @@ Singleton {
         path: Quickshell.env("HOME") + "/.config/hypora/sysinfo.json"
         watchChanges: true
         printErrors: false
-        // Read synchronously: this singleton is created on first use, so an async load
-        // would briefly hand the bar the defaults instead of your saved choice.
+        // Read synchronously: this singleton is created on first use, and an async load would
+        // briefly give the bar the defaults instead of your saved choice.
         blockLoading: true
         onFileChanged: reload()
         onLoaded: {

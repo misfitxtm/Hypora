@@ -4,34 +4,30 @@ import QtQuick
 
 // Low battery warnings, and a suspend before the machine dies mid-write.
 //
-// Battery.qml only colours the bar indicator red, which you have to be looking at. This
-// watches the charge and says something: a notification at 20% and 10%, and at 5% it
-// suspends, because a laptop that runs flat while writing to disk is how filesystems get
-// damaged. Suspending is recoverable; losing power is not always.
+// Battery.qml only colours the bar indicator, which you have to be looking at. This
+// notifies at 20% and 10%, and suspends at 5%: running flat while writing to disk can
+// damage the filesystem, and suspending is recoverable.
 //
-// Each threshold fires once per discharge. Plugging in resets them, so a battery hovering
-// around a threshold can't produce a stream of notifications.
+// Each threshold fires once per discharge. Plugging in resets them, so a battery near a
+// threshold cannot cause a stream of notifications.
 Scope {
     id: root
 
-    // UPower's DisplayDevice is a composite it synthesises. Prefer a real battery from
-    // UPower.devices when there is one and fall back to the composite, because a composite
-    // that has not been populated still answers questions — with defaults.
+    // UPower's DisplayDevice is a composite it makes up. Prefer a real battery from
+    // UPower.devices if there is one. An empty composite still answers, with default values.
     readonly property var dev: {
         const real = (UPower.devices?.values ?? []).find(d => d && d.isLaptopBattery && d.ready)
         return real ?? UPower.displayDevice
     }
 
-    // `ready` is the difference between a reading and a placeholder. Without it an
-    // unpopulated device reports 0 or 1 and we present that as the charge — which is how
-    // a bar can sit at 100% while the battery is visibly draining.
+    // `ready` separates a reading from a placeholder. Without it an unpopulated device
+    // reports 0 or 1 and the bar can show 100% while the battery drains.
     readonly property bool valid: dev !== null && dev !== undefined
                                   && dev.ready === true && dev.isLaptopBattery === true
     readonly property bool isBattery: valid
     readonly property bool discharging: valid && dev.state === UPowerDeviceState.Discharging
-    // No numeric fallback on purpose. There is no safe number to invent here: 1.0 means a
-    // failed read looks like a full battery and nothing ever warns, 0.0 means it suspends
-    // the machine. Everything below is gated on `valid` instead.
+    // No numeric fallback, on purpose: 1.0 would look like a full battery (no warning) and
+    // 0.0 would suspend the machine. Everything below checks `valid` instead.
     readonly property real charge: valid ? dev.percentage : -1
 
     // Fractions, not percentages, to match UPower's own scale
@@ -93,9 +89,8 @@ Scope {
     Timer {
         id: suspendSoon
         interval: 8000
-        // Re-checked at fire time, and `valid` is part of it: suspending a machine on the
-        // strength of a reading that went away in the meantime is the one mistake here
-        // that cannot be undone by the user noticing.
+        // Checked again when it fires, including `valid`: suspending on a reading that has since
+        // gone away is the one mistake here that cannot be undone.
         onTriggered: if (root.valid && root.discharging && root.charge >= 0
                          && root.charge <= root.suspendAt)
                          Quickshell.execDetached(["systemctl", "suspend"])

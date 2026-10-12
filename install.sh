@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Minimal installer for testing on a fresh Fedora install.
-# Covers: packages, Hyprland (Lua) config, Quickshell config, theme, SDDM login screen.
-# NOT included: packages/ lists.
+# Hypora installer. Run it as your normal user on a fresh Fedora install.
+# It installs packages, the Hyprland (Lua) config, the Quickshell config, the theme and
+# the SDDM login screen.
 #
-# Safe to re-run. Config files are COPIED into place, so the clone can be moved or deleted
-# afterwards. To update: git pull (or re-clone) and run this again.
+# It is safe to re-run. Config files are copied into place, so the clone can be moved or
+# deleted afterwards. To update, pull the repo and run this again.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="$HOME/.config"
-# Keep the theme picked last time (hypora-theme) unless THEME is given
+# Keep the theme chosen last time (hypora-theme) unless THEME is set
 THEME="${THEME:-$(cat "$CONF/hypora/current/name" 2>/dev/null || echo Nord)}"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-# Warnings are shown as they happen and kept, so the summary at the end can repeat them.
-# A 400-line install scrolls past; the one line that mattered shouldn't only appear there.
+# Warnings print as they happen and are saved, so the summary at the end can repeat them
 WARNINGS=()
 warn() { WARNINGS+=("$*"); printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
@@ -27,17 +26,14 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 [ -d "$REPO/config/quickshell" ] || die "Missing $REPO/config/quickshell"
 
 # ---------- helpers ----------
-# Every file the installer copies is recorded with its checksum, so a re-run can tell
-# files you edited (backed up before replacing) from ones it can update quietly.
+# Every copied file is recorded with its checksum. On a re-run this shows which files you
+# edited (they are backed up first) and which can be replaced quietly.
 MANIFEST="$CONF/hypora/installed.sha256"
 NEW_MANIFEST=$(mktemp)
 trap 'rm -f "$NEW_MANIFEST"' EXIT
 
-# `set -e` turns any unchecked failure into a silent exit, and this script has ~1100 lines of
-# them. The symptom is a run that stops mid-way with whatever the failing command printed and
-# no indication that anything is wrong — a bare "sha256sum: ...: Is a directory" is not a
-# diagnosis, and the install it leaves behind is worse than either outcome: configs copied but
-# never themed, because hypora-theme runs near the end. So say so, and say what to do.
+# With `set -e`, a failing command ends the script silently. Print what happened and
+# what to do, because the install is then only partly done.
 on_err() {
     local code=$? line=$1
     printf '\033[1;31mxx\033[0m %s\n' \
@@ -50,15 +46,14 @@ on_err() {
 trap 'on_err $LINENO' ERR
 
 sha() { sha256sum "$1" | cut -c1-64; }
+# installed_sha PATH: the checksum recorded for PATH by the last install
 installed_sha() { [ -f "$MANIFEST" ] && awk -v p="$1" 'substr($0, 67) == p { print substr($0, 1, 64) }' "$MANIFEST"; }
 
-# put <src> <dest> [mode]: copy a file into place
+# put SRC DEST [MODE]: copy a file into place and record it in the manifest
 put() {
     local src=$1 dest=$2 mode=${3:-644} new
-    # Refuse anything that isn't a regular file, with a message naming it. Without this the
-    # caller's glob handing over a directory produced only `sha256sum: ...: Is a directory`
-    # and, under `set -e`, killed the installer mid-run — which is how a stray bin/__pycache__
-    # left an install with its configs in place but never themed.
+    # A directory here (for example from a glob) would otherwise end the script with an
+    # unhelpful message from sha256sum
     [ -f "$src" ] || die "put: $src is not a regular file (installer bug)"
     new=$(sha "$src")
     mkdir -p "$(dirname "$dest")"
@@ -78,7 +73,7 @@ put() {
     printf '%s  %s\n' "$new" "$dest" >> "$NEW_MANIFEST"
 }
 
-# Remove files a previous run installed that Hypora no longer ships (unless you edited them)
+# Remove files an earlier run installed that Hypora no longer ships (unless you edited them)
 prune() {
     [ -f "$MANIFEST" ] || return 0
     local h p
@@ -90,14 +85,12 @@ prune() {
     done < "$MANIFEST"
 }
 
-# available_in_repos <pkg>: true if dnf can find it
+# available PKG: true if dnf can find the package
 available() { [ -n "$(dnf repoquery --quiet "$1" 2>/dev/null)" ]; }
 
-# fetch_verified <url> <dest> <sha256>: download, and refuse it unless the hash matches.
-# Every version below is pinned deliberately. HTTPS proves you reached the right host; it
-# says nothing about whether the file behind it changed, so each artifact is pinned to a
-# release and checked against a hash recorded when it was reviewed. Bumping a version means
-# updating its hash here on purpose.
+# fetch_verified URL DEST SHA256: download a file and refuse it if the hash differs.
+# HTTPS shows who answered, not that the file is the one we reviewed, so every download
+# is pinned to a version and a hash. To upgrade, change both here.
 fetch_verified() {
     local url=$1 dest=$2 want=$3 got
     curl -fsSL "$url" -o "$dest" || { warn "Could not download $url"; return 1; }
@@ -111,12 +104,9 @@ fetch_verified() {
     fi
 }
 
-# key_ok <file> <fingerprint>: the file holds exactly one primary key, and it is the pinned one.
-#
-# Checking only the first fingerprint is not enough, because `rpm --import` takes every key
-# in the file: a server that appended its own key after the genuine one would pass the check
-# and get both trusted. So collect every primary key's fingerprint (the `fpr` record right
-# after a `pub`, not a subkey's) and require the whole list to be the one we expect.
+# key_ok FILE FINGERPRINT: true if FILE holds exactly one key and it is the pinned one.
+# `rpm --import` trusts every key in a file, so a server could add its own key after the
+# real one. This checks the fingerprint of every primary key, not just the first.
 key_ok() {
     local fprs
     fprs=$(gpg --show-keys --with-colons "$1" 2>/dev/null \
@@ -124,16 +114,10 @@ key_ok() {
     [ -n "$fprs" ] && [ "$fprs" = "$2" ]
 }
 
-# pin_clone <url> <commit> <dest>: check out exactly one reviewed commit, nothing else.
-#
-# The same argument as fetch_verified, for git. `git clone --depth 1 <url>` takes whatever
-# the default branch points at today, and both repositories below are *executed* code — Oh
-# My Zsh runs on every interactive shell, the LazyVim starter runs inside Neovim. An upstream
-# compromise would therefore run as you, on your next shell. Everything else this installer
-# fetches is pinned to a hash or a GPG fingerprint; these were the exception.
-#
-# Fetching a bare commit needs the server to allow it, which GitHub does. The rev-parse at
-# the end is the actual guarantee: without it this would just be a slower unpinned clone.
+# pin_clone URL COMMIT DEST: check out one exact, reviewed commit.
+# Oh My Zsh and the LazyVim starter run as you, so they are pinned like every other
+# download. The final rev-parse is the real check: without it this would be an ordinary
+# unpinned clone.
 pin_clone() {
     local url=$1 commit=$2 dest=$3
     rm -rf "$dest"
@@ -152,44 +136,37 @@ pin_clone() {
     fi
 }
 
-# ---------- repos ----------
 # ---------- baseline ----------
-# Hypora's tested baseline is a Fedora Everything netinstall with encryption and btrfs. None
-# of it is required and none of it is enforced — this is a report, not a gate — but two of
-# the three cannot be added afterwards without reinstalling, so it is worth saying now rather
-# than when someone goes looking for the feature that isn't there.
-# Is this mountpoint backed by a dm-crypt layer? Asks lsblk what the mounted source *is*
-# rather than walking the tree: a LUKS volume is mounted from /dev/mapper/..., whose type
-# lsblk reports as "crypt". The bracket strip is for btrfs, which reports its source as
-# /dev/x[/subvol].
+# Hypora is tested on a Fedora Everything netinstall with disk encryption and btrfs. None of
+# it is required, so this only reports what is missing. Encryption and btrfs cannot be
+# added later without reinstalling, so it is better to say so now.
+
+# is_encrypted MOUNTPOINT: true if it is mounted from a dm-crypt (LUKS) volume
 is_encrypted() {
     local src type
     src=$(findmnt -fno SOURCE "$1" 2>/dev/null) || return 1
     [ -n "$src" ] || return 1
-    src=${src%%[*}
+    src=${src%%[*}   # btrfs reports the source as /dev/x[/subvol]
     type=$(lsblk -no TYPE "$src" 2>/dev/null | head -1)
     [ "$type" = crypt ]
 }
 
 baseline_note() {
     local missing=0
-    # -f is --first-only throughout: a path can have more than one mount entry (bind mounts,
-    # overlays, a sandbox), and without it the substitution returns several lines and every
-    # comparison below quietly fails.
+    # -f (first only): a path can have several mount entries, which would break the tests
     if [ "$(findmnt -fno FSTYPE / 2>/dev/null)" != btrfs ]; then
         warn "/ is not btrfs, so there will be no snapshots (cannot be converted later)"
         missing=1
     fi
-    # Encryption, judged on where your files actually are. If /home is its own encrypted
-    # volume then user data is protected whatever / is doing, and calling such a machine
-    # "unencrypted" is just wrong. So /home decides the warning and / gets a note.
+    # Encryption is judged by where your files are: an encrypted /home protects them
+    # even if / is not encrypted.
     if [ "$(findmnt -fno TARGET /home 2>/dev/null)" = /home ]; then
         if ! is_encrypted /home; then
             warn "/home is not encrypted, so your files can be read by anyone holding the drive"
             missing=1
         fi
     elif ! is_encrypted /; then
-        # No separate /home, so / is the volume holding everything
+        # no separate /home, so / holds everything
         warn "The disk is not encrypted, so your files can be read by anyone holding the drive"
         missing=1
     fi
@@ -208,12 +185,9 @@ baseline_note() {
 baseline_note
 
 # ---------- machine type ----------
-# Decided once, here, so that every laptop-specific step below asks the same question and
-# gets the same answer. `hypora-power is-laptop` is the authority rather than a test
-# written out again: it reads the SMBIOS chassis type, which is a different question from
-# "is there a battery" — a desktop with a UPS has one, and so does a paired wireless mouse.
-#
-# Set IS_LAPTOP=yes or =no to override, for a machine whose firmware reports nonsense.
+# Decide laptop or desktop once, so every laptop-only step agrees. `hypora-power is-laptop`
+# reads the chassis type; "has a battery" is not enough, since a desktop with a UPS or a
+# wireless mouse has one too. Set IS_LAPTOP=yes or no to override a wrong firmware answer.
 if [ -n "${IS_LAPTOP:-}" ]; then
     machine_kind="forced by IS_LAPTOP=$IS_LAPTOP"
 elif machine_kind=$("$REPO/bin/hypora-power" is-laptop 2>/dev/null); then
@@ -227,20 +201,9 @@ else
     log "Desktop: $machine_kind — skipping battery, backlight and charger handling"
 fi
 
-# Release the dnf lock before any of the package work below.
-#
-# dnf5daemon-server takes the system repository lock, and every dnf command in this script
-# then waits for it — not with an error, but indefinitely, which reads as the installer
-# hanging on whatever step it happened to reach. On a real install it sat there for over an
-# hour on `dnf mark`, with a daemon that had been up since before the run started.
-#
-# Safe to stop: the unit is Type=dbus with BusName=org.rpm.dnf.v0 and no [Install] section,
-# so it is never "enabled" in the first place — it is activated on demand and anything that
-# wants it (GNOME Software, most often) brings it straight back afterwards. Stopped, not
-# disabled, for exactly that reason.
-#
-# `timeout` because its TimeoutStopSec is 5min: if it is mid-transaction, waiting that long
-# to start is worse than carrying on and letting the per-command timeouts handle it.
+# Stop the background dnf services first. They hold dnf's lock, and every dnf command
+# below would then wait forever (once for over an hour). They are not enabled units,
+# so D-Bus starts them again when needed. `timeout`: stopping one can take 5 minutes.
 for svc in dnf5daemon-server packagekit; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
         log "Stopping $svc so it releases the dnf lock (D-Bus restarts it on demand)"
@@ -252,12 +215,11 @@ done
 log "Preparing repositories"
 sudo dnf install -y dnf-plugins-core
 
-# Fedora doesn't ship Hyprland or uwsm; sdegler/hyprland tracks current releases
-# (the old solopasha COPR stopped at 0.49, before Lua configs existed).
+# Fedora does not ship Hyprland or uwsm. The sdegler/hyprland COPR does, and tracks
+# current releases (the older solopasha COPR stopped before Lua configs existed).
 sudo dnf copr disable -y solopasha/hyprland >/dev/null 2>&1 || true
-# COPR packages are GPG-signed and dnf verifies them, but `copr enable` trusts whatever
-# key the server offers the first time. Check it against the fingerprint recorded here
-# before anything from this repo can be installed.
+# `copr enable` trusts whatever key the server offers the first time, so check it against
+# a fingerprint recorded here before anything is installed from the repo.
 HYPRLAND_COPR_FPR=64BBBF013D1CA5E4BE5B0552C043104207862204
 log "Enabling COPR sdegler/hyprland"
 sudo dnf copr enable -y sdegler/hyprland
@@ -265,7 +227,17 @@ copr_key=$(mktemp)
 if curl -fsSL "https://download.copr.fedorainfracloud.org/results/sdegler/hyprland/pubkey.gpg" -o "$copr_key" \
     && key_ok "$copr_key" "$HYPRLAND_COPR_FPR"; then
     sudo rpm --import "$copr_key"
-    log "Hyprland COPR signing key verified"
+    # Point the repo at this verified copy. Otherwise dnf would fetch the key from the
+    # network again, and a later `dnf upgrade -y` would accept whatever key it was offered.
+    sudo install -m644 "$copr_key" /etc/pki/rpm-gpg/RPM-GPG-KEY-hypora-hyprland
+    copr_pinned=0
+    for repo in /etc/yum.repos.d/_copr*sdegler*hyprland*.repo; do
+        [ -f "$repo" ] || continue
+        sudo sed -i 's|^gpgkey=.*|gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-hypora-hyprland|' "$repo" \
+            && copr_pinned=1
+    done
+    [ "$copr_pinned" -eq 1 ] || warn "Could not pin the Hyprland COPR key; dnf may fetch it again"
+    log "Hyprland COPR signing key verified and pinned"
 else
     rm -f "$copr_key"
     sudo dnf copr disable -y sdegler/hyprland >/dev/null 2>&1 || true
@@ -274,115 +246,99 @@ fi
 rm -f "$copr_key"
 available quickshell || die "quickshell not found in enabled repos (it ships in Fedora 42+)."
 
+# ---------- optional extras ----------
+# Virtualization and network-analysis tools are asked about, not installed by default
+# (libvirt group membership is close to root). Set INSTALL_EXTRAS=yes or no to answer ahead
+# of time. A machine that already has libvirt keeps it.
+want_extras() {
+    case "${INSTALL_EXTRAS:-}" in
+        yes|y|1) return 0 ;;
+        no|n|0)  return 1 ;;
+    esac
+    rpm -q libvirt-daemon >/dev/null 2>&1 && return 0
+    if [ ! -t 0 ]; then
+        log "Skipping virtualization and network tools (no terminal to ask; set INSTALL_EXTRAS=yes)"
+        return 1
+    fi
+    printf '\n%s\n%s\n' \
+        "Optional: virtualization (libvirt, QEMU, virt-manager) and network tools (nmap," \
+        "aircrack-ng, wireshark). Adds you to the libvirt and wireshark groups." >&2
+    read -r -p "Install them? [y/N] " answer
+    case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+if want_extras; then EXTRAS=yes; else EXTRAS=no; fi
+
 # ---------- packages ----------
 REQUIRED=(
     hyprland hyprland-guiutils hyprlock hypridle uwsm quickshell kitty git
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
-    # eza: the ls replacement the shell aliases use, themed from the active palette
-    eza
+    eza   # ls replacement used by the shell aliases
     polkit sddm qt6-qtsvg gnupg2 curl tar xz unzip firewalld
-    # Secret Service provider. GNOME's session starts one and Hyprland doesn't, so without
-    # this an app looking for somewhere to keep a token finds no provider — and some then
-    # fall back to writing it to disk unencrypted. Started from hyprland.lua.
-    #
-    # gnome-keyring-pam is a separate package on Fedora and ships pam_gnome_keyring.so,
-    # which is the whole mechanism behind the keyring auto-unlock enabled further down.
-    # Listing only gnome-keyring left the module absent while authselect happily wrote the
-    # PAM lines referencing it — and because those lines are `optional` and `-` prefixed,
-    # PAM skips a missing module without even logging it. Login worked and the keyring
-    # silently never unlocked. gcr provides the prompter it talks to.
+    # Secret Service (keyring). GNOME starts one and Hyprland does not; without it some
+    # apps store tokens unencrypted on disk. hyprland.lua starts it. gnome-keyring-pam
+    # provides pam_gnome_keyring.so (needed for keyring unlock at login), and gcr is the
+    # password prompter.
     gnome-keyring gnome-keyring-pam gcr
-    # Fonts, icons and app theming (JetBrainsMono Nerd Font is downloaded below)
+    # Fonts, icons and app theming (the Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
     papirus-icon-theme breeze-icon-theme
     adw-gtk3-theme qt6ct
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
-    # How GIO starts Terminal=true apps. Its built-in fallback list has no kitty, so
-    # without this, opening a file in Neovim from Files (or Default Apps) does nothing.
-    xdg-terminal-exec
-    # Network. nmtui is the fallback behind the Network window's "Advanced"
+    xdg-terminal-exec   # starts Terminal=true apps with kitty (GIO does not know kitty)
+    # Network (nmtui is the fallback behind the Network window's "Advanced")
     NetworkManager NetworkManager-tui NetworkManager-wifi
-    # Sound: PipeWire + WirePlumber, wiremix (sound TUI), pulseaudio compatibility
+    # Sound: PipeWire, WirePlumber, wiremix (sound TUI), pulseaudio compatibility
     pipewire wireplumber pipewire-pulseaudio wiremix
-    # Bluetooth. bluez also provides bluetoothctl, the fallback behind "Advanced"
-    bluez
-    # Battery and power modes
-    upower
+    bluez   # also provides bluetoothctl, the fallback behind "Advanced"
+    upower  # battery status
     # Read the machine's security state for the Security window
     fwupd mokutil policycoreutils
-    # Files, clipboard history and screenshots (SUPER+E, SUPER+SHIFT+V, SUPER+SHIFT+S)
-    # GNOME's apps, without the GNOME session: none of these pull gnome-shell, mutter,
-    # gnome-session or gdm. Nautilus does bring `localsearch`, a background indexer that
-    # reads your home directory — see the readme if you'd rather it didn't.
+    # Files, clipboard history and screenshots. These are GNOME apps without the GNOME
+    # session. Nautilus brings `localsearch`, an indexer that reads your home directory.
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
-    # Kept on purpose, and listed here so they are marked user-installed: that is what keeps
-    # `dnf autoremove` and hypora-replace-de's sweep from treating them as GNOME leftovers.
-    # Calendar, Disk Usage Analyzer and Document Scanner have no Hypora equivalent and
-    # nothing else here replaces them.
+    # Also GNOME apps, kept because nothing else here replaces them. Listing them marks
+    # them user-installed, so `dnf autoremove` leaves them alone.
     gnome-calendar baobab simple-scan
     cliphist wl-clipboard grim slurp
 )
-# Nice to have; a missing one only produces a warning
+# Nice to have; a missing one only gives a warning
 OPTIONAL=(
     hyprsunset
-    # Wi-Fi power save, which tuned's empty [net] section does not touch
-    iw
+    iw   # Wi-Fi power save
     pamixer playerctl
     google-noto-emoji-fonts
-    # Qt can only decode jpeg, png, gif and svg out of the box. Hypora's own wallpapers are
-    # all jpeg, but the wallpaper and theme pickers accept webp too, and without this a webp
-    # you drop in yourself is listed and then renders as nothing.
-    qt6-qtimageformats
-    # Boot screen, including the LUKS passphrase prompt. Fedora ships these already; they
-    # are listed so a minimal install still gets a themed boot rather than a bare console.
+    qt6-qtimageformats   # lets Qt show webp wallpapers
+    # Boot screen, including the disk passphrase prompt (usually already installed)
     plymouth plymouth-plugin-two-step plymouth-scripts
-    # Network and security tools
-    nmap aircrack-ng wireshark wireshark-cli
 )
+# Only installed if you opt in (see want_extras)
+EXTRAS_PKGS=(nmap aircrack-ng wireshark wireshark-cli)
 
 log "Installing required packages"
 sudo dnf install -y "${REQUIRED[@]}"
 
-# Mark the load-bearing packages user-installed, so `dnf autoremove` can never take them.
-#
-# This is not belt-and-braces; it is the fix for something that already happened. On a stock
-# Workstation install these arrive with reason `Group` or `Dependency`, which is exactly what
-# autoremove collects once the desktop that pulled them in is gone. A plain `dnf autoremove`
-# run by hand after removing gnome-shell took gnome-keyring-pam and gcr, silently disabling
-# keyring auto-unlock — the PAM lines are `optional` and `-` prefixed, so PAM skips the
-# missing module without even logging it.
-#
-# `dnf install` does not reliably change an existing package's reason, so mark explicitly.
+# Mark these packages user-installed so `dnf autoremove` cannot remove them. After the
+# desktop that pulled them in is gone, autoremove would take gnome-keyring-pam and gcr
+# and silently break keyring unlock. `dnf install` does not reliably change the reason.
 PROTECT_USER=(
     gsettings-desktop-schemas xorg-x11-server-Xwayland
     gnome-keyring gnome-keyring-pam gcr
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
     gnome-calendar baobab simple-scan papers evince
 )
-# Filter with rpm, which is instant, so dnf is only asked about packages that are really
-# there. That also means one unavailable name cannot cost the whole batch its protection.
+# Check with rpm first (fast), so a package that is not installed cannot make the whole
+# dnf call fail
 protect_now=()
 for p in "${PROTECT_USER[@]}"; do
     rpm -q "$p" >/dev/null 2>&1 && protect_now+=("$p")
 done
 if [ ${#protect_now[@]} -gt 0 ]; then
     log "Protecting ${#protect_now[@]} required packages from dnf autoremove"
-    # One dnf call, not one per package, and bounded. An earlier version ran `dnf mark` in a
-    # loop with its output redirected to /dev/null, which made the installer appear to hang
-    # here. Two separate costs were behind that, and only the second is a real stall:
-    #
-    #   * dnf start-up is ~7s even with -C, so fifteen invocations cost ~2 minutes of nothing
-    #     visible happening. Hence one call.
-    #   * `dnf mark` takes the system repository lock and then waits for it *indefinitely*.
-    #     Anything else touching dnf holds that lock — PackageKit or gnome-software doing a
-    #     background refresh is the usual culprit, and dnf-automatic is enabled by this very
-    #     script. That is the actual hang, and no amount of caching avoids it.
-    #
-    # So `timeout` is the fix, not an optimisation: this step is hardening, and it must never
-    # be the reason an install fails to finish. -C stays because a reason change touches only
-    # the local rpmdb and has nothing to resolve; the plain retry covers a missing cache.
+    # One dnf call (each start takes ~7 seconds), with a timeout, because dnf waits
+    # forever if another process holds its lock. -C skips metadata, which is not needed
+    # to change a package's reason; the second try runs without it.
     if ! sudo timeout 45 dnf -C -y mark user "${protect_now[@]}" >/dev/null 2>&1 \
        && ! sudo timeout 90 dnf -y mark user "${protect_now[@]}" >/dev/null 2>&1; then
         warn "Could not mark packages user-installed (dnf was busy or locked), so a later"
@@ -391,37 +347,35 @@ if [ ${#protect_now[@]} -gt 0 ]; then
     fi
 fi
 
-log "Installing virtualization (@virtualization group)"
-# Without virt-viewer: the group pulls it in, and its `remote-viewer` is a second, worse
-# remote-desktop client sitting next to RustDesk below. virt-manager has its own built-in
-# console for local VMs and does not depend on it, so nothing loses a feature.
-sudo dnf group install -y virtualization --exclude=virt-viewer \
-    || warn "Could not install the virtualization group"
-# Drop a copy an earlier run of this installer brought in. It is a leaf package — nothing
-# installed requires it — so this removes exactly one thing.
+if [ "$EXTRAS" = yes ]; then
+    log "Installing virtualization (@virtualization group)"
+    # Without virt-viewer: its remote-viewer duplicates RustDesk, and virt-manager has its
+    # own console for local VMs
+    sudo dnf group install -y virtualization --exclude=virt-viewer \
+        || warn "Could not install the virtualization group"
+    sudo dnf install -y --skip-unavailable "${EXTRAS_PKGS[@]}" \
+        || warn "Some network tools could not be installed"
+fi
+# Remove virt-viewer if an earlier install added it (nothing depends on it)
 if rpm -q virt-viewer >/dev/null 2>&1; then
     log "Removing virt-viewer (remote-viewer); RustDesk replaces it"
     sudo dnf remove -y virt-viewer || warn "Could not remove virt-viewer"
 fi
 
-# A brief earlier version of this installer used RustDesk's own unsigned RPM. The flatpak
-# replaced it, so drop the RPM rather than leaving two RustDesks in the launcher.
+# An earlier version installed RustDesk's unsigned RPM. The Flathub build replaces it.
 if rpm -q rustdesk >/dev/null 2>&1; then
     log "Removing the RustDesk RPM (the verified Flathub build replaces it)"
     sudo dnf remove -y rustdesk || warn "Could not remove the RustDesk RPM"
 fi
 
-# GNOME Help. Removed here as well as by hypora-replace-de's sweep, because the sweep only
-# runs while a desktop is still detected — on a machine where GNOME's session has already
-# gone, yelp is left stranded with no way to catch it. Its content package (gnome-user-docs)
-# documents a shell that isn't running, so the reader has nothing useful to show.
+# GNOME Help documents a shell that is not running. hypora-replace-de removes it too, but
+# only while a desktop is still detected.
 if rpm -q yelp >/dev/null 2>&1; then
     log "Removing GNOME Help (yelp)"
     sudo dnf remove -y yelp || warn "Could not remove yelp"
 fi
 
-# Document viewer. Fedora renamed Evince to Papers, so take whichever this release has
-# rather than hardcoding a name that breaks on one side of the rename.
+# Document viewer. Fedora renamed Evince to Papers, so install whichever exists.
 for viewer in papers evince; do
     if available "$viewer"; then
         sudo dnf install -y "$viewer" || warn "Could not install $viewer (document viewer)"
@@ -430,65 +384,49 @@ for viewer in papers evince; do
 done
 
 log "Installing optional packages"
-for p in "${OPTIONAL[@]}"; do
-    sudo dnf install -y "$p" || warn "Skipped optional package: $p"
-done
-# 'install' leaves an already-installed (possibly old) Hyprland alone
+# One transaction (each dnf start costs seconds). --skip-unavailable skips names this
+# Fedora release does not have instead of failing.
+sudo dnf install -y --skip-unavailable "${OPTIONAL[@]}" \
+    || warn "Some optional packages could not be installed"
+# `install` leaves an already-installed (possibly old) Hyprland as it is
 sudo dnf upgrade -y hyprland uwsm || true
 
 # ---------- laptop-only packages ----------
-# brightnessctl drives a backlight, so there is nothing for it to do on a machine with no
-# panel to dim. upower deliberately stays in REQUIRED rather than moving here: it also
-# reports the batteries in wireless mice and keyboards, which desktops very much have.
+# brightnessctl needs a backlight. upower stays in REQUIRED because it also reports the
+# batteries of wireless mice and keyboards.
 if [ "$IS_LAPTOP" = yes ] && available brightnessctl; then
     sudo dnf install -y brightnessctl || warn "Skipped brightnessctl (brightness keys will not work)"
 fi
 
 # Power modes: Fedora's default is tuned-ppd (same D-Bus API as power-profiles-daemon).
-# Keep power-profiles-daemon if it's already there; the two conflict.
+# Keep power-profiles-daemon if it is already installed; the two conflict.
 if ! rpm -q power-profiles-daemon >/dev/null 2>&1; then
     sudo dnf install -y tuned-ppd || warn "Could not install tuned-ppd (power modes unavailable)"
 fi
 
-# impala and bluetui used to be downloaded here. The Network and Bluetooth windows now
-# cover what they were for, and nmtui and bluetoothctl — both already installed — are the
-# fallback behind each window's "Advanced". Remove the old binaries if an earlier install
-# left them behind.
+# Older installs downloaded impala and bluetui. The Network and Bluetooth windows replace
+# them, so remove the old binaries.
 sudo rm -f /usr/local/bin/impala /usr/local/bin/bluetui
 
-# Hyprland reads hyprland.lua only from 0.55 on; older versions ignore it entirely
-# (no autostart, no keybinds) and generate a default hyprland.conf instead.
-# `|| true` because grep exits 1 when it matches nothing, pipefail carries that through,
-# and set -e would then abort the install on the assignment — before reaching the `-n`
-# check on the next line, which exists precisely because an empty answer is expected when
-# Hyprland is absent or prints a version in a shape this pattern does not recognise.
+# Hyprland only reads hyprland.lua from version 0.55; older versions ignore it.
+# `|| true`: grep exits 1 when nothing matches, and with pipefail that would end the
+# script. An empty answer is expected if Hyprland is missing.
 hypr_ver=$(Hyprland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 if [ -n "$hypr_ver" ] && [ "$(printf '%s\n' 0.55.0 "$hypr_ver" | sort -V | head -1)" != 0.55.0 ]; then
     die "Hyprland $hypr_ver is too old for hyprland.lua (need 0.55+). Run: sudo dnf upgrade --refresh hyprland"
 fi
 
 # ---------- snapshots (btrfs only) ----------
-# snapper rather than Timeshift, and only where there is btrfs to snapshot.
-#
-# Timeshift was the obvious choice and is the wrong one here: its BTRFS mode requires the
-# Ubuntu-style subvolume layout, with / on a subvolume literally named `@`. Fedora's
-# installer creates `root` and `home`, so on a stock Fedora btrfs install Timeshift silently
-# offers only its RSYNC mode — copying files, not snapshotting. snapper does not care what
-# the subvolumes are called, which on Fedora is the difference between real snapshots and a
-# slow file copy.
-#
-# What this does not get you, because there is no honest way to: automatic snapshots around
-# a manual `dnf upgrade`. python3-dnf-plugin-snapper is a dnf4 plugin and Fedora now runs
-# dnf5, which has no snapper plugin at all, so installing it would hook nothing. The
-# unattended updates Hypora enables are covered instead by a drop-in further down, and the
-# readme says plainly that a manual upgrade is yours to snapshot.
+# Uses snapper, not Timeshift: Timeshift's btrfs mode needs a subvolume named `@`, which
+# Fedora does not create. dnf5 has no snapper plugin, so snapshots before a manual
+# `dnf upgrade` are yours to take; unattended updates get one from a drop-in further down.
 has_btrfs() {
     findmnt -nt btrfs >/dev/null 2>&1 && return 0
     lsblk -no FSTYPE 2>/dev/null | grep -qx btrfs
 }
 
-# Set KEY="value" in a shell-style config, whether or not the key is already there.
-# Both snapper's configs and btrfsmaintenance's sysconfig are this shape.
+# kv_set FILE KEY VALUE: set KEY="VALUE" in a shell-style config file, adding the line
+# if it is missing
 kv_set() {
     local f=$1 key=$2 val=$3
     [ -f "$f" ] || return 0
@@ -501,9 +439,8 @@ kv_set() {
 
 snapper_set() { kv_set "/etc/snapper/configs/$1" "$2" "$3"; }
 
-# create-config, then limits that won't quietly eat the disk. snapper's defaults keep ten
-# hourly, ten monthly and ten yearly snapshots per config, which on a laptop is a lot of
-# retained extents for very little benefit.
+# snapper_setup NAME PATH: create a snapper config, then lower the default retention
+# (10 hourly, monthly and yearly snapshots is too much for a laptop disk)
 snapper_setup() {
     local name=$1 path=$2
     if [ -f "/etc/snapper/configs/$name" ]; then
@@ -534,14 +471,13 @@ else
         warn "Could not install snapper"
     else
         snapper_any=0
-        # / first, which is what an update can break
+        # / first, since an update is what can break it
         if [ "$(findmnt -fno FSTYPE / 2>/dev/null)" = btrfs ]; then
             snapper_setup root / && snapper_any=1
         else
             log "  / is not btrfs, so there is no config for it"
         fi
-        # /home separately: it is usually its own subvolume, and the snapshots people
-        # actually reach for are of their own files
+        # /home separately (usually its own subvolume): it holds your own files
         if [ "$(findmnt -fno FSTYPE /home 2>/dev/null)" = btrfs ] \
            && [ "$(findmnt -fno TARGET /home 2>/dev/null)" = /home ]; then
             snapper_setup home /home && snapper_any=1
@@ -555,9 +491,7 @@ else
             warn "snapper is installed but no config could be created, so nothing is snapshotted"
         fi
 
-        # A GUI for it. snapper is CLI-only, and browsing snapshots to find the one you want
-        # is the part that genuinely wants a list you can click. This is the thing Timeshift
-        # was better at, and btrfs-assistant closes it.
+        # snapper has no GUI of its own; btrfs-assistant is one for browsing snapshots
         if available btrfs-assistant; then
             sudo dnf install -y btrfs-assistant \
                 || warn "Could not install btrfs-assistant (snapshots stay command-line only)"
@@ -568,17 +502,11 @@ else
 fi
 
 # ---------- btrfs housekeeping ----------
-# Nothing on a stock Fedora runs these, and btrfs wants them:
-#   scrub    reads every block and checks it against its checksum. This is how bit rot is
-#            found — and finding it matters more with snapshots, because a corrupted extent
-#            is shared by every snapshot referencing it.
-#   balance  reclaims chunks that are allocated but mostly empty, which is the usual cause
-#            of "no space left" on a filesystem that df says is half free.
-#
-# Two periods are deliberately left off:
-#   trim     Fedora already enables fstrim.timer, so this would be the second thing doing it.
-#   defrag   defragmenting a filesystem with snapshots *unshares* the extents snapshots have
-#            in common, so it can multiply disk usage instead of tidying it. Wrong tool here.
+# Fedora runs neither of these, and btrfs needs them:
+#   scrub    reads every block and checks its checksum, which finds bit rot
+#   balance  frees chunks that are allocated but mostly empty ("no space left" errors)
+# Left off: trim (fstrim.timer already does it) and defrag (it unshares snapshot data and
+# can use much more disk).
 if has_btrfs && available btrfsmaintenance; then
     log "Setting up btrfs scrub and balance"
     if sudo dnf install -y btrfsmaintenance; then
@@ -589,19 +517,12 @@ if has_btrfs && available btrfsmaintenance; then
             kv_set "$cfg" BTRFS_TRIM_PERIOD none
             kv_set "$cfg" BTRFS_DEFRAG_PERIOD none
         done
-        # The package's own refresh unit reads that config and enables exactly the timers it
-        # describes. Preferred over enabling timers directly, which would then disagree with
-        # the config the next time anything ran the refresh.
+        # The package's refresh unit reads that config and enables the matching timers
         if systemctl cat btrfsmaintenance-refresh.service >/dev/null 2>&1; then
-            # `start`, not `enable --now`. The refresh service is a Type=oneshot helper with
-            # no [Install] section, so enabling it is a no-op that makes systemd print nine
-            # lines explaining that the unit isn't meant to be enabled — noise in an already
-            # long log. Starting it is the half that actually applies the schedule.
+            # `start`, not `enable`: this unit has no [Install] section
             sudo systemctl start btrfsmaintenance-refresh.service \
                 || warn "Could not apply the btrfsmaintenance schedule"
-            # The .path unit beside it is the one with [Install], and enabling it is what
-            # keeps the timers in step with /etc/sysconfig/btrfsmaintenance if that file is
-            # edited later. Nothing enabled it before, so a later change went unnoticed.
+            # The .path unit re-runs the refresh when the config file changes
             sudo systemctl enable --now btrfsmaintenance-refresh.path 2>/dev/null \
                 || warn "btrfsmaintenance timers won't refresh if you edit its config later"
         else
@@ -617,9 +538,8 @@ if has_btrfs && available btrfsmaintenance; then
 fi
 
 # ---------- fonts ----------
-# JetBrainsMono Nerd Font for monospace and the shell UI, Liberation for sans-serif
-# and serif. The Nerd Font isn't packaged for Fedora; install the official
-# release system-wide so the login screen (which runs as the sddm user) can use it too.
+# JetBrainsMono Nerd Font is not packaged for Fedora. It is installed system-wide so the
+# login screen (which runs as the sddm user) can use it too.
 NERD_FONT_VERSION=v3.5.1
 NERD_FONT_SHA=04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf
 NERD_FONT_DIR=/usr/local/share/fonts/JetBrainsMonoNerdFont
@@ -639,7 +559,7 @@ if ! ls "$NERD_FONT_DIR"/*.ttf >/dev/null 2>&1; then
 fi
 sudo install -m644 "$REPO/system/fontconfig/50-hypora.conf" /etc/fonts/conf.d/50-hypora.conf
 
-# Gruvbox Plus icons (GPL-3.0). Not packaged for Fedora, so take the release zip.
+# Gruvbox Plus icons (GPL-3.0) are not packaged for Fedora, so use the release zip
 GRUVBOX_ICONS=/usr/share/icons/Gruvbox-Plus-Dark
 if [ -f "$GRUVBOX_ICONS/index.theme" ]; then
     log "Gruvbox Plus icons already installed"
@@ -661,32 +581,27 @@ sudo fc-cache -f >/dev/null 2>&1 || true
 
 
 # ---------- Flatpak ----------
-# Flathub as a system remote, then the apps. Each install is skipped if it's already
-# there, so re-running costs nothing. Set SKIP_FLATPAKS=1 to install none of them.
+# Flathub is added as a system remote. Apps already installed are skipped.
+# Set SKIP_FLATPAKS=1 to install none.
 log "Setting up Flatpak"
 sudo dnf install -y flatpak
 sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo \
     || warn "Could not add the Flathub remote"
 
-# Sandboxed by default. Firefox is here rather than as an RPM because a browser handles
-# the most hostile input on the machine and Mozilla publishes a verified build; the rest of
-# the package list stays native, either because no maintained flatpak exists or because
-# sandboxing something that needs host access just means handing it the host anyway.
+# Apps that handle untrusted input (the browser) are flatpaks, because they are sandboxed.
+# Everything else is a native package, since sandboxing an app that needs host access just
+# hands it the host.
 FLATPAKS=(
     io.github.flattool.Warehouse     # manage installed flatpaks and their leftover data
     com.github.tchx84.Flatseal       # review and change each flatpak's permissions
     org.mozilla.firefox              # publisher-verified by Mozilla
     com.bitwarden.desktop
     org.localsend.localsend_app
-    # Remote desktop, replacing virt-viewer's remote-viewer. Publisher-verified on Flathub
-    # (via rustdesk.com), which is better provenance than the project's own RPM: that one is
-    # unsigned, so a pinned hash would prove only that the bytes hadn't changed since someone
-    # looked at them, not who built them.
+    # Remote desktop. The Flathub build is publisher-verified; the project's own RPM is
+    # unsigned, so a pinned hash would not show who built it.
     com.rustdesk.RustDesk
-    # Steam is installed natively instead, further down — the flatpak's sandbox gets in the
-    # way in practice (controller access, filesystem paths to existing libraries, launching
-    # anything outside it). Native Steam needs RPM Fusion nonfree, so it is installed with
-    # that section rather than here.
+    # Steam is native (installed further down): the flatpak sandbox gets in the way of
+    # controllers and existing game libraries.
     net.lutris.Lutris
     com.spotify.Client               # sandboxed, rather than an unmaintained terminal client
 )
@@ -705,26 +620,20 @@ else
 fi
 
 # ---------- shell and editor ----------
-# Oh My Zsh: installed unattended, keeping Hypora's .zshrc (installed further down) and
-# leaving the login shell alone until we set it ourselves below.
+# Oh My Zsh. Its installer script is not run: it would only clone the repo, and Hypora
+# writes its own .zshrc and sets the login shell itself. The clone is pinned to a commit
+# (update it on purpose after reading the changes). config/zsh/zshrc turns off Oh My
+# Zsh's auto-update, which would defeat the pin.
 if [ -d "$HOME/.oh-my-zsh" ]; then
     log "Oh My Zsh already installed"
 else
-    # Clone the repository rather than piping its installer into a shell. With
-    # RUNZSH=no CHSH=no KEEP_ZSHRC=yes that script only clones anyway — Hypora writes its
-    # own .zshrc and sets the login shell itself — so running it bought nothing and meant
-    # executing a file fetched from a moving branch.
-    #
-    # Pinned, like every other artifact here. Bumping it is a deliberate edit: read what
-    # changed, then update the commit. config/zsh/zshrc turns Oh My Zsh's own auto-update
-    # off, because a framework that silently pulls master would make this pin decorative.
     log "Installing Oh My Zsh"
     pin_clone https://github.com/ohmyzsh/ohmyzsh.git \
         60c9a7a839b790cd905d0fd4419435124fd1bdc0 \
         "$HOME/.oh-my-zsh" || warn "Could not install Oh My Zsh"
 fi
 
-# LazyVim starter, only when ~/.config/nvim is empty; an existing config is left alone.
+# LazyVim starter, only if you have no Neovim config yet
 if [ -e "$CONF/nvim/init.lua" ] || [ -e "$CONF/nvim/init.vim" ]; then
     log "Keeping your existing Neovim config"
 elif pin_clone https://github.com/LazyVim/starter \
@@ -746,18 +655,17 @@ else
     sudo systemctl enable --now power-profiles-daemon || warn "Could not enable power-profiles-daemon"
 fi
 
-if rpm -q libvirt-daemon >/dev/null 2>&1; then
+if [ "$EXTRAS" = yes ] && rpm -q libvirt-daemon >/dev/null 2>&1; then
     sudo systemctl enable --now libvirtd || warn "Could not enable libvirtd"
     sudo usermod -aG libvirt "$USER" || true
 fi
-# Capturing with wireshark/tshark as a normal user needs the wireshark group
-if getent group wireshark >/dev/null; then
+# Capturing packets as a normal user needs the wireshark group
+if [ "$EXTRAS" = yes ] && getent group wireshark >/dev/null; then
     sudo usermod -aG wireshark "$USER" || true
 fi
 
-# NetworkManager keeps its own default Wi-Fi backend. An earlier version switched it to
-# iwd purely so impala would work; with impala gone there is no reason to touch it, so put
-# a machine that took that switch back on the stock configuration.
+# An earlier version switched NetworkManager to iwd for impala, which is gone. Put such a
+# machine back on the default Wi-Fi backend.
 IWD_CONF=/etc/NetworkManager/conf.d/hypora-iwd.conf
 if [ -e "$IWD_CONF" ]; then
     log "Restoring NetworkManager's default Wi-Fi backend"
@@ -765,35 +673,28 @@ if [ -e "$IWD_CONF" ]; then
     sudo systemctl disable iwd 2>/dev/null || true
     sudo systemctl enable wpa_supplicant 2>/dev/null || true
 fi
-# DNS through systemd-resolved, encrypted opportunistically, and MAC addresses that don't
-# follow you between networks. Both files carry the full reasoning; the short version is
-# that DNS follows the network so a resolver you run yourself stays in charge, and Wi-Fi
-# and ethernet present a per-network address instead of the card's permanent serial number.
+# DNS through systemd-resolved, and MAC addresses that change per network (the config
+# files explain the details)
 log "Setting up DNS and MAC address privacy"
 sudo install -d /etc/systemd/resolved.conf.d /etc/NetworkManager/conf.d
 sudo install -m644 "$REPO/system/systemd/resolved.conf.d/hypora-dns.conf" /etc/systemd/resolved.conf.d/hypora-dns.conf
 sudo install -m644 "$REPO/system/NetworkManager/conf.d/hypora-dns.conf" /etc/NetworkManager/conf.d/hypora-dns.conf
 sudo install -m644 "$REPO/system/NetworkManager/conf.d/hypora-mac.conf" /etc/NetworkManager/conf.d/hypora-mac.conf
 sudo systemctl enable --now systemd-resolved || warn "Could not enable systemd-resolved"
-# resolv.conf has to point at the stub, or applications bypass resolved entirely
-if [ ! -L /etc/resolv.conf ]; then
+# /etc/resolv.conf must point at resolved's stub, or apps skip resolved
+if [ "$(readlink -f /etc/resolv.conf)" != /run/systemd/resolve/stub-resolv.conf ]; then
     sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf \
         || warn "Could not point /etc/resolv.conf at systemd-resolved"
 fi
-# Restarting NetworkManager blips the connection, which is why this runs after the package
-# installs and before the local config steps
+# Restarting NetworkManager briefly drops the connection, so do it after the downloads
 sudo systemctl try-restart systemd-resolved NetworkManager 2>/dev/null || true
 
-# Firewall. Fedora's FedoraWorkstation zone leaves ports 1025-65535 open on TCP and UDP;
-# `public` allows only ssh, mDNS and DHCPv6, which is the right baseline for a desktop that
-# serves nothing. LocalSend is the one thing here that listens, so it gets its port back.
-#
-# SSH is then closed as well, which Fedora leaves open. A desktop nobody logs into remotely
-# has no reason to answer on 22, and sshd is the one service reachable from the network by
-# default. Set KEEP_SSH=yes to leave it alone.
-#
-# Never when the installer is itself running over SSH: closing the port you arrived on, on a
-# machine you are not sitting at, is how an install ends in a drive to the office.
+# Firewall. Fedora's FedoraWorkstation zone opens ports 1025-65535; the `public` zone only
+# allows ssh, mDNS and DHCPv6. LocalSend is the one app here that listens, so its port is
+# closed unless you ask (LOCALSEND_LAN=yes), and then only in the `home` zone, which you
+# assign to trusted networks. It is never opened in `public`. SSH is closed too (set
+# KEEP_SSH=yes to keep it), but never when this installer itself runs over SSH, which
+# would lock you out.
 KEEP_SSH=${KEEP_SSH:-}
 if [ -z "$KEEP_SSH" ] && [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SSH_CLIENT:-}" ]; then
     KEEP_SSH=yes
@@ -807,14 +708,23 @@ if systemctl is-active --quiet firewalld; then
     if [ "$KEEP_SSH" != yes ]; then
         sudo firewall-cmd --quiet --permanent --remove-service=ssh 2>/dev/null || true
     fi
-    sudo firewall-cmd --quiet --permanent --add-port=53317/tcp || true   # LocalSend
-    sudo firewall-cmd --quiet --permanent --add-port=53317/udp || true
+    # Close LocalSend's port in `public` if an earlier version opened it
+    if sudo firewall-cmd --permanent --query-port=53317/tcp >/dev/null 2>&1; then
+        log "Closing LocalSend's port 53317 in the public zone (see LOCALSEND_LAN in the readme)"
+        sudo firewall-cmd --quiet --permanent --remove-port=53317/tcp || true
+        sudo firewall-cmd --quiet --permanent --remove-port=53317/udp || true
+    fi
+    if [ "${LOCALSEND_LAN:-}" = yes ]; then
+        sudo firewall-cmd --quiet --permanent --zone=home --add-port=53317/tcp || true   # LocalSend
+        sudo firewall-cmd --quiet --permanent --zone=home --add-port=53317/udp || true
+        log "LocalSend's port is open in the home zone only. Put a trusted network in that zone with:"
+        log "  nmcli connection modify <name> connection.zone home"
+    fi
     sudo firewall-cmd --quiet --reload || true
 fi
 
-# Stop the daemon too, not just block the port: a listener nothing can reach is still a
-# listener, and it comes back the moment someone widens a zone. Left installed, so turning
-# it back on is `sudo systemctl enable --now sshd`.
+# Also stop the SSH daemon (a port that is blocked can be opened again later by mistake).
+# It stays installed: `sudo systemctl enable --now sshd` turns it back on.
 if [ "$KEEP_SSH" != yes ]; then
     if systemctl is-enabled --quiet sshd 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
         log "Disabling the SSH server (KEEP_SSH=yes to keep it)"
@@ -822,44 +732,34 @@ if [ "$KEEP_SSH" != yes ]; then
     fi
 fi
 
-# Automatic security updates, in two halves because nothing covers both.
-# dnf5-automatic takes the system packages, limited to Fedora security advisories so the
-# Hyprland COPR is never upgraded behind your back (third-party repos ship no advisory
-# metadata, so they can't match). A timer of our own takes the flatpaks, which dnf cannot
-# see at all and which include the browser.
-# Both timers are enabled without --now on purpose: they are Persistent, so starting them
-# here would fire a transaction immediately and fight the installer for the dnf lock. They
-# take effect at the reboot the install ends with.
+# Automatic security updates, in two parts. dnf5-automatic installs Fedora security
+# advisories only, so the Hyprland COPR is never updated behind your back. A timer of our
+# own updates flatpaks, which dnf cannot see (including the browser). The timers are
+# enabled without --now: they would start an update at once and fight the installer for the
+# dnf lock. They start after the reboot at the end.
 log "Enabling automatic security updates"
 sudo dnf install -y dnf5-plugin-automatic \
     || sudo dnf install -y dnf-automatic \
     || warn "Could not install dnf-automatic"
 if command -v dnf-automatic >/dev/null 2>&1; then
-    # Both dnf5's plugin and dnf4's dnf-automatic read this path and share these keys
+    # dnf5's plugin and dnf4's dnf-automatic both read this file
     sudo install -d /etc/dnf
     sudo install -m644 "$REPO/system/dnf/automatic.conf" /etc/dnf/automatic.conf
     sudo systemctl enable dnf5-automatic.timer 2>/dev/null \
         || sudo systemctl enable dnf-automatic.timer 2>/dev/null \
         || warn "Could not enable the automatic update timer"
 
-    # Snapshot before an unattended update, when there is a snapper config for /.
-    #
-    # This is the gap left by there being no dnf5 snapper plugin: nothing hooks a dnf
-    # transaction, so an update that installs itself overnight does so with no way back. A
-    # drop-in on the service that performs it is the one place to catch that — and it is the
-    # case that matters most, because it is the one you were not watching.
-    #
-    # ExecStartPre is prefixed with `-` so a failing snapshot cannot stop security updates
-    # from installing. An update that applied is worth more than a snapshot that didn't.
+    # Take a snapshot before each unattended update, if / has a snapper config. A drop-in
+    # on the update service is the only place to hook this (dnf5 has no snapper plugin).
+    # The `-` before the command means a failed snapshot never blocks the update.
     if [ -f /etc/snapper/configs/root ]; then
         for unit in dnf5-automatic dnf-automatic; do
             if systemctl cat "$unit.service" >/dev/null 2>&1; then
                 sudo install -d "/etc/systemd/system/$unit.service.d"
                 sudo tee "/etc/systemd/system/$unit.service.d/10-hypora-snapshot.conf" \
                     >/dev/null <<'DROPIN'
-# Added by Hypora: take a btrfs snapshot of / before an unattended update, so an update
-# that breaks something can be undone. Harmless if snapper is removed — the `-` prefix
-# means a failure here is ignored rather than cancelling the update.
+# Added by Hypora: snapshot / before an unattended update, so a bad update can be undone.
+# The `-` means a failed snapshot does not cancel the update.
 [Service]
 ExecStartPre=-/usr/bin/snapper -c root create --type single \
     --cleanup-algorithm number --description "before automatic update"
@@ -881,18 +781,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable hypora-flatpak-update.timer \
     || warn "Could not enable the flatpak update timer"
 
-# Hardware that didn't come up. A laptop with no Wi-Fi or Bluetooth after a fresh install is
-# usually one of three things — firmware package absent, driver never bound, or the radio
-# soft-blocked — and they look identical from the desktop. hypora-hardware separates them and
-# fixes the ones that can be fixed from Fedora's own repositories. It never adds a third-party
-# repo; where a chip needs one (Broadcom's wl, typically) it says so and leaves it to you.
-# Run from the repo, not from ~/.local/bin. Two reasons, both of which bit:
-#   * ~/.local/bin is writable by you, and this runs under sudo — anything that could write
-#     your home directory would have earned root the next time you ran the installer. The
-#     repo is the tree you are already executing, so it grants nothing new.
-#   * ~/.local/bin/hypora-hardware doesn't exist yet at this point in the script (bin/ is
-#     installed further down), so on a *fresh* install the guard was false and this never
-#     ran at all — on exactly the case it was written for, a new install with no Wi-Fi.
+# Hardware that did not come up (for example no Wi-Fi after install): hypora-hardware
+# finds out whether firmware is missing, a driver is unbound or a radio is blocked, and
+# fixes what Fedora's own repos can. It runs from $REPO on purpose: ~/.local/bin is
+# writable by you (so not safe to run with sudo) and does not exist yet on a fresh install.
 if [ -x "$REPO/bin/hypora-hardware" ]; then
     log "Checking hardware, firmware and drivers"
     sudo "$REPO/bin/hypora-hardware" fix || warn "Some hardware could not be fixed"
@@ -902,7 +794,7 @@ fi
 sudo systemctl set-default graphical.target
 
 # ---------- themes ----------
-# Palettes and templates; bin/hypora-theme renders them (applied at the end)
+# Install palettes and templates. bin/hypora-theme renders them (run near the end).
 log "Installing themes"
 for f in "$REPO"/themes/*/colors.toml; do
     put "$f" "$CONF/hypora/themes/$(basename "$(dirname "$f")")/colors.toml"
@@ -911,11 +803,11 @@ for f in "$REPO"/themes/templates/*.tpl; do
     put "$f" "$CONF/hypora/templates/$(basename "$f")"
 done
 
-# Older installs kept a 'current' symlink here; the rendered theme now lives in hypora/current/
+# Older installs had a 'current' symlink here; the rendered theme is now in hypora/current/
 if [ -L "$CONF/hypora/themes/current" ]; then rm "$CONF/hypora/themes/current"; fi
 
 # ---------- Hyprland ----------
-# Hyprland 0.55+ uses a Lua config (hyprland.lua); the old hyprland.conf format is deprecated.
+# Hyprland 0.55+ uses a Lua config (hyprland.lua)
 log "Installing Hyprland config"
 if [ -f "$REPO/config/hypr/hyprland.lua" ]; then
     put "$REPO/config/hypr/hyprland.lua" "$CONF/hypr/hyprland.lua"
@@ -928,31 +820,28 @@ else
 fi
 
 # ---------- Quickshell ----------
-# Each file is copied into ~/.config/quickshell; Theme.qml points at the current theme.
+# Copy each file into ~/.config/quickshell. (hypora-theme links in Theme.qml.)
 log "Installing Quickshell config"
 mkdir -p "$CONF/quickshell"
-# Older installs symlinked into the clone; drop links that no longer resolve
+# Older installs symlinked into the clone; delete links that no longer resolve
 find "$CONF/quickshell" -maxdepth 1 -type l ! -exec test -e {} \; -delete
 for f in "$REPO"/config/quickshell/*; do
     [ -f "$f" ] && put "$f" "$CONF/quickshell/$(basename "$f")"
 done
-# (Theme.qml is linked in by hypora-theme)
 
 # ---------- login screen (SDDM) ----------
-# SDDM on a minimal Hyprland session with a small QML theme.
-# The theme's colors are generated from the active Hypora theme.
+# SDDM runs a minimal Hyprland session with a small QML theme. The theme colours come from
+# the active Hypora theme.
 log "Installing SDDM login screen"
 SDDM_THEME=/usr/share/sddm/themes/hypora
 sudo install -d "$SDDM_THEME" /etc/sddm.conf.d
 sudo install -m644 "$REPO"/system/sddm/hypora/{Main.qml,metadata.desktop} "$SDDM_THEME/"
 sudo install -m644 "$REPO/system/sddm/hyprland.lua" "$SDDM_THEME/hyprland.lua"
-# Its colors (theme.conf) are written by hypora-theme. The file stays root-owned: the
-# greeter reads it as the sddm user before anyone logs in, and a file you could write would
-# put an unprivileged process on the other side of that boundary. install.sh runs with sudo
-# already, so the login screen is brought in step here; `hypora-theme <name>` from a
-# terminal updates it later, asking for sudo when it needs to.
+# theme.conf (the colours) stays owned by root: the greeter reads it before login, so
+# a file you can write would let an unprivileged process change what the greeter reads.
+# hypora-theme asks for sudo to update it later.
 sudo install -m644 -o root -g root "$REPO/system/sddm/hypora/theme.conf" "$SDDM_THEME/theme.conf"
-# Hand back a copy an earlier version of this installer made user-writable
+# Fix the owner if an earlier version of this installer made it user-writable
 sudo chown root:root "$SDDM_THEME/theme.conf"
 sudo install -m644 "$REPO/system/sddm/10-hypora.conf" /etc/sddm.conf.d/10-hypora.conf
 
@@ -964,19 +853,10 @@ for dm in gdm lightdm greetd; do
 done
 sudo systemctl enable sddm
 
-# Keyring auto-unlock, and fingerprint login.
-#
-# Both go through authselect, which is how Fedora expects PAM to be changed. An earlier
-# version of this appended three lines to /etc/pam.d/sddm by hand, and that was working
-# around a problem Fedora had already solved: authselect ships `with-pam-gnome-keyring`
-# and `with-fingerprint` as features, writes them into system-auth and password-auth —
-# which sddm's stack includes — and keeps them across package updates. Editing the service
-# file directly also risked overriding a vendor file in /usr/lib/pam.d outright, which
-# would have replaced the whole auth stack with three lines.
-#
-# authselect's keyring feature covers the auth and session lines but not the `password`
-# one, so a password change would otherwise orphan the keyring behind a passphrase nobody
-# knows. That single line is added separately, which is a much smaller edit than the stack.
+# Keyring unlock at login, and fingerprint login. Both use authselect, Fedora's tool for
+# changing PAM. It has features for both, writes them into system-auth and password-auth
+# (which sddm uses), and keeps them across updates. Its keyring feature has no `password`
+# line, so one is added below.
 enable_authselect_feature() {
     local feature=$1 what=$2
     if ! command -v authselect >/dev/null 2>&1; then
@@ -1004,33 +884,33 @@ if [ "${KEYRING_AUTOUNLOCK:-yes}" = no ]; then
 else
     log "Enabling keyring auto-unlock"
     enable_authselect_feature with-pam-gnome-keyring "keyring auto-unlock" || true
-    # The re-key line authselect's feature leaves out
-    PAM_PW=/etc/pam.d/system-auth
-    if [ -f "$PAM_PW" ] && ! grep -q "pam_gnome_keyring.so use_authtok" "$PAM_PW"; then
-        sudo cp -a "$PAM_PW" "$PAM_PW.hypora-$(date +%Y%m%d-%H%M%S)"
-        printf '%s\n' '-password   optional   pam_gnome_keyring.so use_authtok' \
-            | sudo tee -a "$PAM_PW" >/dev/null
-        log "  added the keyring re-key line to $PAM_PW"
+    # The `password` line re-keys the keyring when you change your password. It must come
+    # BEFORE the pam_unix password line: that line is `sufficient`, so after a successful
+    # change PAM stops there and a later line never runs. system-auth is a symlink into
+    # /etc/authselect, so resolve it first (`cp -a` would back up only the symlink).
+    PAM_PW=$(readlink -f /etc/pam.d/system-auth)
+    if [ -f "$PAM_PW" ] && ! awk '
+            /^-?password[[:space:]].*pam_gnome_keyring\.so/ { k = NR }
+            /^password[[:space:]]+sufficient[[:space:]]+pam_unix\.so/ && !u { u = NR }
+            END { exit !(k && u && k < u) }' "$PAM_PW"; then
+        if grep -Eq '^password[[:space:]]+sufficient[[:space:]]+pam_unix\.so' "$PAM_PW"; then
+            sudo cp -aL "$PAM_PW" "/etc/pam.d/system-auth.hypora-$(date +%Y%m%d-%H%M%S)"
+            sudo sed -i '/^-password[[:space:]].*pam_gnome_keyring\.so/d' "$PAM_PW"
+            sudo sed -i '/^password[[:space:]]\+sufficient[[:space:]]\+pam_unix\.so/i -password   optional   pam_gnome_keyring.so use_authtok' "$PAM_PW"
+            log "  placed the keyring re-key line in $PAM_PW"
+        else
+            warn "No pam_unix password line in $PAM_PW, so the keyring re-key line was not added"
+        fi
     fi
 fi
 
-# Fingerprint. Two questions, asked in order, because they are genuinely different:
-# is there a reader, and can libfprint drive it? A reader being present says nothing about
-# support — libfprint has no driver for several of the parts ThinkPads ship, and on those
-# `fprintd-enroll` answers `NoSuchDevice: No devices available`.
-#
-# --hardware first, because the authoritative check needs fprintd to answer and fprintd is
-# what we are deciding whether to install. Then ask properly, and only wire up PAM if the
-# answer is yes — enabling fingerprint login against a reader that cannot be enrolled would
-# leave an auth method that never works.
+# Fingerprint login. A reader being present does not mean libfprint supports it (it has
+# no driver for the Synaptics readers in many ThinkPads). So check the hardware first
+# (without fprintd), install fprintd only if that passes, then ask fprintd whether it can
+# really drive the reader. Only then is PAM changed.
 if ! "$REPO/bin/hypora-hardware" fingerprint --hardware >/dev/null 2>&1; then
-    # Either no reader, or one from a vendor libfprint has no driver for (Synaptics). In
-    # the second case fprintd is not installed at all: it could never find a device, and a
-    # package that cannot work is worse than absent because it makes the failure look like
-    # a configuration problem. hypora-hardware says which it was.
-    # `|| true` is load-bearing: the command exits non-zero by design here, pipefail
-    # carries that through the pipe, and set -e would abort the whole install on the
-    # assignment — the exact failure that stopped the laptop install at monitors.lua.
+    # No reader, or an unsupported one. fprintd is not installed: it could never work.
+    # `|| true`: the command fails by design and pipefail would end the script.
     fp_why=$("$REPO/bin/hypora-hardware" fingerprint --hardware 2>&1 | tail -1 || true)
     case "$fp_why" in
         *unsupported*) log "Skipping fingerprint setup: $fp_why" ;;
@@ -1061,7 +941,7 @@ put "$REPO/config/hypr/hypridle.conf" "$CONF/hypr/hypridle.conf"
 put "$REPO/config/zsh/zshrc" "$HOME/.zshrc"
 put "$REPO/config/fastfetch/config.jsonc" "$CONF/fastfetch/config.jsonc"
 put "$REPO/config/fastfetch/hypora.txt" "$CONF/fastfetch/hypora.txt"
-# Only this one file under ~/.config/nvim is ours; the rest is yours to change
+# Only this one file under ~/.config/nvim is ours; the rest is yours
 [ -d "$CONF/nvim" ] && put "$REPO/config/nvim/lua/plugins/hypora.lua" "$CONF/nvim/lua/plugins/hypora.lua"
 
 # zsh as the login shell
@@ -1072,62 +952,39 @@ if [ "$(getent passwd "$USER" | cut -d: -f7)" != "$(command -v zsh)" ]; then
 fi
 
 # ---------- app entries ----------
-# e.g. "Display Settings", so it shows up in the launcher and app menu
+# These make Hypora's windows (for example "Display Settings") show up in the launcher
 log "Installing app entries"
 for f in "$REPO"/applications/*.desktop; do
     [ -f "$f" ] && put "$f" "$HOME/.local/share/applications/$(basename "$f")"
 done
 
 # ---------- bin ----------
-# Scripts that get run as root must live somewhere only root can write. A copy under
-# ~/.local/bin would let anything that can write your home directory earn root the next time
-# you ran it — which is the whole attack, and it does not require the attacker to be root
-# already. So these go to /usr/local/bin, owned by root, and the user-writable copies are
-# removed:
-#
-#   hypora-security   run by pkexec from the Security window
-#   hypora-console    documented as `sudo hypora-console apply`; it writes the kernel
-#                     command line, so a tampered copy is a boot-integrity problem
-#   hypora-hardware   documented as `sudo hypora-hardware fix`; it installs packages and
-#                     loads kernel modules
-#   hypora-grub       documented as `sudo hypora-grub apply`; it writes /etc/default/grub
-#                     and regenerates grub.cfg, so a tampered copy decides how you boot
-#   hypora-power      documented as `sudo hypora-power install`; it writes a udev rule and
-#                     sysfs power controls, and udev runs it as root on every AC change
-#   hypora-replace-de documented as `sudo hypora-replace-de remove`; it removes packages
-#                     and briefly moves a dnf protection file aside to do it
-#   hypora-greeter    writes a Lua file the SDDM greeter loads before anyone has logged in,
-#                     so it must not be writable by the user it is about to authenticate
-#
-# The test is simply "does anything tell you to run this under sudo", which is why these
-# seven and not the others — the rest never need more than your own privileges.
+# Scripts that run as root go to /usr/local/bin, which only root can write. If they lived
+# in ~/.local/bin, anything that can write your home directory could get root the next
+# time you ran them. The user-writable copies are removed. A script is on this list if
+# anything tells you to run it with sudo or pkexec:
+#   hypora-security    run by pkexec from the Security window
+#   hypora-console     writes the kernel command line
+#   hypora-hardware    installs packages and loads kernel modules
+#   hypora-grub        writes /etc/default/grub and regenerates grub.cfg
+#   hypora-power       writes a udev rule that runs as root
+#   hypora-replace-de  removes packages
+#   hypora-greeter     writes a Lua file the login screen loads before anyone logs in
 ROOT_OWNED=(hypora-security hypora-console hypora-hardware hypora-grub hypora-power
             hypora-replace-de hypora-greeter)
 
 for name in "${ROOT_OWNED[@]}"; do
     log "Installing $name to /usr/local/bin (root-owned)"
     sudo install -m755 -o root -g root "$REPO/bin/$name" "/usr/local/bin/$name"
-    # Drop any user-writable copy an earlier version of this installer left behind
+    # Remove a user-writable copy left by an earlier version
     rm -f "$HOME/.local/bin/$name"
 done
 
-# Carry the main display through to the login screen. Display Settings records it in
-# ~/.config/hypr/monitors.lua, which the greeter cannot read — it runs as the sddm user —
-# so it is mirrored into the theme directory, where privileges are already in hand. Doing
-# it on every install also repairs the case where the GUI's one-off pkexec was dismissed,
-# without making the user think to run anything.
-#
-# This sits *after* the loop above on purpose. It belongs with the SDDM section by subject,
-# and that is where it was first written — which failed with "command not found", because
-# /usr/local/bin/hypora-greeter does not exist until the loop above puts it there. Running
-# the copy in $REPO instead would mean executing a user-writable file as root, which is the
-# one thing the root-owned split exists to prevent.
-#
-# Guarded on the file existing rather than relying on `2>/dev/null`. That hides sed's
-# message but not its exit status, pipefail carries it through the pipe, and set -e then
-# aborts the whole install on the assignment. A machine that has never opened Display
-# Settings has no monitors.lua — which is every fresh install and every single-monitor
-# laptop, so this failed for everyone except the one desktop it was written on.
+# Tell the login screen which monitor is your main one. Display Settings saves it in
+# ~/.config/hypr/monitors.lua, which the greeter (running as the sddm user) cannot read,
+# so it is copied into the theme directory. This must run after the loop above, because
+# it needs /usr/local/bin/hypora-greeter. It checks the file exists first: a fresh install
+# has no monitors.lua, and the failing sed would end the script.
 primary=""
 if [ -f "$CONF/hypr/monitors.lua" ]; then
     primary=$(sed -nE 's/^HYPORA_PRIMARY[[:space:]]*=[[:space:]]*"([A-Za-z][A-Za-z0-9-]*)".*/\1/p' \
@@ -1144,9 +1001,7 @@ bin_files=("$REPO"/bin/*)
 if [ ${#bin_files[@]} -gt 0 ]; then
     log "Installing bin scripts to ~/.local/bin"
     for f in "${bin_files[@]}"; do
-        # Files only. `bin/*` matches directories too, and a __pycache__ left behind by
-        # running one of these scripts as a Python module is enough to stop the installer
-        # dead here — the same guard the quickshell loop above has always had.
+        # Files only: bin/* can also match a directory such as __pycache__
         [ -f "$f" ] || continue
         name=$(basename "$f")
         skip=
@@ -1157,14 +1012,9 @@ if [ ${#bin_files[@]} -gt 0 ]; then
 fi
 
 # ---------- laptop power ----------
-# Only where there is a battery. The saving comes from two places: nothing on a Hyprland
-# session switches the power profile when the charger comes out — GNOME does that in its
-# shell, so without it a laptop sits in `balanced` on battery indefinitely — and tuned's
-# own powersave profile leaves PCIe ASPM, USB autosuspend and PCI runtime power management
-# untouched. hypora-power covers both and installs a udev rule so it follows the charger.
-# Uses the decision made at the top rather than asking again. hypora-power refuses to
-# install on a desktop regardless, so this is belt and braces — but it also keeps the two
-# answers from ever disagreeing, which is the point of deciding once.
+# Laptops only. Nothing switches the power profile when the charger is unplugged on a
+# Hyprland session (GNOME does it inside its shell), and tuned leaves PCIe ASPM, USB
+# autosuspend and PCI power management alone. hypora-power does both, using a udev rule.
 if [ "$IS_LAPTOP" = yes ]; then
     log "Setting up laptop power management"
     sudo /usr/local/bin/hypora-power install \
@@ -1172,8 +1022,8 @@ if [ "$IS_LAPTOP" = yes ]; then
 fi
 
 # ---------- wallpapers ----------
-# Each theme's images come from themes/<Name>/backgrounds/ in the repo. Anything you drop
-# into ~/.config/hypora/themes/<Name>/backgrounds/ yourself is left alone.
+# Each theme's images come from themes/<Name>/backgrounds/. Images you add yourself to
+# ~/.config/hypora/themes/<Name>/backgrounds/ are left alone.
 log "Installing wallpapers"
 for f in "$REPO"/themes/*/backgrounds/*; do
     [ -f "$f" ] || continue
@@ -1186,18 +1036,16 @@ done
 log "Applying theme: $THEME"
 "$HOME/.local/bin/hypora-theme" "$THEME"
 
-# The login screen's colours live in a root-owned file, so put them in place here where we
-# already hold privileges rather than relying on hypora-theme finding a terminal to ask.
+# The login screen colours are in a root-owned file. Copy them here, where sudo is
+# available, instead of relying on hypora-theme finding a terminal to ask.
 RENDERED_SDDM="$CONF/hypora/current/sddm-theme.conf"
 if [ -f "$RENDERED_SDDM" ] && [ -d "$SDDM_THEME" ]; then
     sudo install -m644 -o root -g root "$RENDERED_SDDM" "$SDDM_THEME/theme.conf"
 fi
 
-# Boot screen, including the LUKS passphrase prompt. Plymouth renders that prompt, so
-# theming it means shipping a Plymouth theme; the two-step module is the one Fedora's own
-# themes use. The theme has to be inside the initramfs to exist that early, which is what
-# -R rebuilds — the slowest single step in this script, and the reason hypora-theme doesn't
-# do it on every theme switch.
+# Boot screen, including the disk passphrase prompt. It needs a Plymouth theme, and the
+# theme must be inside the initramfs, which `-R` rebuilds. That is the slowest step here
+# and the reason hypora-theme does not do it on every theme change.
 RENDERED_PLY="$CONF/hypora/current/plymouth.plymouth"
 if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY" ]; then
     log "Installing the boot screen theme"
@@ -1208,12 +1056,9 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY"
         sudo install -m644 -o root -g root "$CONF"/hypora/current/plymouth/*.png \
             /usr/share/plymouth/themes/hypora/
     fi
-    # Plymouth's own tools grep this file unanchored and expand the result unquoted, so a
-    # second line matching one of their keys — a comment mentioning it, say — makes the value
-    # two lines. The test downstream then fails with "too many arguments", which is not fatal
-    # in itself, but the module afterwards gets installed under a mangled path and never
-    # reaches the initramfs, so the boot screen silently falls back to text. Catch it here,
-    # where the message can say what actually went wrong.
+    # Plymouth's tools read ModuleName and ImageDir with an unanchored grep. If a key
+    # appears twice (even in a comment) the value breaks and the boot screen falls back to
+    # text without any message. Check that each key appears exactly once.
     ply_dupes=0
     for key in ModuleName ImageDir; do
         n=$(grep -cE "${key} *= *" /usr/share/plymouth/themes/hypora/hypora.plymouth 2>/dev/null || true)
@@ -1224,9 +1069,8 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY"
         fi
     done
 
-    # A theme missing its images leaves you with no visible passphrase prompt, which on an
-    # encrypted disk means no way in short of Esc for the text fallback. Only switch to it
-    # once the field and its bullets are actually on disk.
+    # Switch only when the passphrase field and bullet images exist. Without them there
+    # would be no visible passphrase prompt on an encrypted disk.
     if [ "$ply_dupes" -eq 0 ] \
        && [ -f /usr/share/plymouth/themes/hypora/entry.png ] \
        && [ -f /usr/share/plymouth/themes/hypora/bullet.png ]; then
@@ -1236,12 +1080,8 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1 && [ -f "$RENDERED_PLY"
         warn "Boot screen images are missing; leaving the existing boot theme alone"
     fi
 
-    # Hold the splash on screen until the login screen paints over it.
-    #
-    # Plymouth draws into its own buffer, so when it exits the framebuffer underneath is
-    # still whatever was there before — on a themed setup, the GRUB menu. That is why the
-    # menu reappears for a moment between the splash ending and SDDM arriving. It is not
-    # GRUB being redrawn; it is GRUB never having been painted over.
+    # Keep the splash on screen until the login screen draws over it. Otherwise the GRUB
+    # menu (still in the framebuffer) shows briefly between the two.
     sudo install -d /etc/systemd/system/plymouth-quit.service.d
     sudo install -m644 \
         "$REPO/system/systemd/plymouth-quit.service.d/10-hypora-retain-splash.conf" \
@@ -1251,13 +1091,9 @@ else
     warn "Plymouth is not installed; the boot screen stays as it is"
 fi
 
-# Boot menu. The GRUB menu is the one screen before Plymouth, and Fedora leaves it as white
-# text on black in 80x25 text mode — GRUB_TERMINAL_OUTPUT="console". hypora-grub writes a
-# theme from the active palette and switches GRUB to graphics mode so the theme is actually
-# shown; see bin/hypora-grub for why those two have to happen together.
-#
-# Skipped silently where there is no GRUB: a system booting with systemd-boot or straight
-# from UEFI has nothing here to theme, and that is not a problem worth a warning.
+# Boot menu. Fedora's GRUB menu is plain text. hypora-grub writes a theme from the
+# palette and switches GRUB to graphics mode so the theme shows. Skipped without a
+# warning if there is no GRUB (for example systemd-boot).
 if [ -d /boot/grub2 ] || [ -d /boot/grub ]; then
     if command -v grub2-mkconfig >/dev/null 2>&1; then
         log "Theming the boot menu"
@@ -1276,15 +1112,10 @@ mkdir -p "$(dirname "$MANIFEST")"
 mv "$NEW_MANIFEST" "$MANIFEST"
 
 # ---------- another desktop ----------
-# Offered last, and only when something else is installed. The order matters more than it
-# looks: this is where Hypora stops being an addition and starts being a replacement, and
-# it should happen after everything else has succeeded rather than before.
-#
-# hypora-replace-de refuses outright if you are running the desktop in question, because
-# removing a shell out from under a live session takes the terminal the command was typed
-# into with it, half way through a dnf transaction. Running the installer from a GNOME
-# terminal is the normal case, so expect that refusal and run it again after rebooting
-# into Hypora.
+# Offered last, and only if another desktop is installed, so that everything else has
+# already succeeded. hypora-replace-de refuses while you are running that desktop (it would
+# remove the shell your terminal runs in). Running the installer from a GNOME terminal is
+# the normal case, so run it again after rebooting into Hypora.
 if "$REPO/bin/hypora-replace-de" list >/dev/null 2>&1; then
     printf '\n'
     "$REPO/bin/hypora-replace-de" list >&2
@@ -1305,14 +1136,11 @@ if "$REPO/bin/hypora-replace-de" list >/dev/null 2>&1; then
 fi
 
 # ---------- optional third-party repositories ----------
-# RPM Fusion carries what Fedora won't ship: patent-encumbered codecs, NVIDIA's own driver,
-# Broadcom's wl. Off unless you ask for it, because it is a different trust decision from the
-# rest of Hypora — the release RPMs are fetched over HTTPS from rpmfusion.org and cannot be
-# pinned to a fingerprint the way the Hyprland COPR and Anthropic's repository are, since both
-# the package and its key change with every Fedora release. Once installed, packages from it
-# are GPG-checked normally.
-#
-# Set ENABLE_RPMFUSION=yes or =no to answer ahead of time.
+# RPM Fusion has what Fedora cannot ship: media codecs, NVIDIA's driver, Broadcom's wl.
+# It is off unless you ask, because it is a separate trust decision: its release packages
+# come over HTTPS and cannot be pinned to a fingerprint (the key changes every Fedora
+# release). Once installed, its packages are GPG-checked as normal.
+# Set ENABLE_RPMFUSION=yes or no to answer ahead of time.
 want_rpmfusion() {
     case "${ENABLE_RPMFUSION:-}" in
         yes|y|1) return 0 ;;
@@ -1345,12 +1173,9 @@ else
 fi
 
 # ---------- Steam (native, needs RPM Fusion nonfree) ----------
-# Native rather than the flatpak. The sandbox is the problem in practice: controller and
-# filesystem access, and reaching game libraries that live outside it, all take fighting.
-#
-# The cost of the switch is stated plainly because it is real: `steam` lives in
-# rpmfusion-nonfree-steam, so declining RPM Fusion above means no Steam at all, where the
-# flatpak would have worked. Nothing is installed silently either way.
+# Native, not the flatpak, because the sandbox gets in the way of controllers and game
+# libraries outside it. The cost: `steam` comes from rpmfusion-nonfree, so declining RPM
+# Fusion means no Steam at all.
 if rpm -q steam >/dev/null 2>&1; then
     log "Steam already installed natively"
 elif rpm -q rpmfusion-nonfree-release >/dev/null 2>&1 && available steam; then
@@ -1362,9 +1187,8 @@ else
     warn "  Or use the flatpak instead: flatpak install flathub com.valvesoftware.Steam"
 fi
 
-# An earlier Hypora installed the Steam flatpak. Two Steams in the launcher is the confusion
-# this change was meant to end, so retire the flatpak — but never with --delete-data: the
-# library under ~/.var/app can be hundreds of GB of games, and it is not ours to throw away.
+# Earlier versions installed the Steam flatpak. Remove it once native Steam is there, but
+# never with --delete-data: its library can be hundreds of GB of games.
 if flatpak info com.valvesoftware.Steam >/dev/null 2>&1; then
     if rpm -q steam >/dev/null 2>&1; then
         log "Removing the Steam flatpak (native Steam is installed)"
@@ -1380,13 +1204,12 @@ if flatpak info com.valvesoftware.Steam >/dev/null 2>&1; then
 fi
 
 # ---------- AI tools (optional) ----------
-# Claude Code is not installed unless you say so. Set INSTALL_CLAUDE=yes or =no to answer
-# ahead of time; without an answer on a non-interactive run it is skipped.
+# Claude Code is only installed if you say yes. Set INSTALL_CLAUDE=yes or no to answer
+# ahead of time. Without an answer, a non-interactive run skips it.
 CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 
-# Three ways, because Claude Code can arrive by routes other than this one: Anthropic's
-# own install script puts it in ~/.local/bin and npm puts it elsewhere again. Asking a
-# second time on a machine that already has it is the whole complaint.
+# Claude Code can arrive by other routes (Anthropic's install script uses ~/.local/bin,
+# npm uses another path), so check all three before asking.
 claude_installed() {
     rpm -q claude-code >/dev/null 2>&1 && return 0
     command -v claude >/dev/null 2>&1 && return 0
@@ -1414,11 +1237,13 @@ if claude_installed; then
     log "Claude Code already installed"
 elif want_claude; then
     log "Installing Claude Code"
-    # Check the signing key against the fingerprint Anthropic publishes before rpm trusts it
+    # Check the signing key against Anthropic's published fingerprint before rpm trusts it
     key=$(mktemp)
     if curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$key" \
         && key_ok "$key" "$CLAUDE_KEY_FPR"; then
         sudo rpm --import "$key"
+        # The repo file points at this verified copy, not at a key URL (see the COPR above)
+        sudo install -m644 "$key" /etc/pki/rpm-gpg/RPM-GPG-KEY-claude-code
         sudo install -m644 "$REPO/system/yum.repos.d/claude-code.repo" /etc/yum.repos.d/claude-code.repo
         sudo dnf install -y claude-code || warn "Could not install claude-code"
     else
@@ -1430,12 +1255,9 @@ else
 fi
 
 # ---------- done ----------
-# The hexagon mark from config/quickshell/Logo.qml, in its own two colours. Printed with
-# truecolor escapes where the terminal supports them and plain otherwise, so this still
-# reads on a TTY after a failed graphical boot — which is exactly when someone is looking.
+# Print the Hypora logo in its two colours (truecolor if the terminal supports it). It
+# uses the same file as fastfetch, where $1 and $2 are colour slots.
 banner() {
-    # The same mark fastfetch prints, so there is one ASCII Hypora rather than two. That file
-    # uses $1 and $2 as colour slots; substitute the logo's own two colours into them.
     local a b r logo="$REPO/config/fastfetch/hypora.txt"
     if [ "${COLORTERM:-}" = "truecolor" ] || [ "${COLORTERM:-}" = "24bit" ]; then
         a=$'\033[38;2;122;162;247m'; b=$'\033[38;2;195;122;247m'
@@ -1452,17 +1274,14 @@ banner() {
     printf '\n'
 }
 
-# Record what was installed, so "is the machine running the code I just changed?" is a
-# question with an answer. Three separate debugging rounds were spent on fixes that were
-# written, committed, and never installed — the symptom is identical to the fix not working,
-# and the only way to tell them apart was comparing file timestamps by hand.
+# Record which commit was installed, so you can tell whether the machine runs the code
+# you just changed.
 STAMP="$CONF/hypora/installed.version"
 mkdir -p "$(dirname "$STAMP")"
 {
     if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
         printf 'commit=%s\n' "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-        # A dirty tree means the installed files do not correspond to any commit, which is
-        # worth knowing before trusting `commit` above.
+        # a dirty tree means the installed files match no commit
         [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] \
             && printf 'tree=dirty\n' || printf 'tree=clean\n'
     else

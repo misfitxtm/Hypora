@@ -41,6 +41,7 @@ Scope {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         text: agent.flow ? agent.flow.message : ""
+                        textFormat: Text.PlainText
                         font.family: Theme.font; font.pixelSize: Theme.fontSize
                         color: Theme.fg
                     }
@@ -49,11 +50,13 @@ Scope {
                         visible: text !== ""
                         wrapMode: Text.Wrap
                         text: agent.flow ? agent.flow.supplementaryMessage : ""
+                        textFormat: Text.PlainText
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                         color: agent.flow && agent.flow.supplementaryIsError ? Theme.error : Theme.dim
                     }
                     Text {
                         text: agent.flow ? agent.flow.inputPrompt : ""
+                        textFormat: Text.PlainText
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                         color: Theme.dim
                     }

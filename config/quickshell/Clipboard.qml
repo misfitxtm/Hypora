@@ -6,8 +6,8 @@ import QtQuick
 // pick one to put it back on the clipboard.
 //
 // The history is recorded by `wl-paste --watch cliphist store`, started from
-// hyprland.lua. Quickshell can't watch the clipboard itself — it doesn't speak
-// wlr-data-control, so it would only see what was copied while the shell had focus.
+// hyprland.lua. Quickshell cannot watch the clipboard itself (it does not speak
+// wlr-data-control), so it would only see copies made while the shell had focus.
 Rectangle {
     id: root
     required property var window
@@ -68,8 +68,8 @@ Rectangle {
     function refresh() { if (!load.running) load.running = true }
 
     function paste(id) {
-        // The pipe needs a shell, so the id must not be able to carry anything else into
-        // it. cliphist ids are plain integers; refuse whatever isn't one.
+        // The pipe needs a shell, so the id must not carry anything else into it. cliphist ids
+        // are plain integers; refuse anything that is not one.
         if (!/^[0-9]+$/.test(id)) {
             notice = "Skipped an entry with an unexpected id."
             return
@@ -155,6 +155,7 @@ Rectangle {
                     Text {
                         anchors { left: parent.left; right: parent.right; leftMargin: 34; rightMargin: 10; verticalCenter: parent.verticalCenter }
                         text: row.modelData.preview
+                        textFormat: Text.PlainText
                         elide: Text.ElideRight
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                         color: Theme.fg

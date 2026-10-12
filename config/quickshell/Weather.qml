@@ -201,6 +201,7 @@ Rectangle {
                         }
                         Text {
                             text: root.report ? root.report.current.label : (root.error !== "" ? root.error : "Loading…")
+                            textFormat: Text.PlainText
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                             color: root.error !== "" ? Theme.error : Theme.dim
                         }
@@ -279,6 +280,7 @@ Rectangle {
                         width: parent.width - 110
                         elide: Text.ElideRight
                         text: root.place ? root.place.name + (root.place.detail ? ", " + root.place.detail : "") : ""
+                        textFormat: Text.PlainText
                         font.family: Theme.font; font.pixelSize: Theme.fontSize - 2
                         color: Theme.dim
                     }
@@ -390,6 +392,7 @@ Rectangle {
                                 anchors { left: parent.left; right: parent.right; leftMargin: 10; rightMargin: 10; verticalCenter: parent.verticalCenter }
                                 elide: Text.ElideRight
                                 text: parent.modelData.name + (parent.modelData.detail ? "  ·  " + parent.modelData.detail : "")
+                                textFormat: Text.PlainText
                                 font.family: Theme.font; font.pixelSize: Theme.fontSize - 1
                                 color: Theme.fg
                             }

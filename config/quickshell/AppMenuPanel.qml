@@ -44,21 +44,18 @@ Rectangle {
             { icon: "claude", label: "Claude Code", available: () => Apps.hasClaude,
               run: () => Apps.inTerminal("claude") },
             { icon: "camera", label: "Screenshot (region)", run: () => screenshot() },
-            // Enrolment is per-user and interactive — it asks for the same finger several
-            // times — so it belongs in a terminal rather than behind a progress bar that
-            // cannot tell you to lift and press again. Hidden unless there is a reader and
-            // fprintd to drive it.
+            // Fingerprint enrolment is per-user and interactive (it asks for the same finger several
+            // times), so it runs in a terminal. Hidden unless there is a reader and fprintd to drive it.
             { icon: "lock", label: "Set up fingerprint", available: () => Apps.hasFingerprint,
-              // Pauses at the end on purpose. inTerminal only holds the window open on a
-              // non-zero exit, and a successful enrolment exits 0 — so the confirmation
-              // would flash past on the one outcome you most want to read.
+              // Pauses at the end on purpose: inTerminal only keeps the window open on a non-zero exit,
+              // and a successful enrolment exits 0, so the confirmation would flash past.
               run: () => Apps.inTerminal(
                   "fprintd-enroll; printf '\\nPress Enter to close. '; read _") }
         ],
         "Help": [
             { icon: "sliders", label: "Keybindings", run: () => ShellState.keybindHelpOpen = true },
-            // xdg-open rather than a hardcoded browser: Hypora's own browser default is a
-            // flatpak, and someone who has changed theirs should get the one they chose.
+            // Use xdg-open, not a fixed browser: Hypora's default browser is a flatpak, and someone
+            // who changed theirs should get the one they chose.
             { icon: "message", label: "Report a bug",
               run: () => Apps.run(["xdg-open", "https://github.com/misfitxtm/Hypora/issues/new"]) }
         ]
@@ -67,10 +64,9 @@ Rectangle {
     // What the list shows: app search results, all apps, a section's items, or the sections
     readonly property var items: search.text !== "" ? Apps.query(search.text, "").map(e => ({ app: e }))
                                : page === "Apps" ? Apps.all.map(e => ({ app: e }))
-                               // A section's own items, minus any that declare an `available`
-                               // test and fail it. Settings lists Hypora's own windows only:
-                               // the system's control panels are GNOME's, built for a shell
-                               // that isn't running here.
+                               // A section's own items, minus any whose `available` test fails. Settings lists only
+                               // Hypora's own windows; the system's control panels are GNOME's and need a shell that is
+                               // not running here.
                                : page !== "" ? (pages[page] ?? []).filter(it => !it.available || it.available())
                                : sections
 
@@ -144,8 +140,8 @@ Rectangle {
                 clip: true
                 onTextChanged: list.currentIndex = 0
                 onAccepted: root.activate(root.items[list.currentIndex])
-                // Runs before the specific handlers below, and only claims the page keys,
-                // so arrows and Tab still reach them. The search field owns focus here.
+                // Runs before the specific handlers below and only claims the page keys, so arrows and Tab
+                // still reach them. The search field owns focus here.
                 Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
                 Keys.onUpPressed: list.decrementCurrentIndex()
                 Keys.onDownPressed: list.incrementCurrentIndex()
@@ -233,6 +229,7 @@ Rectangle {
                 Text {
                     anchors { left: parent.left; leftMargin: 44; right: chevron.left; rightMargin: 8; verticalCenter: parent.verticalCenter }
                     text: row.modelData.app ? row.modelData.app.name : row.modelData.label
+                    textFormat: Text.PlainText
                     elide: Text.ElideRight
                     font.family: Theme.font; font.pixelSize: Theme.fontSize
                     color: row.current ? Theme.accent : Theme.fg
