@@ -53,8 +53,11 @@ Scope {
                 return ""
             }
 
-            // Scan only while the window is open
-            Component.onCompleted: if (adapter && adapter.enabled) adapter.discovering = true
+            // Discovery beside a live A2DP link starves it and drops the audio, so scan only while nothing is connected.
+            readonly property bool anyConnected: devices.some(d => d.connected)
+            onAnyConnectedChanged: if (anyConnected && adapter) adapter.discovering = false
+
+            Component.onCompleted: if (adapter && adapter.enabled && !anyConnected) adapter.discovering = true
             Component.onDestruction: if (adapter) adapter.discovering = false
 
             Rectangle {

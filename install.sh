@@ -691,8 +691,8 @@ sudo systemctl try-restart systemd-resolved NetworkManager 2>/dev/null || true
 
 # Firewall. Fedora's FedoraWorkstation zone opens ports 1025-65535; the `public` zone only
 # allows ssh, mDNS and DHCPv6. LocalSend is the one app here that listens, so its port is
-# closed unless you ask (LOCALSEND_LAN=yes), and then only in the `home` zone, which you
-# assign to trusted networks. It is never opened in `public`. SSH is closed too (set
+# opened in the `home` zone only, which holds no network until you assign one. It is never
+# opened in `public`. Set LOCALSEND_LAN=no to skip it. SSH is closed too (set
 # KEEP_SSH=yes to keep it), but never when this installer itself runs over SSH, which
 # would lock you out.
 KEEP_SSH=${KEEP_SSH:-}
@@ -710,11 +710,11 @@ if systemctl is-active --quiet firewalld; then
     fi
     # Close LocalSend's port in `public` if an earlier version opened it
     if sudo firewall-cmd --permanent --query-port=53317/tcp >/dev/null 2>&1; then
-        log "Closing LocalSend's port 53317 in the public zone (see LOCALSEND_LAN in the readme)"
+        log "Closing LocalSend's port 53317 in the public zone (see the LocalSend note in the readme)"
         sudo firewall-cmd --quiet --permanent --remove-port=53317/tcp || true
         sudo firewall-cmd --quiet --permanent --remove-port=53317/udp || true
     fi
-    if [ "${LOCALSEND_LAN:-}" = yes ]; then
+    if [ "${LOCALSEND_LAN:-yes}" != no ]; then
         sudo firewall-cmd --quiet --permanent --zone=home --add-port=53317/tcp || true   # LocalSend
         sudo firewall-cmd --quiet --permanent --zone=home --add-port=53317/udp || true
         log "LocalSend's port is open in the home zone only. Put a trusted network in that zone with:"
