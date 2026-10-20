@@ -101,7 +101,7 @@ On a real Fedora Workstation machine the three phases together removed **47 pack
 **The settings schemas and Hypora's own applications are never removed**, because Hypora is built on top of several of them:
 
 - `gsettings-desktop-schemas` provides `org.gnome.desktop.interface`, which `bin/hypora-theme` writes, and `org.gnome.desktop.privacy`, which the Security window reads. Lose it and theming stops working and two rows of that window go blank.
-- `nautilus`, `gnome-calculator`, `gnome-disk-utility`, `gnome-software` and `adw-gtk3-theme` are installed by Hypora deliberately.
+- `nautilus`, `gnome-calculator`, `gnome-disk-utility`, `gnome-software` and `adw-gtk3-theme` are core apps that Hypora installs deliberately (`INSTALL_APPS=no` skips only the extra flatpaks).
 
 So "remove GNOME" here means the session and its leftovers, not the component layer underneath.
 

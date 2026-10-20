@@ -91,6 +91,7 @@ KEEP = [
     # GNOME apps Hypora keeps because nothing else replaces them
     "gnome-calendar", "baobab", "simple-scan",
     "papers", "evince",               # same viewer before and after Fedora's rename
+    "loupe", "gnome-text-editor", "mpv",
     "gsettings-desktop-schemas",      # theming and the Security window read these
     "glib2", "gtk3", "gtk4", "libadwaita",
     "xdg-desktop-portal", "xdg-desktop-portal-gtk",

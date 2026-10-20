@@ -268,9 +268,26 @@ want_extras() {
 }
 if want_extras; then EXTRAS=yes; else EXTRAS=no; fi
 
+# ---------- bundled apps ----------
+# Everything past the core desktop (password manager, Spotify, ...) is asked about. Set INSTALL_APPS=yes or no to answer ahead of time; with
+# no terminal the default is yes, so unattended installs match what they always got.
+want_apps() {
+    case "${INSTALL_APPS:-}" in
+        yes|y|1) return 0 ;;
+        no|n|0)  return 1 ;;
+    esac
+    [ -t 0 ] || return 0
+    printf '\n%s\n%s\n' \
+        "Optional: extra apps (Bitwarden, LocalSend, RustDesk, Lutris, Spotify, Flatseal," \
+        "Warehouse). The core desktop, including a browser, is installed either way." >&2
+    read -r -p "Install them? [Y/n] " answer
+    case "$answer" in [Nn]*) return 1 ;; *) return 0 ;; esac
+}
+if want_apps; then APPS=yes; else APPS=no; fi
+
 # ---------- packages ----------
 REQUIRED=(
-    hyprland hyprland-guiutils hyprlock hypridle uwsm quickshell kitty git
+    hyprland hyprland-guiutils hyprlock hypridle hyprsunset uwsm quickshell kitty git
     # Shell and editor
     zsh zsh-autosuggestions zsh-syntax-highlighting fastfetch
     neovim ripgrep fd-find
@@ -285,6 +302,7 @@ REQUIRED=(
     liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
     papirus-icon-theme breeze-icon-theme
     adw-gtk3-theme qt6ct qt5ct
+    qt6-qtimageformats   # lets Qt show webp wallpapers
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
     xdg-terminal-exec   # starts Terminal=true apps with kitty (GIO does not know kitty)
     # Network (nmtui is the fallback behind the Network window's "Advanced")
@@ -295,21 +313,24 @@ REQUIRED=(
     upower  # battery status
     # Read the machine's security state for the Security window
     fwupd mokutil policycoreutils
-    # Files, clipboard history and screenshots. These are GNOME apps without the GNOME
-    # session. Nautilus brings `localsearch`, an indexer that reads your home directory.
+    # The baseline desktop apps, so nothing needs installing afterwards: files, calculator,
+    # disks, software store, calendar, disk usage, scanning. These are GNOME apps without the
+    # GNOME session. Nautilus brings `localsearch`, an indexer that reads your home directory.
+    # The browser (Firefox) is a flatpak, installed below. Listing them marks them
+    # user-installed, so `dnf autoremove` leaves them alone.
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
-    # Also GNOME apps, kept because nothing else here replaces them. Listing them marks
-    # them user-installed, so `dnf autoremove` leaves them alone.
     gnome-calendar baobab simple-scan
+    papers            # PDF and document viewer
+    loupe             # image viewer
+    gnome-text-editor
+    mpv               # video and audio player
     cliphist wl-clipboard grim slurp
 )
 # Nice to have; a missing one only gives a warning
 OPTIONAL=(
-    hyprsunset
     iw   # Wi-Fi power save
     pamixer playerctl
     google-noto-emoji-fonts
-    qt6-qtimageformats   # lets Qt show webp wallpapers
     # Boot screen, including the disk passphrase prompt (usually already installed)
     plymouth plymouth-plugin-two-step plymouth-scripts
 )
@@ -326,7 +347,8 @@ PROTECT_USER=(
     gsettings-desktop-schemas xorg-x11-server-Xwayland
     gnome-keyring gnome-keyring-pam gcr
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
-    gnome-calendar baobab simple-scan papers evince
+    gnome-software gnome-calendar baobab simple-scan papers evince
+    loupe gnome-text-editor
 )
 # Check with rpm first (fast), so a package that is not installed cannot make the whole
 # dnf call fail
@@ -375,13 +397,6 @@ if rpm -q yelp >/dev/null 2>&1; then
     sudo dnf remove -y yelp || warn "Could not remove yelp"
 fi
 
-# Document viewer. Fedora renamed Evince to Papers, so install whichever exists.
-for viewer in papers evince; do
-    if available "$viewer"; then
-        sudo dnf install -y "$viewer" || warn "Could not install $viewer (document viewer)"
-        break
-    fi
-done
 
 log "Installing optional packages"
 # One transaction (each dnf start costs seconds). --skip-unavailable skips names this
@@ -592,9 +607,12 @@ sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flat
 # Everything else is a native package, since sandboxing an app that needs host access just
 # hands it the host.
 FLATPAKS=(
+    org.mozilla.firefox              # publisher-verified by Mozilla
+)
+# Bundled apps, installed only when want_apps said yes
+APP_FLATPAKS=(
     io.github.flattool.Warehouse     # manage installed flatpaks and their leftover data
     com.github.tchx84.Flatseal       # review and change each flatpak's permissions
-    org.mozilla.firefox              # publisher-verified by Mozilla
     com.bitwarden.desktop
     org.localsend.localsend_app
     # Remote desktop. The Flathub build is publisher-verified; the project's own RPM is
@@ -609,6 +627,7 @@ if [ "${SKIP_FLATPAKS:-0}" = "1" ]; then
     log "Skipping Flatpak apps (SKIP_FLATPAKS=1)"
 else
     log "Installing Flatpak apps (this pulls a few GB the first time)"
+    [ "$APPS" = yes ] && FLATPAKS+=("${APP_FLATPAKS[@]}")
     for app in "${FLATPAKS[@]}"; do
         if flatpak info "$app" >/dev/null 2>&1; then
             log "  $app is already installed"
