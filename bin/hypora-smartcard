@@ -1,0 +1,93 @@
+#!/bin/bash
+# hypora-smartcard: lets the Flatpak browsers use smart cards and YubiKey PIV (CAC, PIV, any PKCS#11 token).
+#
+#   hypora-smartcard setup     give each installed browser the OpenSC module (safe to re-run)
+#   hypora-smartcard status    readers, cards, and which browsers have the module
+#
+# A Flatpak cannot see the host's /usr, so the OpenSC libraries are copied into each
+# browser's own data folder and registered in its certificate database. Re-run after
+# `dnf upgrade opensc` or after installing another browser. No root needed.
+set -u
+
+MODULE=$(readlink -f /usr/lib64/pkcs11/opensc-pkcs11.so)
+BROWSERS=(org.mozilla.firefox com.google.Chrome org.chromium.Chromium)
+NSS=$(command -v certutil modutil >/dev/null && echo ok)
+
+die() { echo "hypora-smartcard: $*" >&2; exit 1; }
+
+# Certificate databases of one browser, one per line
+dbs_of() {
+    local app=$1 base=$HOME/.var/app/$1
+    if [ "$app" = org.mozilla.firefox ]; then
+        ls -d "$base"/config/mozilla/firefox/*/ "$base"/.mozilla/firefox/*/ 2>/dev/null \
+            | while read -r p; do [ -f "$p/cert9.db" ] && echo "${p%/}"; done
+    else
+        echo "$base/.pki/nssdb"
+    fi
+}
+
+copy_libs() {
+    local dest=$1 f
+    mkdir -p "$dest"
+    for f in "$MODULE" $(ldd "$MODULE" | awk '/libopensc|libeac/ {print $3}') /usr/lib64/libpcsclite*.so.1; do
+        cp -L "$f" "$dest/"
+    done
+}
+
+setup() {
+    [ -n "$NSS" ] || die "certutil/modutil missing (sudo dnf install nss-tools)"
+    [ -f "$MODULE" ] || die "OpenSC is not installed (sudo dnf install opensc pcsc-lite-ccid)"
+    local app dest db found=0
+    for app in "${BROWSERS[@]}"; do
+        flatpak info "$app" >/dev/null 2>&1 || continue
+        found=1
+        dest=$HOME/.var/app/$app/data/opensc
+        copy_libs "$dest"
+        # pcsc: the pcscd socket; LD_LIBRARY_PATH: lets the module find its libraries
+        flatpak override --user --socket=pcsc --env=LD_LIBRARY_PATH="$dest" "$app"
+
+        if [ "$app" = org.mozilla.firefox ] && [ -z "$(dbs_of "$app")" ]; then
+            echo "$app: no profile yet, starting it once to create one"
+            timeout 20 flatpak run "$app" --headless about:blank >/dev/null 2>&1
+        fi
+        if [ "$app" != org.mozilla.firefox ] && [ ! -d "$(dbs_of "$app")" ]; then
+            mkdir -p "$(dbs_of "$app")" && certutil -N -d "sql:$(dbs_of "$app")" --empty-password
+        fi
+        if [ -z "$(dbs_of "$app")" ]; then
+            echo "$app: no profile found; open it once, then re-run hypora-smartcard setup" >&2
+            continue
+        fi
+        while read -r db; do
+            if modutil -dbdir "sql:$db" -list 2>/dev/null | grep -q "library name: $dest/opensc-pkcs11.so"; then
+                echo "$app: already set up ($db)"
+            else
+                # modutil asks for Enter even with -force
+                echo | modutil -dbdir "sql:$db" -add OpenSC -libfile "$dest/opensc-pkcs11.so" -force >/dev/null \
+                    && echo "$app: module added ($db)" || echo "$app: could not add module to $db (is the browser open?)" >&2
+            fi
+        done < <(dbs_of "$app")
+    done
+    [ "$found" = 1 ] || echo "No Flatpak browser installed (looked for: ${BROWSERS[*]})"
+    echo "Restart the browsers to pick the module up."
+}
+
+status() {
+    systemctl is-enabled pcscd.socket 2>&1 | sed 's/^/pcscd.socket: /'
+    opensc-tool -l 2>&1
+    command -v ykman >/dev/null && ykman list 2>&1
+    command -v fido2-token >/dev/null && fido2-token -L 2>&1
+    local app db
+    for app in "${BROWSERS[@]}"; do
+        flatpak info "$app" >/dev/null 2>&1 || continue
+        while read -r db; do
+            modutil -dbdir "sql:$db" -list 2>/dev/null | grep -q 'OpenSC' \
+                && echo "$app: module registered" || echo "$app: module NOT registered"
+        done < <(dbs_of "$app")
+    done
+}
+
+case "${1:-setup}" in
+    setup) setup ;;
+    status) status ;;
+    *) die "usage: hypora-smartcard [setup|status]" ;;
+esac

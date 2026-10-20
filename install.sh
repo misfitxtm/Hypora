@@ -311,6 +311,10 @@ REQUIRED=(
     pipewire wireplumber pipewire-pulseaudio wiremix
     bluez   # also provides bluetoothctl, the fallback behind "Advanced"
     upower  # battery status
+    # Smart cards: pcscd, the CCID reader driver, and OpenSC for PIV/CAC/PKCS#11 tokens
+    pcsc-lite pcsc-lite-ccid opensc
+    nss-tools   # certutil/modutil, used by hypora-smartcard to set up the browsers
+    yubikey-manager fido2-tools   # ykman for YubiKeys, fido2-token for any FIDO2 key
     # Read the machine's security state for the Security window
     fwupd mokutil policycoreutils
     # The baseline desktop apps, so nothing needs installing afterwards: files, calculator,
@@ -349,6 +353,7 @@ PROTECT_USER=(
     nautilus gvfs gnome-calculator gnome-disk-utility gnome-software
     gnome-software gnome-calendar baobab simple-scan papers evince
     loupe gnome-text-editor
+    pcsc-lite pcsc-lite-ccid opensc
 )
 # Check with rpm first (fast), so a package that is not installed cannot make the whole
 # dnf call fail
@@ -614,6 +619,7 @@ APP_FLATPAKS=(
     io.github.flattool.Warehouse     # manage installed flatpaks and their leftover data
     com.github.tchx84.Flatseal       # review and change each flatpak's permissions
     com.bitwarden.desktop
+    com.yubico.yubioath              # Yubico Authenticator: one-time codes from a YubiKey
     org.localsend.localsend_app
     # Remote desktop. The Flathub build is publisher-verified; the project's own RPM is
     # unsigned, so a pinned hash would not show who built it.
@@ -667,6 +673,7 @@ fi
 log "Enabling services"
 sudo systemctl enable --now NetworkManager || warn "Could not enable NetworkManager"
 sudo systemctl enable --now upower || warn "Could not enable upower (battery widget may show nothing)"
+sudo systemctl enable --now pcscd.socket || warn "Could not enable pcscd (smart card readers will not work)"
 sudo systemctl enable --now bluetooth 2>/dev/null || warn "No bluetooth service (the Bluetooth tile will show Unavailable)"
 if rpm -q tuned-ppd >/dev/null 2>&1; then
     sudo systemctl enable --now tuned tuned-ppd || warn "Could not enable tuned-ppd"
@@ -1030,6 +1037,10 @@ if [ ${#bin_files[@]} -gt 0 ]; then
     done
 fi
 
+# Smart cards and YubiKeys in the Flatpak browsers, which cannot see the host's OpenSC.
+# It needs the browsers installed, so it runs after the Flatpak step.
+"$REPO/bin/hypora-smartcard" setup || warn "Smart card setup failed; run: hypora-smartcard setup"
+
 # ---------- laptop power ----------
 # Laptops only. Nothing switches the power profile when the charger is unplugged on a
 # Hyprland session (GNOME does it inside its shell), and tuned leaves PCIe ASPM, USB
@@ -1335,6 +1346,7 @@ cat <<'EOF'
    qs                         QML errors from the shell
    hyprctl configerrors       problems in hyprland.lua
    hypora-hardware probe      hardware with no driver, firmware or radio
+   hypora-smartcard status    smart card / YubiKey readers and browser setup
 
  Hyprland's own log is NOT in journalctl (it sets debug.enable_stdout_logs = 0):
 

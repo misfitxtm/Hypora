@@ -38,3 +38,9 @@ Without the antenna, the radio runs on stray signal from the board. Headphones p
 - `bluetoothctl scan on` shows nearby devices at -90 to -100 dBm; the same devices read -68 to -81 dBm once the antenna was connected
 
 Software changes (codec, power settings, re-pairing, reinstalling BlueZ) do not fix this. Laptops have the antenna built in, so this is a desktop problem.
+
+## Smart cards and YubiKeys
+
+`pcsc-lite`, `pcsc-lite-ccid` (the reader driver) and `opensc` (PIV, CAC and other PKCS#11 tokens, YubiKey PIV included) are core packages, and `pcscd.socket` is enabled. Check with `hypora-smartcard status`. `yubikey-manager` (`ykman`) and `fido2-tools` (`fido2-token`) are core packages, and the optional apps include Yubico Authenticator. FIDO2 keys and passkeys need no setup, because systemd's udev rules already give you access to the key and the browsers can see USB devices. `hypora-smartcard status` lists the YubiKeys and FIDO2 keys it finds.
+
+The Flatpak browsers (Firefox, Chrome, Chromium) cannot see the host's OpenSC, so the installer runs `hypora-smartcard setup`. It copies the OpenSC libraries into each browser's data folder, gives it the `pcsc` socket, and registers the module in its certificate database. Re-run it after installing a browser or upgrading OpenSC. Hypora does not trust any CA for you: a card's issuer (DoD, a company, a university) has to be imported into the browser yourself.
