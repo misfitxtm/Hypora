@@ -284,7 +284,7 @@ REQUIRED=(
     # Fonts, icons and app theming (the Nerd Font is downloaded below)
     liberation-sans-fonts liberation-serif-fonts adwaita-icon-theme
     papirus-icon-theme breeze-icon-theme
-    adw-gtk3-theme qt6ct
+    adw-gtk3-theme qt6ct qt5ct
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk xdg-user-dirs xdg-utils
     xdg-terminal-exec   # starts Terminal=true apps with kitty (GIO does not know kitty)
     # Network (nmtui is the fallback behind the Network window's "Advanced")

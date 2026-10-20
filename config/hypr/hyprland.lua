@@ -41,7 +41,7 @@ load("monitors")
 ------------------ ENVIRONMENT ---------------
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
-hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")   -- Qt apps follow the theme (also set in ~/.config/uwsm/env)
+hl.env("QT_QPA_PLATFORMTHEME", "qt6ct:qt5ct")   -- Qt apps follow the theme (also set in ~/.config/uwsm/env)
 
 -- ------------------ AUTOSTART -----------------
 -- Declared here, defined in the WORKSPACES section. A Lua closure only sees locals that

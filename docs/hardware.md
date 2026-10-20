@@ -26,3 +26,15 @@ It reads sysfs rather than the kernel log, because `kernel.dmesg_restrict` is 1 
 **NVIDIA** gets nouveau, the in-tree open driver, together with Fedora's own `nvidia-gpu-firmware` (the GSP firmware modern cards need). That is the open-source driver and it needs no third-party repo. NVIDIA's own driver — including their "open kernel modules" flavour, which is still a proprietary userspace — lives in RPM Fusion, and Hypora doesn't add it for you. If you want it, that's a deliberate step you take.
 
 One cross-check worth knowing: if a camera is present but `uvcvideo` isn't loaded, the probe points at **Menu > Security**, since Hypora's own camera toggle unloads that module.
+
+## Bluetooth connects, then the audio drops
+
+On a desktop with a Wi-Fi and Bluetooth card (Intel AX200 and similar), check that the antenna is screwed onto the card's two small connectors. Cards usually ship with the antenna separate, and Wi-Fi at short range can look fine without it, so nothing seems wrong until you stream Bluetooth audio.
+
+Without the antenna, the radio runs on stray signal from the board. Headphones pair and connect, then go silent or disconnect within a minute of playing. The signs:
+
+- `journalctl -b | grep -i "completion reports"` shows `Missing completion reports for packet ... Bluetooth adapter firmware bug?`
+- `bluetoothd` logs `Connection timed out`, `Host is down` or `Connection reset by peer` for the headphones
+- `bluetoothctl scan on` shows nearby devices at -90 to -100 dBm; the same devices read -68 to -81 dBm once the antenna was connected
+
+Software changes (codec, power settings, re-pairing, reinstalling BlueZ) do not fix this. Laptops have the antenna built in, so this is a desktop problem.

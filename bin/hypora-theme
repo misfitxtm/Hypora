@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hypora-theme [NAME]: apply a Hypora theme to the shell, kitty, Hyprland, the lock
-# screen, GTK and Qt apps, and the login screen.
+# screen, GTK (2/3/4) and Qt (5/6) apps, and the login screen.
 # With no NAME it lists the installed themes (* marks the current one).
 #
 # A theme is a palette file: ~/.config/hypora/themes/<NAME>/colors.toml. The templates in
@@ -135,6 +135,8 @@ link "$OUT/gtk.css"           "$HOME/.config/gtk-4.0/gtk.css"
 link "$OUT/gtk-settings.ini"  "$HOME/.config/gtk-3.0/settings.ini"
 link "$OUT/gtk-settings.ini"  "$HOME/.config/gtk-4.0/settings.ini"
 link "$OUT/qt6ct.conf"        "$HOME/.config/qt6ct/qt6ct.conf"
+link "$OUT/qt6ct.conf"        "$HOME/.config/qt5ct/qt5ct.conf"   # same format, for Qt 5 apps
+link "$OUT/gtkrc-2.0"         "$HOME/.gtkrc-2.0"                 # GTK 2 apps (HexChat)
 
 # ---------- apply to what's running ----------
 if command -v gsettings >/dev/null 2>&1; then
