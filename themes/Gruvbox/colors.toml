@@ -1,5 +1,4 @@
-# Gruvbox (github.com/morhetz/gruvbox). The canonical dark palette, not derived
-# from the wallpaper — Gruvbox is a defined scheme and guessing at it would be worse.
+# Gruvbox (github.com/morhetz/gruvbox): the canonical dark palette, not derived from the wallpaper.
 name = "Gruvbox"
 mode = "dark"
 

@@ -1,17 +1,8 @@
 #!/usr/bin/env bash
-# hypora-firmware: check for firmware updates and install the ones that apply.
-#
-# Opened from Menu > Security > "Check for firmware updates", in a floating terminal
-# (a window rule in hyprland.lua matches the title set below).
-#
-# Firmware is not updated in the background: it is written to the hardware, some of it
-# needs a reboot, and a failed update can brick a machine. You start it and can read what
-# it does. fwupd asks for authorisation (the polkit prompt) before writing anything.
+# hypora-firmware: check for firmware updates and install them, started by the user from the Security menu.
 set -uo pipefail
 
-# Set the window title, which the Hyprland window rule matches. The Security window also
-# passes --title, because Hyprland decides at map time and this comes too late. This line
-# covers running the script by hand.
+# Set the window title the Hyprland rule matches; this only covers running the script by hand.
 printf '\033]0;Firmware Update\007'
 
 bold=$'\033[1m'; dim=$'\033[2m'; red=$'\033[31m'; green=$'\033[32m'; yellow=$'\033[33m'; off=$'\033[0m'

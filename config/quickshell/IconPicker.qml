@@ -4,12 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Wayland
 import QtQuick
 
-// Icon theme picker (menu > Style > Icons). Lists every icon theme installed and previews a
-// few real icons from each.
-//
-// The choice is saved to ~/.config/hypora/icons and applied by hypora-theme. It is kept
-// apart from the colour theme, so switching palette does not reset your icons.
-// Also: qs ipc call icons toggle
+// Icon theme picker; the choice goes to ~/.config/hypora/icons and is kept apart from the colour theme.
 Scope {
     id: root
 
@@ -58,8 +53,7 @@ Scope {
                 printErrors: false
             }
 
-            // bin/hypora-icons lists each theme with a few of its own icon files. Quickshell's icon
-            // provider has no "theme" parameter, so previews load the files straight from disk.
+            // Previews load files straight from disk because Quickshell's icon provider has no theme parameter.
             Process {
                 id: scan
                 running: true

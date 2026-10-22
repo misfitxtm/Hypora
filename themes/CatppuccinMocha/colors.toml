@@ -1,5 +1,4 @@
-# Catppuccin Mocha (github.com/catppuccin/catppuccin), MIT. Mauve accent, the Mocha default.
-# One palette drives every app; see themes/templates/.
+# Catppuccin Mocha (github.com/catppuccin/catppuccin), MIT; one palette drives every app, see themes/templates/.
 name = "CatppuccinMocha"
 mode = "dark"
 

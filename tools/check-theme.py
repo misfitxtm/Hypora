@@ -95,8 +95,7 @@ def check(theme_dir):
     if values.get("mode") not in (None, "dark", "light"):
         problems.append(f"mode must be dark or light, not {values['mode']!r}")
 
-    # Wallpapers are optional, but a theme with none falls back to the previous theme's,
-    # which looks like a bug rather than a choice.
+    # Wallpapers are optional, but a theme with none inherits the previous theme's, which looks like a bug.
     shots = theme_dir / "backgrounds"
     n = len([p for p in shots.iterdir()
              if p.suffix.lower() in (".jpg", ".jpeg", ".png")]) if shots.is_dir() else 0

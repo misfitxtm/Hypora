@@ -54,8 +54,7 @@ def palette():
     except OSError:
         sys.exit("No theme is applied yet; run hypora-theme first.")
 
-    # This file is writable by the user but we run as root, and the name becomes a path.
-    # So only accept a plain name (no "..", no slashes).
+    # We run as root but the user can edit this file, so only accept a plain name (no slashes or '..').
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}", name):
         sys.exit(f"Theme name {name!r} is not a plain name; refusing to use it as root.")
 

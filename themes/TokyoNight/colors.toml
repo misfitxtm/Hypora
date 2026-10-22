@@ -1,5 +1,4 @@
-# Tokyo Night (github.com/folke/tokyonight.nvim, "night" style).
-# One palette drives every app; see themes/templates/.
+# Tokyo Night (github.com/folke/tokyonight.nvim, "night" style); one palette drives every app.
 name = "TokyoNight"
 mode = "dark"
 

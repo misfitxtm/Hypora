@@ -1,7 +1,6 @@
 import QtQuick
 
-// Round icon button. If confirm is true, the first click arms it (turns red);
-// a second click within 3s fires it.
+// Round icon button; with confirm, the first click arms it (red) and a second within 3s fires it.
 Rectangle {
     id: root
     property string icon
@@ -24,12 +23,7 @@ Rectangle {
 
     Timer { id: reset; interval: 3000; onTriggered: root.armed = false }
 
-    // Arming is exclusive across the row. Before, each button kept its own state, so arming
-    // Power off and then moving to Restart left two buttons red. The hint under the row uses
-    // the first armed button, so it could name a different action than the next click ran.
-    //
-    // This walks the sibling buttons, so the component stays self-contained. Anything in the
-    // row without an `armed` property is skipped.
+    // Arming is exclusive across the row, or two buttons could stay red and the hint could name the wrong action.
     function disarmSiblings() {
         if (!parent) return
         for (let i = 0; i < parent.children.length; i++) {
@@ -39,8 +33,7 @@ Rectangle {
     }
 
     onArmedChanged: if (armed) disarmSiblings()
-    // Closing the panel with a button armed would leave it armed when reopened, one click
-    // from running something armed by accident long ago.
+    // Disarm on close so a reopened panel is not one click from an old accidental arm.
     onVisibleChanged: if (!visible) armed = false
 
     MouseArea {
@@ -48,8 +41,7 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        // Moving to another button means you changed your mind, so stand the armed one down
-        // instead of waiting for its timer.
+        // Moving to another button means a change of mind, so stand this one down at once.
         onEntered: root.disarmSiblings()
         onClicked: {
             if (root.confirm && !root.armed) { root.armed = true; reset.restart() }

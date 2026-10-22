@@ -4,10 +4,7 @@ import Quickshell.Networking
 import QtQuick
 import QtQuick.Layouts
 
-// Network settings: Wi-Fi on/off, nearby networks, connect, disconnect and forget.
-// Covers everyday use; nmtui is one click away under "Advanced".
-// Open from the menu (Settings > Network), the Wi-Fi tile's arrow, or:
-//     qs ipc call network open
+// Network settings: Wi-Fi, nearby networks and forget; also `qs ipc call network open`.
 Scope {
     id: root
 
@@ -31,14 +28,12 @@ Scope {
             readonly property var wifiDevice: Networking.devices.values.find(d => d.type === DeviceType.Wifi) ?? null
             readonly property var wired: Networking.devices.values.find(d => d.type !== DeviceType.Wifi && d.connected) ?? null
 
-            // A card whose radio is off disappears from Networking.devices, so "no device" does not
-            // mean "no hardware". Net asks nmcli, which lists the card in every state.
+            // A card with its radio off vanishes from Networking.devices, so ask nmcli, which lists it in every state.
             readonly property bool wifiPresent: wifiDevice !== null || Net.hasWifi
             // False only for a hard block: a physical switch, or the BIOS
             readonly property bool wifiBlocked: !Networking.wifiHardwareEnabled
 
-            // The radio switch goes through Net (nmcli), not the Networking module: with the radio off
-            // there is no device object to act on, which is exactly when the switch must work.
+            // The radio switch goes through Net (nmcli): with the radio off there is no device object to act on.
             function setRadio(on) {
                 Net.setWifiEnabled(on)
                 Networking.requestSetWifiEnabled(on)
@@ -71,9 +66,7 @@ Scope {
                 else { pending = n; password.text = ""; password.forceActiveFocus() }
             }
 
-            // First-time join: create the profile with nmcli, then let Quickshell track it. The
-            // password goes in on stdin, never as an argument: arguments are readable by any user in
-            // /proc/<pid>/cmdline.
+            // Create the profile with nmcli and pass the password on stdin, since arguments are readable in /proc/<pid>/cmdline.
             property string secret: ""
 
             function joinWithPassword() {

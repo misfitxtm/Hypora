@@ -2,12 +2,7 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Weather, right of the clock. Click for conditions and a short forecast, in a panel that
-// opens under the icon rather than at a fixed edge of the screen.
-//
-// Hypora never guesses where you are: there is no IP lookup. You pick a place by name,
-// which is the only thing sent, and the coordinates are kept in
-// ~/.config/hypora/weather.json. Until you pick one, no weather request is made at all.
+// Weather by a place you pick by name (no IP lookup), and no request is made until you pick one.
 Rectangle {
     id: root
     required property var window

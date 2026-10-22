@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Layouts
 
 // Clock and month calendar, opened from the clock in the middle of the bar.
-// Arrows (or scrolling) change the month; clicking the month name returns to today.
 Rectangle {
     id: root
 

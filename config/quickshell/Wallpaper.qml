@@ -4,10 +4,7 @@ import Quickshell.Wayland
 import QtQuick
 import Qt.labs.folderlistmodel
 
-// Desktop wallpaper, drawn by the shell on the background layer of every monitor.
-// The images are the current theme's (~/.config/hypora/current/backgrounds/); the chosen
-// one is remembered in ~/.config/hypora/current/wallpaper.
-// Cycle with the menu's Settings > Next wallpaper, or:  qs ipc call wallpaper next
+// Wallpaper drawn on every monitor from the current theme, with the choice remembered.
 Scope {
     id: root
 

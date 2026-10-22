@@ -1,5 +1,4 @@
-# Kanagawa wave (github.com/rebelot/kanagawa.nvim). Also a defined scheme; the
-# names in the original are sumiInk, fujiWhite, crystalBlue and so on.
+# Kanagawa wave (github.com/rebelot/kanagawa.nvim): a defined scheme, using its original colour names.
 name = "Kanagawa"
 mode = "dark"
 

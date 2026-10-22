@@ -29,6 +29,8 @@ What it will not do, whatever the manifest says:
 
 - **Use root.** It refuses to run as root and never calls `sudo`. A plugin cannot install anything
   into `/usr/local/bin`, and cannot replace one of Hypora's root-owned commands.
+  A setup script may itself run `sudo` for something that genuinely needs root (read the script, it is listed
+  with its checksum); `sudo` then asks for your password, and `hypora-plugin` is not involved.
 - **Overwrite a file that is not its own.** If `~/.config/quickshell/Clock.qml`, or anything the
   Hypora installer put in place, or a file from another plugin is in the way, the install stops
   before writing anything.
@@ -82,6 +84,7 @@ license = "MIT"
 [widget]
 component = "MyPlugin"          # the QML type shown in the bar; needs MyPlugin.qml in files
 slot = "right"                  # left, center or right of the bar
+hide_tray = ["spotify"]         # optional: hide tray icons whose id or title contains one of these
 files = ["qml/MyPlugin.qml", "qml/MyPluginPanel.qml"]
 
 [bin]                           # optional: commands for ~/.local/bin
@@ -122,6 +125,8 @@ Rectangle {
                /* your panel here */ }
 }
 ```
+
+The item is shown on the main display's bar only (Display Settings, **Main display**); other monitors' bars never load it, so the plugin does not need to check.
 
 `Theme` is the current theme's palette, so the item follows theme changes with no extra work.
 

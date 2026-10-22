@@ -4,9 +4,7 @@ import Quickshell.Bluetooth
 import QtQuick
 import QtQuick.Layouts
 
-// Asks whether to trust a Bluetooth device when it connects without being trusted.
-// A trusted device may reconnect on its own, so this is the moment to decide.
-// "Not now" is remembered until the shell restarts; the device stays untrusted.
+// Ask whether to trust a device that connects untrusted, since trusted devices may reconnect on their own.
 Scope {
     id: root
 

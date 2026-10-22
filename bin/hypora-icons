@@ -1,9 +1,5 @@
 #!/bin/sh
-# hypora-icons: list the icon themes installed on this machine, with sample icons.
-#
-# One line per theme:  <directory><TAB><display name><TAB><icon path>|<icon path>|...
-# The Style > Icons picker reads this; run it yourself to see what it finds.
-# Themes with no real icons (cursor-only sets) are skipped.
+# hypora-icons: list installed icon themes as <dir><TAB><name><TAB><icon paths>, for the Style > Icons picker.
 set -u
 
 samples="folder utilities-terminal text-x-generic preferences-system applications-games audio-headphones"

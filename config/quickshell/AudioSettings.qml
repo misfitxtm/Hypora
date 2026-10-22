@@ -4,11 +4,7 @@ import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Layouts
 
-// Sound: output and input devices, and the volume of each app that is playing.
-// Talks to PipeWire directly through Quickshell. The wiremix TUI is one click away under
-// "Advanced" for anything else. Open from the menu (Settings > Sound), the control
-// center's mixer button, or:
-//     qs ipc call audio open
+// Sound: output/input devices and per-app volume through PipeWire; also `qs ipc call audio open`.
 Scope {
     id: root
 

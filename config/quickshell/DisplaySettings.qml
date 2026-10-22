@@ -5,16 +5,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic as C
 
-// Display Settings: resolution, refresh rate, scale, rotation, arrangement, which screen
-// is the main one, and on/off per monitor.
-//
-// A monitor's position is set by dragging it on the map (not by a dropdown), so there is
-// only one way to set it. Edges snap, overlaps are refused, and the layout is shifted so
-// the top-left screen sits at 0,0.
-//
-// Changes apply at once (hyprctl eval), then ask to be kept. After 15 seconds without an
-// answer they revert. Kept settings are saved to ~/.config/hypr/monitors.lua, which
-// hyprland.lua loads. Open it from the app menu, or with: qs ipc call display open
+// Display Settings: edits apply at once, revert after 15 seconds unless kept, and are saved to monitors.lua.
 Scope {
     id: root
 
@@ -24,12 +15,7 @@ Scope {
         function close(): void { ShellState.displaySettingsOpen = false }
     }
 
-    // Keep-or-revert prompt, drawn full-screen on every monitor. A bad display change can hide
-    // its own Revert button (wrong mode, or a screen that went black), so every screen shows
-    // the way out.
-    //
-    // It reads the loader's item because countdown, keep() and revert() live on the window
-    // inside it.
+    // Keep-or-revert prompt on every monitor, since a bad change can hide its own Revert button.
     Variants {
         model: Quickshell.screens
 
@@ -167,19 +153,11 @@ Scope {
             readonly property bool dirty: JSON.stringify(edits) !== JSON.stringify(current())
                                           || primary !== effectivePrimary
 
-            // ---- main display ----
-            // Hyprland has no "primary monitor", so this is Hypora's own setting. The session starts
-            // with focus on it, and single-instance panels (app menu, clipboard history) open there.
-            //
-            // It is stored in monitors.lua as HYPORA_PRIMARY, so one file holds the display layout.
-            // hyprland.lua and ShellState both read that line.
+            // Main display: Hyprland has no primary monitor, so it is Hypora's own HYPORA_PRIMARY line in monitors.lua.
             property string primary: ""          // what the toggle is showing
             property string savedPrimary: ""     // what monitors.lua currently says
 
-            // With nothing saved, use the first enabled output (a stable answer). Using the focused
-            // monitor was not stable: moving the pointer changed it and lit up Apply on its own.
-            //
-            // A saved name that is no longer connected is ignored, so a real monitor is marked main.
+            // With nothing saved use the first enabled output; the focused monitor changed with the pointer and lit up Apply.
             readonly property string effectivePrimary: {
                 if (savedPrimary && monitors.some(m => m.name === savedPrimary))
                     return savedPrimary
@@ -210,9 +188,7 @@ Scope {
                 edits = all
             }
 
-            // ---- arrangement geometry ----
-            // Logical rectangles for the enabled monitors, taken from `edits` (not hyprctl) so the map
-            // shows changes you have not applied yet.
+            // Arrangement geometry comes from `edits`, not hyprctl, so the map shows changes not yet applied.
             readonly property var boxes: {
                 const out = []
                 for (const m of monitors) {
@@ -234,9 +210,7 @@ Scope {
                 return out
             }
 
-            // There is deliberately no "boxes with the drag applied" list. A new array on every mouse
-            // move rebuilt the Repeater's delegates and destroyed the mouse grab. The drag position
-            // reaches the view through each delegate's own x/y bindings instead.
+            // No "boxes with the drag applied" list: a new array per mouse move rebuilt the delegates and lost the mouse grab.
             property string dragging: ""
             property real dragX: 0
             property real dragY: 0
@@ -272,8 +246,7 @@ Scope {
                 return best
             }
 
-            // Move `name` to (nx, ny): snap to neighbours, refuse overlaps, and shift the whole
-            // arrangement so the top-left monitor sits at 0,0.
+            // Move `name` to (nx, ny): snap to neighbours, refuse overlaps, and shift so the top-left monitor is at 0,0.
             function placeMonitor(name, nx, ny) {
                 const me = boxes.find(b => b.name === name)
                 if (!me) return
@@ -323,20 +296,16 @@ Scope {
                 saved.setText("-- Written by Hypora Display Settings. Loaded from hyprland.lua.\n"
                               + "-- HYPORA_PRIMARY is Hypora's main display: see DisplaySettings.qml.\n"
                               + luaPrimary(primary) + "\n" + lua(edits) + "\n")
-                // The login screen runs as the sddm user and never reads your ~/.config, so the main
-                // display is also written where root owns it. This only happens when it changes (clearing
-                // it counts), because it needs a password and everything else here does not.
+                // Also write the main display where root owns it (the login screen cannot read ~/.config), only when it changes.
                 if (primaryChanged)
                     greeter.exec(primary ? ["pkexec", greeterHelper, "set", primary]
                                          : ["pkexec", greeterHelper, "clear"])
                 reloadSoon.restart()
             }
 
-            // A failure only costs the login screen's placement, so it is shown in the window and not
-            // thrown. That includes dismissing the password prompt.
+            // A failure only costs the login screen's placement, so show it in the window rather than throw.
             property string greeterNote: ""
-            // Use an absolute path: pkexec searches PATH, where ~/.local/bin comes first, so a bare
-            // name could run a copy that anything able to write there put in place, as root.
+            // Use an absolute path: pkexec searches PATH, where ~/.local/bin comes first, so a bare name could run a planted copy as root.
             readonly property string greeterHelper: "/usr/local/bin/hypora-greeter"
             Process {
                 id: greeter
@@ -378,8 +347,7 @@ Scope {
                         if (win.countdown === 0) win.edits = win.current()
                         if (!win.monitors.some(m => m.name === win.selected))
                             win.selected = (win.monitors.find(m => m.focused) ?? win.monitors[0])?.name ?? ""
-                        // monitors.lua is read before hyprctl answers, so there was no monitor list to fall back
-                        // to. Settle it here, once the outputs are known.
+                        // monitors.lua is read before hyprctl answers, so settle the main display here once the outputs are known.
                         if (win.primary === "") {
                             win.primary = win.effectivePrimary
                             win.appliedPrimary = win.primary
@@ -400,8 +368,7 @@ Scope {
                 path: Quickshell.env("HOME") + "/.config/hypr/monitors.lua"
                 blockLoading: true
                 printErrors: false
-                // Read back the one line the QML side needs. A regex is enough: Hypora writes this file
-                // itself, so its shape is fixed. Anything unrecognised leaves the main display unset.
+                // A regex is enough: Hypora writes this file itself, and anything unrecognised leaves the main display unset.
                 onLoaded: {
                     const m = /^HYPORA_PRIMARY\s*=\s*"([^"]*)"/m.exec(text())
                     win.savedPrimary = m ? m[1] : ""
@@ -453,13 +420,10 @@ Scope {
                         Layout.preferredHeight: 170
                         radius: 12
                         color: Theme.surface
-                        // The scale follows the committed layout, so a monitor dragged past the edge would be
-                        // drawn over the controls below. Clip it to its own panel.
+                        // Clip to the panel: the scale follows the committed layout, so a monitor dragged past the edge would cover the controls.
                         clip: true
 
-                        // Scale from the COMMITTED layout, never from the drag in progress. Otherwise moving a
-                        // monitor changes the span, which changes `fit` and rescales every box, including the one
-                        // under the pointer, so it would not follow the cursor.
+                        // Scale from the committed layout, never the drag, or `fit` changes and the box stops following the cursor.
                         readonly property var boxes: win.boxes
                         readonly property real minX: boxes.length ? Math.min(...boxes.map(b => b.x)) : 0
                         readonly property real minY: boxes.length ? Math.min(...boxes.map(b => b.y)) : 0
@@ -473,12 +437,7 @@ Scope {
                             height: arrangement.spanH * arrangement.fit
 
                             Repeater {
-                                // The model must NOT change while dragging. A Repeater rebuilds every delegate when it
-                                // gets a new array. Binding to a list computed from win.dragX would destroy the
-                                // MouseArea holding the grab on the first pixel of movement.
-                                //
-                                // win.boxes only changes when `edits` or `monitors` change, so the delegates survive.
-                                // The drag offset is applied in the x/y bindings below.
+                                // The model must not change while dragging: a new array rebuilds the delegates and destroys the grabbing MouseArea.
                                 model: win.boxes
                                 Rectangle {
                                     id: box
@@ -519,9 +478,7 @@ Scope {
                                         }
                                     }
 
-                                    // Drag to arrange. The press selects, so a plain click still works. The move is tracked
-                                    // in logical pixels (screen pixels divided by the map scale) and only applied on release,
-                                    // where snapping happens.
+                                    // Drag to arrange: tracked in logical pixels and applied on release, where snapping happens.
                                     MouseArea {
                                         id: dragArea
                                         anchors.fill: parent
@@ -529,9 +486,7 @@ Scope {
                                             ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
                                             : Qt.PointingHandCursor
                                         enabled: win.countdown === 0
-                                        // Pointer position in `arrangement` coordinates, not the MouseArea's. The MouseArea moves
-                                        // with the box, so measuring from it would take each change from an origin that has
-                                        // already moved and the monitor would run away from the cursor.
+                                        // Use the pointer position in `arrangement` coordinates; the MouseArea moves with the box and would run away.
                                         property real startX: 0
                                         property real startY: 0
                                         property real originX: 0
@@ -576,8 +531,7 @@ Scope {
                             color: Theme.dim
                         }
 
-                        // Live read-out while dragging. Snapping only lands on release, so this shows whether a
-                        // gap is deliberate or about to be snapped shut.
+                        // Live read-out while dragging, since snapping only lands on release.
                         Text {
                             anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 6 }
                             visible: win.monitors.length > 1

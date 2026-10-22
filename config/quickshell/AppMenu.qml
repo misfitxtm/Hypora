@@ -2,8 +2,7 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Hypora logo at the left of the bar; opens the app menu.
-// Also: qs ipc call menu toggle
+// Hypora logo at the left of the bar, opens the app menu (qs ipc call menu toggle).
 Rectangle {
     id: root
     required property var window

@@ -1,12 +1,5 @@
 #!/bin/bash
-# hypora-smartcard: lets the Flatpak browsers use smart cards and YubiKey PIV (CAC, PIV, any PKCS#11 token).
-#
-#   hypora-smartcard setup     give each installed browser the OpenSC module (safe to re-run)
-#   hypora-smartcard status    readers, cards, and which browsers have the module
-#
-# A Flatpak cannot see the host's /usr, so the OpenSC libraries are copied into each
-# browser's own data folder and registered in its certificate database. Re-run after
-# `dnf upgrade opensc` or after installing another browser. No root needed.
+# hypora-smartcard [setup|status]: copy the OpenSC module into each Flatpak browser, since Flatpaks cannot see /usr.
 set -u
 
 MODULE=$(readlink -f /usr/lib64/pkcs11/opensc-pkcs11.so)

@@ -1,8 +1,6 @@
 import QtQuick
 
-// Line icon drawn from inline SVG and colored from the theme. No icon font needed.
-// Shapes are from Feather (MIT, feathericons.com) unless noted.
-// `level` (0..1) drives the wifi, volume and battery variants.
+// Line icons from inline SVG coloured by the theme (Feather, MIT, unless noted); `level` drives wifi, volume and battery.
 Image {
     id: root
     property string name
@@ -92,12 +90,7 @@ Image {
         case "calendar":
             return '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/>'
                  + '<line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'
-        // Weather, matching what hypora-weather reports.
-        //
-        // These fill the viewBox like the rest of the set (an earlier cloud filled only 13.4 of 24
-        // units and looked half-size). The arcs are elliptical because a cloud is wider than tall.
-        // The combined icons below keep the smaller cloud, since their rain and snow marks need
-        // the bottom of the box.
+        // Weather icons fill the viewBox like the rest; combined icons keep a smaller cloud to leave room for rain and snow.
         case "cloud":
             return '<path d="M16.7 20.3H9.4a6 8.3 0 1 1 5.8-10.6h1.5a3.9 5.3 0 1 1 0 10.6z"/>'
         case "partly":

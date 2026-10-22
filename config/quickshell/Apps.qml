@@ -3,8 +3,7 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Installed applications: search, categories and launching.
-// Shared by the launcher (SUPER + R) and the app menu.
+// Installed applications: search, categories and launching, shared by the launcher and the app menu.
 Singleton {
     id: root
     property bool useUwsm: false
@@ -24,10 +23,7 @@ Singleton {
         { id: "Settings", label: "Settings" }
     ]
 
-    // Control panels are left out of the menu and launcher. The freedesktop Settings category
-    // is the only signal available (Quickshell does not expose OnlyShowIn), and on Hyprland
-    // these are GNOME panels built for a shell that is not running. Hypora's Settings section
-    // lists its own windows. Plain apps (Files, Calculator, Disks, Software) are not affected.
+    // Leave control panels out: the Settings category is the only signal Quickshell exposes, and they are GNOME panels.
     function isSettings(entry) { return entry.categories.includes("Settings") }
 
     readonly property var byName: DesktopEntries.applications.values
@@ -40,17 +36,13 @@ Singleton {
     // Categories that at least one installed app belongs to
     readonly property var categories: allCategories.filter(c => all.some(e => e.categories.includes(c.id)))
 
-    // Categories ordered by how much they say about an app. System and Utility come last:
-    // they are the fallback when a .desktop file has nothing more specific, so "Network" is
-    // a better answer than "Utility".
+    // Order categories by how specific they are; System and Utility are fallbacks, so they go last.
     readonly property var describeCategories: [
         "AudioVideo", "Audio", "Video", "Development", "Education", "Game",
         "Graphics", "Network", "Office", "Science", "Settings", "System", "Utility"
     ]
 
-    // One short phrase saying what an app is, for the launcher's right-hand column.
-    // GenericName is meant for this, but under half the .desktop files on Fedora set it.
-    // Comment is set by most of the rest. Failing both, the main category is used.
+    // One short phrase per app: GenericName, then Comment, then the main category, since under half set GenericName.
     function describe(entry) {
         if (!entry) return ""
         if (entry.genericName) return entry.genericName
@@ -86,8 +78,7 @@ Singleton {
         Quickshell.execDetached(useUwsm ? ["uwsm", "app", "--", ...argv] : argv)
     }
 
-    // Run a shell command line in the theme's terminal. If it exits non-zero, keep the window
-    // open so you can read the error.
+    // Run a command line in the theme's terminal and keep the window open on a non-zero exit.
     readonly property string holdOnError:
         '; rc=$?; if [ $rc -ne 0 ]; then printf "\\n[exited with status %s]\\nPress Enter to close. " "$rc"; read _; fi'
 
@@ -107,8 +98,7 @@ Singleton {
         onExited: code => root.useUwsm = code === 0
     }
 
-    // The installer asks before installing Claude Code (default no), so the menu must check.
-    // Checked once at startup; after installing it, reload the shell.
+    // The installer asks before installing Claude Code, so check once at startup; reload the shell after installing.
     property bool hasClaude: false
     Process {
         command: ["sh", "-c", "command -v claude"]
@@ -116,9 +106,7 @@ Singleton {
         onExited: code => root.hasClaude = code === 0
     }
 
-    // Two conditions, because either failing makes the menu entry a dead end: fprintd must be
-    // installed to enrol against, and must report a device. `hypora-hardware fingerprint` asks
-    // fprintd, because a reader being present does not mean libfprint supports it.
+    // Both must hold or the entry is a dead end: fprintd installed and reporting a device, since a reader may not be supported.
     property bool hasFingerprint: false
     Process {
         command: ["sh", "-c",

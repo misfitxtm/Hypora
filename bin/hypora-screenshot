@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# hypora-screenshot [region|screen|window]: take a screenshot, save it and copy it.
-#
-# Saves to ~/Pictures/Screenshots (or wherever xdg-user-dir points) and puts the image on
-# the clipboard. Bound to SUPER + SHIFT + S, and used by the menu's Tools section.
+# hypora-screenshot [region|screen|window]: save to the screenshots folder and copy to the clipboard.
 set -euo pipefail
 
 mode=${1:-region}

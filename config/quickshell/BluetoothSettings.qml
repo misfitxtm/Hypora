@@ -4,10 +4,7 @@ import Quickshell.Bluetooth
 import QtQuick
 import QtQuick.Layouts
 
-// Bluetooth settings: power, scanning, pairing, connecting and forgetting devices.
-// Covers everyday use; bluetoothctl is still one click away under "Advanced".
-// Open from the menu (Settings > Bluetooth), the Bluetooth tile's arrow, or:
-//     qs ipc call bluetooth open
+// Bluetooth settings: power, scanning, pairing and forgetting; also `qs ipc call bluetooth open`.
 Scope {
     id: root
 

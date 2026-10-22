@@ -5,15 +5,7 @@ import Quickshell.Wayland
 import QtQuick
 import Qt.labs.folderlistmodel
 
-// Theme picker (SUPER + ALT + T, or menu > Style > Theme): a sliding carousel with one
-// theme centred and its neighbours peeking in at each side.
-//
-// Each card is a live preview, not a screenshot: the theme's first wallpaper behind a
-// miniature desktop drawn in that theme's colours from the same colors.toml that
-// hypora-theme applies.
-//
-// Left/Right or scroll to slide, Enter or click to apply, Esc to close. Typing filters.
-// Also: qs ipc call themes toggle
+// Theme picker (SUPER + ALT + T): a carousel of live previews drawn from each theme's colors.toml.
 Scope {
     id: root
 
@@ -74,8 +66,7 @@ Scope {
                 sortField: FolderListModel.Name
             }
 
-            // FolderListModel cannot filter on typed text, so the carousel uses a plain list built
-            // from it. That also makes "no match" easy to show.
+            // FolderListModel cannot filter typed text, so use a plain list built from it (also easy to show "no match").
             readonly property var allNames: {
                 const out = []
                 for (let i = 0; i < themes.count; i++) out.push(themes.get(i, "fileName"))
@@ -126,9 +117,7 @@ Scope {
                 }
             }
 
-            // Laid out against the window, not in a Column. A Column is as wide as its widest child
-            // (the full-width carousel), which pushed the heading and dots to its left edge. Anchoring
-            // each piece keeps the selected card in the middle of the monitor at any width.
+            // Laid out against the window, not a Column, which would be as wide as the carousel and push the heading left.
             Item {
                 id: stage
                 anchors.fill: parent
@@ -178,8 +167,7 @@ Scope {
                 // ---------- the carousel ----------
                 ListView {
                     id: carousel
-                    // Full width, so the centred card lands in the middle of the screen and the neighbours
-                    // have room to show
+                    // Full width so the centred card lands mid-screen with room for its neighbours.
                     anchors { left: parent.left; right: parent.right }
                     y: (parent.height - height) / 2
                     height: win.cardHeight + 24
@@ -188,8 +176,7 @@ Scope {
                     model: win.shown
                     spacing: 26
                     clip: false
-                    // Snap the current card to the middle: this makes it slide, not scroll, and keeps
-                    // keyboard and wheel in agreement.
+                    // Snap the current card to the middle so it slides and keyboard and wheel agree.
                     snapMode: ListView.SnapOneItem
                     highlightRangeMode: ListView.StrictlyEnforceRange
                     preferredHighlightBegin: (width - win.cardWidth) / 2

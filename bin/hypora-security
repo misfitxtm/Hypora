@@ -95,8 +95,7 @@ def secure_boot():
                 "note": "This machine booted in legacy BIOS mode, where Secure Boot does not apply."}
     out = {"firmware": "uefi", "supported": True}
 
-    # Setup Mode means Secure Boot is switched on but has no keys, so it checks nothing.
-    # That needs a different message from plain "off".
+    # Setup Mode means Secure Boot is on with no keys, so it checks nothing and needs its own message.
     setup = efivar_bool("SetupMode")
     if setup is not None:
         out["setupMode"] = setup
@@ -500,8 +499,7 @@ def selinux():
     return out
 
 
-# The video class is on the USB interface, not the device. A webcam's device class is
-# 0xef (miscellaneous), so checking the device would miss every one.
+# The video class is on the USB interface, not the device, so checking the device misses every webcam.
 USB_VIDEO_CLASS = "0e"
 
 # Intel MIPI/IPU cameras are PCI controllers driven by intel-ipu6, not uvcvideo.
@@ -552,8 +550,7 @@ def camera():
             drv = ""
             if (dev / "driver").is_symlink():
                 drv = Path(os.readlink(dev / "driver")).name
-            # The same PCI class is used by capture cards and audio DSPs, so only count
-            # devices with no driver yet or a camera driver.
+            # Capture cards and audio DSPs share this PCI class, so only count devices with no driver or a camera driver.
             if drv and not drv.startswith(("intel-ipu", "ipu")):
                 continue
             mipi.append(dev.name)
@@ -647,8 +644,7 @@ def set_selinux(mode):
 
 def set_selinux_boot(mode):
     need_root()
-    # "disabled" is not accepted on purpose: turning SELinux off is not something a
-    # settings window should offer. Edit /etc/selinux/config by hand if you need it.
+    # "disabled" is refused on purpose: turning SELinux off is not for a settings window.
     if mode not in ("enforcing", "permissive"):
         sys.exit("mode must be enforcing or permissive")
     try:
@@ -690,12 +686,7 @@ def set_location(state):
     sys.exit(rc)
 
 
-# ---------- swapfile on the encrypted root ----------
-#
-# A swapfile inside the encrypted root is encrypted with it. The only persistent change
-# is one fstab line with `nofail`, so the worst failure is a boot without swap. (An older
-# version encrypted a swap partition in place and could leave the machine unbootable.)
-# It is only offered when / is encrypted.
+# Swapfile on the encrypted root: encrypted with it, and the only change is one nofail fstab line.
 
 FSTAB = Path("/etc/fstab")
 SWAP_SUBVOL = Path("/swap")
@@ -820,8 +811,7 @@ def remove_swapfile(arg=""):
         print(f"No {SWAPFILE} to remove.")
         return
     run(["swapoff", str(SWAPFILE)], timeout=120)
-    # Check /proc/swaps, not swapoff's exit code (which is also non-zero if it was never
-    # active). If it is still in use, stop and change nothing.
+    # Check /proc/swaps, not swapoff's exit code; if it is still in use, stop and change nothing.
     if swapfile_state()["active"]:
         sys.exit(f"{SWAPFILE} is still in use, so nothing was changed. This usually means "
                  "there is not enough free memory to take its contents back; close some "

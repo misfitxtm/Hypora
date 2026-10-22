@@ -2,12 +2,7 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Clipboard history, left of the clock. Click (or SUPER + SHIFT + V) for recent copies;
-// pick one to put it back on the clipboard.
-//
-// The history is recorded by `wl-paste --watch cliphist store`, started from
-// hyprland.lua. Quickshell cannot watch the clipboard itself (it does not speak
-// wlr-data-control), so it would only see copies made while the shell had focus.
+// Clipboard history fed by `wl-paste --watch cliphist store`, because Quickshell cannot watch the clipboard itself.
 Rectangle {
     id: root
     required property var window
@@ -68,8 +63,7 @@ Rectangle {
     function refresh() { if (!load.running) load.running = true }
 
     function paste(id) {
-        // The pipe needs a shell, so the id must not carry anything else into it. cliphist ids
-        // are plain integers; refuse anything that is not one.
+        // The id goes into a shell pipe, so accept only a plain integer (cliphist ids are).
         if (!/^[0-9]+$/.test(id)) {
             notice = "Skipped an entry with an unexpected id."
             return

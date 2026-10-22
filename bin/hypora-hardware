@@ -34,18 +34,13 @@ PCI_CLASSES = {
     "0d11": "bluetooth",
 }
 
-# Fingerprint readers report a vendor-specific USB class, so the vendor id is the only
-# clue. These are vendors libfprint has drivers for; a match means "worth trying".
+# Fingerprint readers use a vendor-specific USB class, so the vendor id is the only clue (libfprint vendors).
 FINGERPRINT_VENDORS = {
     "06cb": "Synaptics", "138a": "Validity", "04f3": "Elan",
     "27c6": "Goodix", "147e": "Upek", "08ff": "AuthenTec", "1c7a": "LighTuning",
 }
 
-# Vendors libfprint has no upstream driver for. Enrolment can never work on these.
-# Synaptics is here because of a real ThinkPad whose reader was detected but dead. Its
-# only drivers are unsigned out-of-tree builds, which Hypora will not install for you.
-# This is a shortcut so install.sh can skip fprintd; if fprintd reports a device anyway,
-# that answer wins (see cmd_fingerprint).
+# Vendors libfprint cannot drive, so install.sh can skip fprintd; a device fprintd reports still wins.
 UNSUPPORTED_FINGERPRINT_VENDORS = {
     "06cb": "Synaptics — no upstream libfprint driver exists for these",
 }
@@ -160,9 +155,7 @@ def fingerprint_devices():
         vid = read(dev / "idVendor")
         if vid not in FINGERPRINT_VENDORS:
             continue
-        # These vendors also make touchpads and touchscreens. Readers use the
-        # vendor-specific class ff on every interface; input devices do not.
-        # Interfaces are listed next to devices in /sys/bus/usb/devices.
+        # These vendors also make touchpads; readers use class ff on every interface, input devices do not.
         classes = {read(USB / n / "bInterfaceClass")
                    for n in os.listdir(USB) if n.startswith(dev.name + ":")}
         if classes != {"ff"}:
@@ -382,8 +375,7 @@ def cmd_fingerprint(hardware_only=False):
         name = d["product"] or d["vendorName"]
         print(f"{d['vendor']}:{d['device']}  {name}")
 
-    # --hardware asks "is a usable reader present?" without fprintd. install.sh needs
-    # this first, because fprintd is what it is deciding whether to install.
+    # --hardware asks if a reader exists without fprintd, which install.sh is still deciding to install.
     if hardware_only:
         if not found:
             print("No fingerprint reader found.", file=sys.stderr)

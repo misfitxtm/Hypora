@@ -39,6 +39,7 @@ MANIFEST_NAME = "hypora-plugin.toml"
 SLOTS = ("left", "center", "right")
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 QML_FILE_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*\.qml$")
+TRAY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,39}$")
 BIN_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 URL_RE = re.compile(r"^(https://|ssh://git@|git@)[^\s]+$")
@@ -90,6 +91,7 @@ class Manifest:
     license: str
     component: str
     slot: str
+    hide_tray: list = field(default_factory=list)
     qml_files: list = field(default_factory=list)
     bin_files: list = field(default_factory=list)
     setup_install: str = ""
@@ -135,6 +137,9 @@ def parse_manifest(text):
     slot = _str(widget, "slot")
     if slot not in SLOTS:
         raise PluginError(f"widget.slot must be one of {', '.join(SLOTS)}")
+    hide_tray = widget.get("hide_tray", [])
+    if not isinstance(hide_tray, list) or not all(isinstance(h, str) and TRAY_RE.match(h) for h in hide_tray):
+        raise PluginError("widget.hide_tray must list tray icon names: lowercase letters, digits, . _ -")
     files = widget.get("files")
     if not isinstance(files, list) or not files:
         raise PluginError("widget.files must list the QML files to install")
@@ -179,7 +184,7 @@ def parse_manifest(text):
     return Manifest(
         id=pid, name=_str(t, "name", default=pid), version=_str(t, "version"),
         description=_str(t, "description", required=False), license=_str(t, "license", required=False),
-        component=component, slot=slot, qml_files=qml, bin_files=bins,
+        component=component, slot=slot, hide_tray=hide_tray, qml_files=qml, bin_files=bins,
         setup_install=s_install, setup_remove=s_remove, setup_env=env)
 
 
@@ -232,7 +237,7 @@ def write_atomic(path, data, mode=0o644):
 
 def write_enabled_list(paths):
     """The file the bar reads: enabled plugins, and only the fields it needs."""
-    entries = [{"id": s["id"], "component": s["component"], "slot": s["slot"]}
+    entries = [{"id": s["id"], "component": s["component"], "slot": s["slot"], "hide_tray": s.get("hide_tray", [])}
                for s in all_states(paths) if s.get("enabled", True)]
     write_atomic(paths.list_file, json.dumps(entries, indent=1) + "\n")
 
@@ -320,6 +325,8 @@ def summarize(m, root, plan, commit, dirty, source, previous):
     lines.append("  " + (("This replaces the installed version" + (f" ({old_commit[:12]})" if old_commit else "") + ".")
                          if previous else "New install."))
     lines.append(f"  adds a bar item in the {m.slot} of the bar")
+    if m.hide_tray:
+        lines.append("  HIDES tray icons matching: " + ", ".join(m.hide_tray))
     lines.append("  files written:")
     for dest, data, mode, kind in plan:
         lines.append(f"    {dest}  [{kind}, sha256 {sha(data)[:12]}]")
@@ -397,7 +404,7 @@ def install(paths, source, assume_yes=False, ref=None, commit=None, out=print):
             remove_copy = str(state_dir / "remove")
             write_atomic(Path(remove_copy), read_source_file(root, m.setup_remove), 0o755)
         state = {"id": m.id, "name": m.name, "version": m.version, "component": m.component,
-                 "slot": m.slot, "source": source or str(root), "commit": commit_id,
+                 "slot": m.slot, "hide_tray": m.hide_tray, "source": source or str(root), "commit": commit_id,
                  "enabled": (previous or {}).get("enabled", True), "files": written,
                  "remove_script": remove_copy, "setup_env": m.setup_env}
         write_atomic(state_path(paths, m.id), json.dumps(state, indent=1) + "\n")

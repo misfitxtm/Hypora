@@ -19,8 +19,7 @@ import struct
 import sys
 import zlib
 
-# The mark's gradient is deliberately not themed: config/quickshell/Logo.qml keeps the same
-# two colours whichever palette is active, and a logo that changes colour isn't much of one.
+# The mark's gradient is deliberately not themed, matching Logo.qml.
 LOGO_FROM = (0x7a, 0xa2, 0xf7)
 LOGO_TO = (0xc3, 0x7a, 0xf7)
 

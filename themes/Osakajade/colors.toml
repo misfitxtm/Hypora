@@ -1,6 +1,4 @@
-# Osakajade. No upstream palette to copy, so the colours are taken from the theme's
-# own wallpapers — sampling them gives #091715 backgrounds and jade accents around
-# #16935b to #48ad75, which is what this is built around.
+# Osakajade has no upstream palette, so the colours are sampled from its wallpapers (#091715 backgrounds, jade accents).
 name = "Osakajade"
 mode = "dark"
 

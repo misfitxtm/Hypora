@@ -1,17 +1,13 @@
 import QtQuick
 import QtQuick.Window
 
-// Hypora login screen (SDDM): the time, the date and a password field. The user name
-// only appears when there is more than one user.
-// Colors come from theme.conf, which hypora-theme generates from the active theme.
+// Hypora login screen (SDDM): time, date and password field, coloured from theme.conf.
 Rectangle {
     id: root
-    // Fill whatever monitor SDDM puts this on, at its own resolution. Binding to Screen keeps
-    // it right on mixed-DPI setups and when a mode is applied after the greeter starts.
+    // Fill whatever monitor SDDM uses at its own resolution; binding to Screen keeps mixed-DPI setups right.
     width: Screen.width
     height: Screen.height
-    // theme.conf is root-owned, but the greeter runs before anyone logs in, so trust nothing:
-    // accept only a plain #rrggbb colour and a simple font name, else use the built-in value.
+    // theme.conf is root-owned but read before login, so accept only #rrggbb and a simple font name, else the built-in value.
     function colour(v, fallback) {
         return /^#[0-9a-fA-F]{6}$/.test(String(v || "")) ? String(v) : fallback
     }
@@ -22,18 +18,11 @@ Rectangle {
 
     color: colour(config.bg, "#2e3440")
 
-    // Which screen shows the login panel.
-    //
-    // SDDM creates this file once per screen, so without this the clock and password field
-    // would appear on every monitor. Compositor focus cannot change that, so the theme
-    // decides. `primary` is written into theme.conf by hypora-greeter and validated like
-    // every other value from that file.
+    // SDDM makes this once per screen, so the theme picks the panel's screen from `primary` in theme.conf.
     readonly property string wantScreen:
         /^[A-Za-z][A-Za-z0-9-]{0,31}$/.test(String(config.primary || "")) ? String(config.primary) : ""
 
-    // Is the named output connected? Each instance only sees its own Screen, so use the
-    // application's full list. A name that matches nothing (monitor unplugged) must not hide
-    // the panel everywhere, since that would leave a login screen you cannot use.
+    // Use the application's full screen list: a name matching nothing (monitor unplugged) must not hide the panel everywhere.
     readonly property bool wantScreenPresent: {
         if (wantScreen === "") return false
         const all = Qt.application.screens

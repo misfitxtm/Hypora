@@ -1,20 +1,13 @@
--- hyprland.lua  (Hyprland 0.55+ Lua config)
--- Based on the upstream example config, adapted for Hypora:
---   * Quickshell provides the bar, notifications and polkit prompt
---   * Border colors come from the active theme (theme.lua, written by hypora-theme)
--- Docs: https://wiki.hypr.land/Configuring/Start/
--- After editing:  hyprctl reload && hyprctl configerrors
+-- hyprland.lua (Hyprland 0.55+ Lua config) adapted from upstream; reload with hyprctl reload && hyprctl configerrors.
 
 ------------------ PROGRAMS ------------------
 local terminal    = "kitty"
--- Firefox is a flatpak so the browser is sandboxed. Use `flatpak run`, not a desktop id,
--- so this also works in a session that uwsm does not manage.
+-- Firefox is a flatpak, so use `flatpak run` rather than a desktop id (works without uwsm too).
 local browser     = "flatpak run org.mozilla.firefox"
 local fileManager = "nautilus"
 local mainMod  = "SUPER"
 
--- Run through uwsm when the session is managed by it (the login screen picks that
--- session), but still work when Hyprland was started from a TTY.
+-- Run through uwsm when it manages the session, but still work when started from a TTY.
 local function app(cmd)
     return "if uwsm check is-active >/dev/null 2>&1; then exec uwsm app -- " .. cmd .. "; else exec " .. cmd .. "; fi"
 end
@@ -28,8 +21,7 @@ hl.monitor({
     scale    = "auto",
 })
 
--- Optional files next to this one in ~/.config/hypr/. dofile (not require), so that
--- `hyprctl reload` picks up changes.
+-- dofile, not require, so `hyprctl reload` picks up changes to these optional files.
 local function load(name)
     local path = package.searchpath(name, package.path)
     if path then dofile(path) end
@@ -43,46 +35,24 @@ hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORMTHEME", "qt6ct:qt5ct")   -- Qt apps follow the theme (also set in ~/.config/uwsm/env)
 
--- ------------------ AUTOSTART -----------------
--- Declared here, defined in the WORKSPACES section. A Lua closure only sees locals that
--- already exist where it is written, so the hook below would otherwise capture a nil global.
+-- AUTOSTART: declared here and defined in WORKSPACES, since a Lua closure only sees locals that already exist.
 local workspace_rules
 
 -- Quickshell replaces waybar, mako and a separate polkit agent. Do not start those too.
 hl.on("hyprland.start", function()
     hl.exec_cmd(app("qs"))
-    -- Clipboard history. Quickshell cannot watch the clipboard itself (it does not speak
-    -- wlr-data-control), so wl-paste records into cliphist for the bar widget to read.
+    -- Quickshell cannot watch the clipboard, so wl-paste records into cliphist for the bar widget.
     hl.exec_cmd("wl-paste --type text --watch cliphist store")
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
     -- Idle locking (~/.config/hypr/hypridle.conf). Without this nothing ever locks.
     hl.exec_cmd(app("hypridle"))
-    -- Secret storage (keyring). GNOME's session starts this and Hyprland does not. Without a
-    -- provider, an app may store its token on disk in the clear. --components skips the
-    -- pkcs11 and gpg agents, which nothing here uses.
-    --
-    -- install.sh also sets up PAM auto-unlock, which starts the daemon too. `--start` attaches
-    -- to a running daemon and starts any missing component, so this is still wanted, and it
-    -- covers cases PAM cannot (unlock declined, module missing, a session not from SDDM).
+    -- Start the keyring (GNOME's session does it, Hyprland does not) so apps do not store tokens in the clear.
     hl.exec_cmd("gnome-keyring-daemon --start --components=secrets,ssh")
     -- The monitors exist by now, which they don't when the config is first read
     workspace_rules()
-    -- Start on the main display. HYPORA_PRIMARY is set by monitors.lua (written by Display
-    -- Settings); nil means "wherever Hyprland put the focus".
-    --
-    -- Hyprland has no primary-monitor concept, so this and ShellState.primaryScreen on the
-    -- Quickshell side are all that "main display" means.
-    --
-    -- This goes through hyprctl, not hl.dispatch in this file, on purpose. A wrong guess in
-    -- this file raises a Lua error that Hyprland shows as a banner at every login, while a
-    -- wrong guess in a separate hyprctl process only prints to its own output. Also,
-    -- `hyprctl dispatch` evaluates its argument AS LUA, so the old form
-    -- `hyprctl dispatch focusmonitor NAME` became the invalid hl.dispatch(focusmonitor NAME)
-    -- and silently did nothing. The argument must be a Lua expression, quoted as a string.
+    -- Start on the main display (HYPORA_PRIMARY from monitors.lua; nil keeps focus); hyprctl keeps Lua errors off login.
     if HYPORA_PRIMARY then
-        -- hl.dispatch takes a descriptor from hl.dsp.* (see the hl.dsp.focus and hl.dsp.window.move
-        -- calls further down), never a raw string. It stays behind hyprctl until the descriptor
-        -- is confirmed on hardware; move it in-process once proven.
+        -- hl.dispatch takes a hl.dsp.* descriptor, never a string; it stays behind hyprctl until confirmed on hardware.
         hl.exec_cmd("hyprctl dispatch 'hl.dsp.focus({ monitor = \"" .. HYPORA_PRIMARY
                     .. "\" })' 2>&1 | logger -t hypora-session")
     end
@@ -157,10 +127,7 @@ hl.config({
     },
 })
 
--- ------------------ KEYBINDINGS ---------------
--- Each action's key is in one table so it can be rebound. Help > Keybindings in the Hypora
--- menu writes your changes to ~/.config/hypr/keybinds.lua, which is merged over these
--- defaults. Keep the action names in step with KeybindHelp.qml.
+-- KEYBINDINGS: one table so each action can be rebound; keep names in step with KeybindHelp.qml.
 local keys = {
     terminal    = mainMod .. " + Return",
     browser     = mainMod .. " + B",
@@ -176,8 +143,7 @@ local keys = {
     toggleSplit = mainMod .. " + J",
     fullscreen  = mainMod .. " + F",
     scratchpad  = mainMod .. " + S",
-    -- Hyprland's default is SUPER + SHIFT + S, which Hypora uses for the screenshot above,
-    -- so moving a window to the scratchpad is bound here instead.
+    -- Hyprland's SUPER + SHIFT + S default is the screenshot here, so the scratchpad move is bound elsewhere.
     moveToScratchpad = mainMod .. " + ALT + S",
     lock        = mainMod .. " + L",
     logout      = mainMod .. " + M",
@@ -187,8 +153,7 @@ local keys = {
     focusDown   = mainMod .. " + down",
     monitorLeft  = mainMod .. " + SHIFT + left",
     monitorRight = mainMod .. " + SHIFT + right",
-    -- For screens stacked rather than side by side. Free chords: SUPER + up/down move focus,
-    -- and SUPER + SHIFT + [0-9] moves to a workspace.
+    -- For stacked screens; SUPER + up/down move focus and SUPER + SHIFT + [0-9] moves to a workspace.
     monitorUp    = mainMod .. " + SHIFT + up",
     monitorDown  = mainMod .. " + SHIFT + down",
 }
@@ -231,22 +196,7 @@ hl.bind(keys.focusRight, hl.dsp.focus({ direction = "right" }))
 hl.bind(keys.focusUp,    hl.dsp.focus({ direction = "up" }))
 hl.bind(keys.focusDown,  hl.dsp.focus({ direction = "down" }))
 
--- Throw the focused window at the next monitor over. It lands on the workspace that screen
--- is showing (with the per-monitor blocks below, that monitor's own).
---
--- `monitor` is the move-to-a-monitor form. A plain directional move stops at the screen
--- edge since Hyprland 0.54. It also accepts a name, an index or "relative:+1".
---
--- Focus stays put, like SUPER + SHIFT + [0-9] does. Add follow = true to go with the window.
---
--- Guarded: Hyprland shows an error when there is no monitor in the asked direction. That
--- would be every press on a laptop with nothing plugged in, and at the outer edge with two
--- screens. We compare positions rather than counting screens (two screens still have none
--- left of the left one). If a build does not report the coordinate, fall back to
--- "is there more than one screen".
---
--- Which coordinate each direction uses, and which way counts as "toward". y grows
--- downwards, so up is the negative direction.
+-- Move the window to the next monitor, guarded because Hyprland errors when there is no screen that way.
 local MONITOR_AXIS = {
     l = { "x", -1 }, r = { "x", 1 },
     u = { "y", -1 }, d = { "y", 1 },
@@ -280,18 +230,7 @@ hl.bind(keys.monitorRight, throw_to_monitor("r"))
 hl.bind(keys.monitorUp,    throw_to_monitor("u"))
 hl.bind(keys.monitorDown,  throw_to_monitor("d"))
 
--- Workspaces: SUPER + [0-9] to switch, SUPER + SHIFT + [0-9] to move a window.
---
--- Every monitor has its own set, so workspace 1 exists on each screen at once.
---
--- Hyprland numbers workspaces globally (a workspace lives on one monitor), so a
--- per-monitor set is built from blocks of WS_STRIDE numbers: monitor 0 owns 1-10,
--- monitor 1 owns 11-20, and so on. The keys address the block of the monitor you are on.
--- That is why these binds are functions: the target depends on the focus at keypress
--- time, not when the config loaded.
---
--- The first WS_STATIC of each block are persistent: they exist even when empty, so the
--- bar can always show them. The rest appear when first used and go away when empty.
+-- Per-monitor workspaces are blocks of WS_STRIDE numbers, so these binds are functions that read the focus at keypress.
 local WS_STATIC = 5      -- always-there workspaces per monitor
 local WS_STRIDE = 10     -- numbers reserved per monitor; keys 1-9,0 address them
 
@@ -309,11 +248,9 @@ function workspace_rules()      -- assigns the local forward-declared near AUTOS
     end
 end
 
--- hl.get_monitors() is empty this early (the config is read before the outputs come up),
--- so the real call is in the hyprland.start hook below. This one covers a reload.
+-- hl.get_monitors() is empty this early, so the real call is in the start hook; this one covers a reload.
 workspace_rules()
--- And again when a screen is plugged in. pcall, because a wrong event name would otherwise
--- stop everything defined after it.
+-- Run again on plug-in; pcall because a wrong event name would stop everything defined after it.
 pcall(hl.on, "monitor.added", workspace_rules)
 
 -- Which block the keys address: whichever monitor has the focus right now
@@ -332,8 +269,7 @@ for i = 1, 10 do
     end)
 end
 
--- Scroll through this monitor's workspaces. "m" selects existing workspaces on the
--- current monitor, so it cannot reach the other screen's block.
+-- "m" scrolls only this monitor's workspaces, so it cannot reach the other screen's block.
 hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "m+1" }))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "m-1" }))
 
@@ -346,9 +282,7 @@ hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_
 hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })
 hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),     { locked = true })
 hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"),   { locked = true })
--- The `&& qs ipc call osd brightness` tells the slider about the change. Brightness is in
--- sysfs, which does not reliably send change events, so the alternative is polling.
--- Volume needs nothing: PipeWire publishes it as a property the shell already watches.
+-- Tell the slider about brightness changes via qs ipc, since sysfs does not reliably send events.
 hl.bind("XF86MonBrightnessUp",  hl.dsp.exec_cmd("brightnessctl set 5%+ && qs ipc call osd brightness"), { locked = true, repeating = true })
 hl.bind("XF86MonBrightnessDown",hl.dsp.exec_cmd("brightnessctl set 5%- && qs ipc call osd brightness"), { locked = true, repeating = true })
 
@@ -367,11 +301,7 @@ hl.window_rule({
     center = true,
 })
 
--- Small utility windows that are better floating than tiled. Add an entry and it is picked
--- up; the regex Hyprland matches on is built from this list.
---
--- These are Wayland app IDs (for GTK apps, the application ID, not the binary name).
--- `hyprctl clients` shows it as "class" for an open window.
+-- Small utility windows that float better than tile; add an app ID here (`hyprctl clients` shows the class).
 local floatingApps = {
     "org.gnome.Calculator",
 }
@@ -393,13 +323,7 @@ hl.window_rule({
 })
 
 hl.window_rule({
-    -- The firmware updater (Menu > Security). Floating and pinned, so it stays in front while
-    -- it writes and a workspace switch cannot hide it. The title must exist when the window is
-    -- mapped, which is why the Security window passes --title: a rule cannot float a window
-    -- afterwards.
-    --
-    -- There is no `size` on purpose: Hyprland 0.56.2 ignores size/move on floating windows and
-    -- opens them maximised (hyprwm/Hyprland#16446), so the terminal's default size is safer.
+    -- Firmware updater floats and is pinned so it stays visible while writing; no size because 0.56.2 ignores it (#16446).
     name   = "hypora-firmware-updater",
     match  = { title = "^Firmware Update$" },
     float  = true,

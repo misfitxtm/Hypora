@@ -28,8 +28,7 @@ POWER_SUPPLY = Path("/sys/class/power_supply")
 UDEV_RULE = Path("/etc/udev/rules.d/60-hypora-power.rules")
 ASPM = Path("/sys/module/pcie_aspm/parameters/policy")
 
-# USB class 03 is HID (mice, keyboards). Autosuspending them swallows the first movement
-# after an idle moment, and saves almost nothing, so they are skipped.
+# Skip USB HID (class 03): autosuspend swallows the first movement and saves almost nothing.
 USB_HID_CLASS = "03"
 
 
@@ -194,9 +193,7 @@ def set_profile(battery):
 
 # ---------- the settings tuned does not manage ----------
 
-# PCI classes that never get runtime power management: bridges (0600, 0604), the
-# ISA/LPC bridge (0601) and SMBus (0c05). The embedded controller reports battery,
-# temperature and lid state through these, and suspending them gives stale readings.
+# PCI classes that never get runtime PM: suspending them gives stale battery, temperature and lid readings.
 RUNTIME_PM_EXCLUDE = {"0600", "0601", "0604", "0c05"}
 
 
@@ -352,8 +349,7 @@ def cmd_auto():
     if read(STATE_FILE) == want:
         return 0
     ok, detail = set_profile(battery)
-    # Remember the state only on success. Otherwise a profile daemon that is not up yet
-    # would make every later event look like "nothing changed".
+    # Remember the state only on success, or a daemon that is not up yet makes later events look like no change.
     if ok:
         STATE_FILE.write_text(want)
     print(f"On {'battery' if battery else 'mains'}: profile {detail}")
@@ -380,9 +376,7 @@ def cmd_install():
                  "Run `hypora-power apply` by hand if you want the runtime power management "
                  "anyway — it helps a little on mains too.")
     UDEV_RULE.parent.mkdir(parents=True, exist_ok=True)
-    # The rule uses SYSTEMD_WANTS, not RUN+=. A RUN command blocks udev until it exits,
-    # and switching profiles takes seconds. That would land exactly when a suspend
-    # starts (unplugging, or closing the lid) and could delay or abort it.
+    # Use SYSTEMD_WANTS, not RUN+=: a RUN command blocks udev for seconds and could delay a suspend.
     UDEV_RULE.write_text(
         '# Installed by hypora-power. Picks a power profile when the charger goes in or\n'
         '# comes out, which nothing else does on a session without GNOME Shell.\n'
@@ -404,8 +398,7 @@ def cmd_install():
     run(["udevadm", "control", "--reload-rules"])
     print(f"Installed {UDEV_RULE}")
 
-    # Also follow profile changes made from the Control Center. tuned rewrites this
-    # file on every change, so a systemd path unit can watch it.
+    # Follow Control Center changes too: tuned rewrites this file on every change, so a path unit can watch it.
     if TUNED_ACTIVE.exists():
         (UNIT_DIR / "hypora-power.service").write_text(
             "[Unit]\n"

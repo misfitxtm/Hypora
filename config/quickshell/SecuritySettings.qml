@@ -4,13 +4,7 @@ import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Layouts
 
-// Security and privacy: the machine's real security state, and the switches that change it.
-// Each switch says what it covers and what it does not.
-//
-// Readings and privileged changes go through /usr/local/bin/hypora-security. That path is
-// root-owned on purpose: pkexec runs it as root, so a copy the user can write would turn
-// any write access to $HOME into root. Run `hypora-security status` to see what this
-// window reads. Open it from the menu (Security) or with: qs ipc call security open
+// Security and privacy: privileged changes go through the root-owned /usr/local/bin/hypora-security via pkexec.
 Scope {
     id: root
 
@@ -47,22 +41,17 @@ Scope {
             readonly property var micAudio: source ? source.audio : null
             PwObjectTracker { objects: win.source ? [win.source] : [] }
 
-            // Only the unprivileged pass. deepInfo is kept apart, so refreshing after a toggle never
-            // blanks the privileged rows and never asks for a password again.
+            // Only the unprivileged pass; deepInfo is separate so a refresh never blanks rows or re-asks for a password.
             function refresh() {
                 if (probe.running) return
                 loading = info === null
                 probe.running = true
             }
 
-            // Privileged changes go through pkexec (Hypora's polkit prompt). The command is an argv
-            // list, not a shell string, so nothing is split or expanded; the helper also checks each
-            // value against a fixed list.
+            // Privileged changes use pkexec with an argv list, not a shell string, and the helper checks each value.
             readonly property string helper: "/usr/local/bin/hypora-security"
 
-            // What the user just asked for, before the system catches up. A row shows this instead of
-            // the last reading, so a switch moves right away. The next reading clears it, and a
-            // failed command rolls it back.
+            // What the user just asked for, shown before the system catches up; the next reading clears it and failure rolls it back.
             property var pending: ({})
 
             function setPending(key, value) {
@@ -101,8 +90,7 @@ Scope {
                 }
             }
 
-            // `key` and `optimistic` are optional. Pass them for a row whose own control should move
-            // at once; leave them off for an action with no switch.
+            // `key` and `optimistic` are optional: pass them only for a row whose control should move at once.
             function admin(args, what, key, optimistic) {
                 if (action.running) return
                 notice = what
@@ -136,8 +124,7 @@ Scope {
                         pendingKey, optimistic)
             }
 
-            // Plain `status` cannot reach polkit, so this is safe to run any time. The two readings
-            // that can (fwupd's BIOS settings and firewalld's zone) are in the privileged pass below.
+            // Plain `status` cannot reach polkit, so it is safe any time; the two privileged readings come below.
             Process {
                 id: probe
                 command: [win.helper, "status"]
@@ -145,19 +132,14 @@ Scope {
                     onStreamFinished: {
                         try { win.info = JSON.parse(text) } catch (e) { win.info = null }
                         win.loading = false
-                        // This reading is now the truth, so the optimistic state is done. Not while a change is
-                        // still running: that reading would predate it and flip the control back.
+                        // This reading is now the truth, but not while a change is running or it would flip the control back.
                         if (!action.running && !userAction.running) win.pending = ({})
                     }
                 }
                 onExited: code => { if (code !== 0 && win.info === null) win.loading = false }
             }
 
-            // The two readings that need root, gathered by one process so there is one password
-            // prompt. It re-reads nothing of yours, so root's settings cannot replace your own.
-            //
-            // The shell itself never runs as root: Quickshell loads QML from ~/.config/quickshell,
-            // which you can write, and privileged code must not live on a path its user can edit.
+            // The two root readings go in one process for one password prompt; the shell itself never runs as root.
             Process {
                 id: deepProbe
                 command: ["pkexec", win.helper, "deep"]
@@ -182,8 +164,7 @@ Scope {
                 deepProbe.running = true
             }
 
-            // No periodic refresh, on purpose: a timer once caused a password prompt every fifteen
-            // seconds. The window reloads when it opens and when one of its changes finishes.
+            // No periodic refresh: a timer once caused a password prompt every fifteen seconds.
             Component.onCompleted: refresh()
 
             Rectangle {
@@ -292,14 +273,12 @@ Scope {
                                 }
                             }
 
-                            // ---------- Security ----------
-                            // Everything about the state of the machine. Things about you are under Privacy below.
+                            // Security: the state of the machine; things about you are under Privacy.
                             Heading { text: "Security" }
 
                             StatusRow {
                                 readonly property var sb: win.info ? win.info.secureBoot : null
-                                // Setup Mode is its own state, not a kind of "Off": the firmware menu says Enabled but
-                                // nothing is verified. Shown amber, not red, because it is half done.
+                                // Setup Mode is its own state, shown amber, because the firmware says Enabled but verifies nothing.
                                 readonly property bool sbSetup: sb !== null && !sb.enabled
                                                                 && sb.setupMode === true
                                 icon: !sb ? "shield" : sb.enabled ? "shield-check" : "shield-alert"
@@ -319,13 +298,11 @@ Scope {
                                         : "The firmware will run any bootloader. Turn Secure Boot on in your UEFI setup screen."
                             }
 
-                            // / and /home are reported separately: encrypting only the volume your files are on is a
-                            // reasonable layout, and "not encrypted" would be wrong for it.
+                            // Report / and /home separately: encrypting only the volume your files are on is a valid layout.
                             StatusRow {
                                 readonly property var enc: win.info ? win.info.encryption : null
                                 readonly property int exposed: enc && enc.unencryptedSwap ? enc.unencryptedSwap.length : 0
-                                // Your files matter most, so they decide the colour. An unencrypted system volume is a
-                                // warning, not a failure.
+                                // Your files decide the colour; an unencrypted system volume is only a warning.
                                 readonly property bool dataSafe: enc !== null && enc.homeEncrypted
                                 readonly property bool allSafe: dataSafe && enc.rootEncrypted && exposed === 0
 
@@ -380,10 +357,7 @@ Scope {
                                 }
                             }
 
-                            // Swap holds whatever was in memory, so plaintext swap defeats disk encryption. The fix
-                            // offered is a swapfile on the encrypted root: it is encrypted by where it lives, and the
-                            // only permanent change is one fstab line with nofail. (Encrypting a swap partition in
-                            // place needed three boot-critical changes and once left a machine unbootable.)
+                            // Plaintext swap defeats disk encryption, so offer a swapfile on the encrypted root (one nofail fstab line).
                             ColumnLayout {
                                 id: swapFix
                                 Layout.fillWidth: true
@@ -403,8 +377,7 @@ Scope {
                                 visible: canAdd || haveFile || exposed !== ""
                                 property bool confirming: false
 
-                                // Plaintext swap partitions are reported, not fixed. Removing a partition is destructive
-                                // and belongs in an installer.
+                                // Plaintext swap partitions are reported, not fixed, since removing a partition is destructive.
                                 Text {
                                     Layout.fillWidth: true
                                     visible: swapFix.exposed !== ""
@@ -527,9 +500,7 @@ Scope {
                                     small: true
                                     onClicked: {
                                         win.notice = "Firmware updater opened."
-                                        // Use --title, not only the escape sequence the script sets: Hyprland decides float/pin
-                                        // when the window is mapped, so a title set later leaves it tiled. Apps.run is used
-                                        // instead of inTerminal because the script already waits for a keypress.
+                                        // Use --title: Hyprland decides float/pin at map time; Apps.run is used because the script already waits for a key.
                                         Apps.run([Theme.terminal, "--title", "Firmware Update",
                                                   "-e", "hypora-firmware"])
                                     }
@@ -763,9 +734,7 @@ Scope {
                                 }
                             }
 
-                            // ---------- Privacy ----------
-                            // The sensors that can observe you, and the record of what you opened. Grouped by subject
-                            // (camera and microphone with location), not by component type.
+                            // Privacy: sensors that can observe you and what you opened, grouped by subject.
                             Heading { text: "Privacy" }
 
                             ToggleRow {
@@ -789,9 +758,7 @@ Scope {
                                 readonly property var cam: win.info ? win.info.camera : null
                                 icon: "camera"
                                 title: "Camera"
-                                // `present` and `controllable` are separate: a camera that is not USB cannot be switched
-                                // off by unloading uvcvideo, and a switched-off camera is still present, so the switch
-                                // stays usable.
+                                // `present` and `controllable` differ: a non-USB camera cannot be unloaded, and a switched-off camera is still present.
                                 available: cam !== null && cam.present && cam.controllable
                                 checked: win.shown("camera", cam !== null && cam.enabled)
                                 detail: !cam ? ""

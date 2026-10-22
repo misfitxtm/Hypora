@@ -1,8 +1,7 @@
 import Quickshell
 import QtQuick
 
-// Status icons on the right of the bar. Clicking them opens the control center;
-// clicking anywhere else (or Escape) closes it.
+// Status icons on the right of the bar; click opens the control center, click elsewhere or Escape closes it.
 Rectangle {
     id: root
     required property var window

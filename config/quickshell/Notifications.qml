@@ -111,9 +111,7 @@ Scope {
                         Text {
                             Layout.fillWidth: true
                             visible: text !== ""
-                            // Apps may send <b>, <i>, <u> and <br>. Any other "<" is escaped so it shows as
-                            // text: StyledText would otherwise fetch an <img src="http://..."> from
-                            // the network the moment the notification appears, even unterminated.
+                            // Allow only <b>, <i>, <u> and <br>; escape any other "<" so StyledText cannot fetch a remote <img> on arrival.
                             text: card.modelData.body.replace(/<(?!\/?(?:b|i|u|br)\s*\/?>)/gi, "&lt;")
                             textFormat: Text.StyledText
                             wrapMode: Text.Wrap

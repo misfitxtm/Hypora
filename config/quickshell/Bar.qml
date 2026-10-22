@@ -14,11 +14,7 @@ Variants {
         implicitHeight: 30
         color: Theme.bg
 
-        // Left: app menu, then this monitor's own workspaces.
-        //
-        // Each monitor owns a block of WS_STRIDE workspace numbers (see hyprland.lua):
-        // monitor 0 has 1-10, monitor 1 has 11-20. The bar shows the block belonging to the
-        // screen it is on and labels them 1-5, so every monitor reads as having its own set.
+        // Left: app menu, then this monitor's own block of workspaces (see WS_STRIDE in hyprland.lua), labelled 1-5.
         readonly property int wsStatic: 5
         readonly property int wsStride: 10
         readonly property var hlMonitor: Hyprland.monitorFor(bar.screen)

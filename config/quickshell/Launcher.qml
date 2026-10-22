@@ -5,8 +5,7 @@ import Quickshell.Wayland
 import Quickshell.Widgets
 import QtQuick
 
-// App launcher. Toggle with:  qs ipc call launcher toggle   (bound to SUPER + R)
-// Type to filter, Up/Down to select, Enter to launch, Escape or click outside to close.
+// App launcher, bound to SUPER + R (qs ipc call launcher toggle).
 Scope {
     id: root
     property bool open: false
@@ -67,8 +66,7 @@ Scope {
                     focus: true
                     Component.onCompleted: forceActiveFocus()
 
-                    // The field has focus while you type, so paging the results below has
-                    // to be handled here rather than on the list itself.
+                    // The field keeps focus while typing, so paging the results must be handled here.
                     Keys.onPressed: event => event.accepted = PageScroll.handle(event, list)
 
                     onTextChanged: list.currentIndex = 0
@@ -116,8 +114,7 @@ Scope {
                         Text {
                             id: nameText
                             anchors { left: icon.right; leftMargin: 12; verticalCenter: parent.verticalCenter }
-                            // Capped so the description always has room. Without this a long
-                            // one (Comment runs to 140-odd characters) overlapped the name.
+                            // Capped so a long Comment (140+ characters) does not overlap the name.
                             width: Math.min(implicitWidth, row.width * 0.55)
                             elide: Text.ElideRight
                             text: row.modelData.name
@@ -131,8 +128,7 @@ Scope {
                                       verticalCenter: parent.verticalCenter }
                             horizontalAlignment: Text.AlignRight
                             elide: Text.ElideRight
-                            // Apps.describe, not genericName: most .desktop files don't set
-                            // GenericName, which left this column empty for half the list
+                            // Use Apps.describe, not genericName: most .desktop files leave GenericName empty.
                             text: Apps.describe(row.modelData)
                             textFormat: Text.PlainText
                             font.family: Theme.font; font.pixelSize: Theme.fontSize - 1

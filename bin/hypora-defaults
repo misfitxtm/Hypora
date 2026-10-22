@@ -272,9 +272,7 @@ def cmd_set(raw, app_id):
         sys.exit(f"{app_id} is not installed, or cannot open files.")
     ext_mime, _ = load_globs()
     mime = ext_mime.get(ext) or add_mime_type(ext)
-    # gio rather than editing the file here: it records the app under Added Associations
-    # as well as Default Applications, which GIO needs before it will honour a default for
-    # an app that doesn't itself declare the type — Neovim and .qml, for one.
+    # Use gio so the app is also recorded under Added Associations, which GIO needs to honour the default.
     p = subprocess.run(["gio", "mime", mime, app_id], capture_output=True, text=True)
     if p.returncode != 0:
         sys.exit(f"Could not set the default: {(p.stderr or p.stdout).strip()[:200]}")

@@ -1,12 +1,6 @@
--- Hypora: keep Neovim's colorscheme in step with the active Hypora theme.
--- Installed to ~/.config/nvim/lua/plugins/hypora.lua on top of the LazyVim starter.
--- Edit anything else under ~/.config/nvim freely; the installer only writes this file.
+-- Keep Neovim's colorscheme in step with the Hypora theme; only this file is installed, edit the rest freely.
 
--- Which Neovim colorscheme goes with which Hypora theme. LazyVim already includes
--- tokyonight and catppuccin; the rest are added below.
---
--- Osakajade is left out on purpose: no Neovim colorscheme matches it. It falls back to the
--- default below, which is a visible mismatch but an honest one.
+-- Map Hypora themes to Neovim colorschemes; Osakajade is left out because none matches, so it falls back to the default.
 local schemes = {
   Nord = "nord",
   TokyoNight = "tokyonight-night",

@@ -1,11 +1,7 @@
 import Quickshell.Services.UPower
 import QtQuick
 
-// Bar indicator, shown on laptops only. Turns red when low.
-//
-// It reads a real battery from UPower.devices in preference to the DisplayDevice composite,
-// and shows nothing rather than a number it cannot trust. (An unpopulated composite used to
-// show its defaults, so the bar read 100% while the battery drained.)
+// Battery indicator for laptops; prefers a real UPower battery and shows nothing rather than an untrusted number.
 Row {
     id: root
     readonly property var dev: {

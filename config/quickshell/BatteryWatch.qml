@@ -2,32 +2,22 @@ import Quickshell
 import Quickshell.Services.UPower
 import QtQuick
 
-// Low battery warnings, and a suspend before the machine dies mid-write.
-//
-// Battery.qml only colours the bar indicator, which you have to be looking at. This
-// notifies at 20% and 10%, and suspends at 5%: running flat while writing to disk can
-// damage the filesystem, and suspending is recoverable.
-//
-// Each threshold fires once per discharge. Plugging in resets them, so a battery near a
-// threshold cannot cause a stream of notifications.
+// Low battery warnings at 20% and 10% and a suspend at 5% to protect the filesystem; each fires once per discharge.
 Scope {
     id: root
 
-    // UPower's DisplayDevice is a composite it makes up. Prefer a real battery from
-    // UPower.devices if there is one. An empty composite still answers, with default values.
+    // UPower's DisplayDevice is a made-up composite, so prefer a real battery from UPower.devices.
     readonly property var dev: {
         const real = (UPower.devices?.values ?? []).find(d => d && d.isLaptopBattery && d.ready)
         return real ?? UPower.displayDevice
     }
 
-    // `ready` separates a reading from a placeholder. Without it an unpopulated device
-    // reports 0 or 1 and the bar can show 100% while the battery drains.
+    // `ready` tells a real reading from a placeholder that would show 100% while the battery drains.
     readonly property bool valid: dev !== null && dev !== undefined
                                   && dev.ready === true && dev.isLaptopBattery === true
     readonly property bool isBattery: valid
     readonly property bool discharging: valid && dev.state === UPowerDeviceState.Discharging
-    // No numeric fallback, on purpose: 1.0 would look like a full battery (no warning) and
-    // 0.0 would suspend the machine. Everything below checks `valid` instead.
+    // No numeric fallback: 1.0 would hide the warning and 0.0 would suspend, so everything checks `valid`.
     readonly property real charge: valid ? dev.percentage : -1
 
     // Fractions, not percentages, to match UPower's own scale
@@ -89,8 +79,7 @@ Scope {
     Timer {
         id: suspendSoon
         interval: 8000
-        // Checked again when it fires, including `valid`: suspending on a reading that has since
-        // gone away is the one mistake here that cannot be undone.
+        // Check `valid` again when it fires: a suspend on a reading that has gone away cannot be undone.
         onTriggered: if (root.valid && root.discharging && root.charge >= 0
                          && root.charge <= root.suspendAt)
                          Quickshell.execDetached(["systemctl", "suspend"])

@@ -1,8 +1,7 @@
 import Quickshell
 import QtQuick
 
-// System usage in the bar, left of the control center: RAM, CPU and temperatures.
-// Click it to choose which readings to show; the choice is remembered.
+// System usage left of the control center; click to choose the readings, which are remembered.
 Rectangle {
     id: root
     required property var window

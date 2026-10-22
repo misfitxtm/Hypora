@@ -33,12 +33,7 @@ import signal
 import subprocess
 import sys
 
-# marker package -> (display name, session packages, sweep name prefixes, evidence prefixes)
-#   marker:   if installed, the desktop is present
-#   session:  packages that start and run the session
-#   sweep:    prefixes of leftover packages (broad on purpose; the closure decides)
-#   evidence: names only this desktop installs. Needed because some prefixes (kf6-*)
-#             also arrive as Qt dependencies on machines that never had the desktop.
+# marker -> (display name, session packages, sweep prefixes, evidence prefixes); evidence guards broad prefixes like kf6-*.
 DESKTOPS = {
     "gnome-shell": ("GNOME", [
         "gnome-shell", "gnome-session", "gnome-initial-setup",

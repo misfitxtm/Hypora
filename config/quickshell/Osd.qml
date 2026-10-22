@@ -5,17 +5,7 @@ import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import QtQuick
 
-// The slider at the bottom of the screen when you press a volume or brightness key.
-//
-// The two halves work differently:
-//   * Volume is a PipeWire property, so it is simply watched. The slider also appears when
-//     the volume changes elsewhere (mouse wheel on the bar icon, control center).
-//   * Brightness is a sysfs file, which does not reliably send change events, so watching
-//     it would mean polling forever. Instead hyprland.lua calls
-//     `qs ipc call osd brightness` after brightnessctl, and the value is read once then.
-//
-// Brightness is only wired up where a backlight exists. A slider that cannot move is
-// worse than none.
+// Volume/brightness slider: volume is watched via PipeWire, brightness comes by `qs ipc call osd brightness`.
 Scope {
     id: root
 
@@ -25,8 +15,7 @@ Scope {
     property string label: ""
     property bool hasBacklight: false
 
-    // Show nothing at startup just because values were read for the first time. PipeWire
-    // publishes the volume on connect, which would flash the slider at every login.
+    // Show nothing for the first read, or PipeWire's initial volume would flash the slider at every login.
     property bool ready: false
     Component.onCompleted: settle.start()
     Timer { id: settle; interval: 1500; onTriggered: root.ready = true }
@@ -44,8 +33,7 @@ Scope {
 
     IpcHandler {
         target: "osd"
-        // Called by the brightness keybinds after brightnessctl has applied the change, so this
-        // reads the new value.
+        // Called by the brightness keybinds after brightnessctl applies the change, so this reads the new value.
         function brightness(): void { if (root.hasBacklight) readBrightness.running = true }
         function volume(): void { root.showVolume() }
     }
@@ -110,8 +98,7 @@ Scope {
             implicitHeight: 120
             exclusionMode: ExclusionMode.Ignore
             WlrLayershell.layer: WlrLayer.Overlay
-            // No keyboard focus: this is a readout, and taking focus would swallow the next press of
-            // the key that raised it.
+            // No keyboard focus: this is only a readout, and focus would swallow the next press of the key.
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
             WlrLayershell.namespace: "hypora-osd"
             color: "transparent"

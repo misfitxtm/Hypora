@@ -4,11 +4,7 @@ import Quickshell.Wayland
 import QtQuick
 import QtQuick.Layouts
 
-// Keyboard shortcuts: what they are, and a way to change them.
-// Changes are written to ~/.config/hypr/keybinds.lua, which hyprland.lua merges over its
-// defaults, then Hyprland reloads. The action names below must match the `keys` table in
-// config/hypr/hyprland.lua. Open from the menu (Help > Keybindings) or with:
-// qs ipc call help open
+// Keyboard shortcuts; changes go to ~/.config/hypr/keybinds.lua, and action names must match `keys` in hyprland.lua.
 Scope {
     id: root
 
@@ -89,25 +85,13 @@ Scope {
 
             function keyFor(action, fallback) { return overrides[action] || fallback }
 
-            // ---------- holding the keyboard while waiting for a chord ----------
-            //
-            // Hyprland handles its binds before any app sees the key. So while this window waits for
-            // a new chord, an already-bound combination runs its action instead (SUPER + Q would
-            // close the window instead of being captured).
-            //
-            // keyboard-shortcuts-inhibit is the Wayland protocol for this: the window asks the
-            // compositor to stop using its shortcuts while this window has focus. It is better than
-            // the `hyprctl dispatch submap` trick used before because:
-            //   * `active` says whether the compositor agreed (the submap call gave no answer).
-            //   * It is tied to this window. If the window closes or the shell crashes, the
-            //     shortcuts come back on their own (the submap was global state).
+            // Hold the keyboard while waiting for a chord via keyboard-shortcuts-inhibit, tied to this window's life.
             ShortcutInhibitor {
                 id: inhibitor
                 window: win
                 enabled: win.capturing !== ""
 
-                // The compositor can revoke it. Say so, rather than silently capturing the action a key
-                // is bound to.
+                // The compositor can revoke the inhibit; say so rather than silently capturing a bound action.
                 onCancelled: {
                     win.capturing = ""
                     win.notice = "The compositor took the keyboard back, so nothing changed."
@@ -115,8 +99,7 @@ Scope {
                 }
             }
 
-            // A chord takes a moment to press. If capture is still open after this, assume it was
-            // forgotten and release the keyboard.
+            // Assume a forgotten capture after this timeout and release the keyboard.
             Timer {
                 id: captureTimeout
                 interval: 15000
@@ -128,9 +111,7 @@ Scope {
                 }
             }
 
-            // Every chord that more than one action wants. A duplicate is allowed (refusing it would
-            // make swapping two shortcuts impossible), but Hyprland keeps only the last bind for a
-            // chord, so the earlier one stops working. Warn for as long as that is true.
+            // Warn about duplicate chords: they are allowed so shortcuts can be swapped, but Hyprland keeps only the last bind.
             readonly property var clashes: {
                 const byKey = {}
                 for (const g of groups)
@@ -239,8 +220,7 @@ Scope {
                 focus: true
 
                 Keys.onPressed: event => {
-                    // Not waiting for a chord: Page Up / Page Down scroll the list. Handled here because this
-                    // item already owns the window's focus for key capture.
+                    // Page Up/Down scroll the list when not waiting for a chord; this item already owns key focus.
                     if (win.capturing === "") {
                         event.accepted = PageScroll.handle(event, scroller)
                         return
@@ -293,8 +273,7 @@ Scope {
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
-                        // While capture is armed, say whether the compositor handed the keyboard over. If it did
-                        // not, a window could close under you.
+                        // While capture is armed, show whether the compositor handed over the keyboard, or a window could close under you.
                         text: win.notice !== "" ? win.notice
                             : win.capturing === "" ? "Click a shortcut to change it."
                             : inhibitor.active

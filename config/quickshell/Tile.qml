@@ -1,7 +1,6 @@
 import QtQuick
 
-// Quick-settings toggle tile. Click toggles; the optional chevron
-// on the right opens more settings.
+// Quick-settings toggle tile; click toggles and the optional chevron opens more settings.
 Rectangle {
     id: root
     property string icon

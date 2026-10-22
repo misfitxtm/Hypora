@@ -54,6 +54,7 @@ class ManifestTests(unittest.TestCase):
     def test_rejects_bad_id_slot_and_unknown_keys(self):
         self.bad(MANIFEST.replace('id = "demo-pods"', 'id = "Demo Pods"'), "id must be")
         self.bad(MANIFEST.replace('slot = "right"', 'slot = "top"'), "slot must be")
+        self.bad(MANIFEST.replace('slot = "right"', 'slot = "right"\nhide_tray = ["A b"]'), "hide_tray")
         self.bad('surprise = 1\n' + MANIFEST, "unknown keys")
 
     def test_rejects_path_escapes(self):
@@ -102,7 +103,7 @@ class InstallTests(unittest.TestCase):
         self.assertNotIn("@BIN_DIR@", qml)
         self.assertEqual(os.stat(self.paths.bin / "demo-tool").st_mode & 0o777, 0o755)
         listed = json.loads(self.paths.list_file.read_text())
-        self.assertEqual(listed, [{"id": "demo-pods", "component": "Demo", "slot": "right"}])
+        self.assertEqual(listed, [{"id": "demo-pods", "component": "Demo", "slot": "right", "hide_tray": []}])
 
     def test_summary_names_every_file(self):
         make_plugin(self.src)
@@ -210,8 +211,7 @@ class MiscTests(unittest.TestCase):
         self.assertEqual(len(hp.clean("x" * 500)), 200)
 
     def test_root_owned_list_matches_installer(self):
-        # install.sh and hypora-plugin each list the root-owned helpers; they must agree or a
-        # plugin could shadow one that install.sh puts in /usr/local/bin.
+        # install.sh and hypora-plugin each list the root-owned helpers and must agree, or a plugin could shadow one.
         text = (ROOT / "install.sh").read_text()
         body = text.split("ROOT_OWNED=(", 1)[1].split(")", 1)[0]
         self.assertEqual(set(body.split()), hp.ROOT_OWNED)

@@ -1,9 +1,6 @@
 import QtQuick
 
-// The Hypora mark: a hexagon around an "H" whose crossbar is an aurora wave.
-// The gradient is fixed rather than themed, so the mark looks the same whichever theme
-// is active — a logo that changes colour isn't much of a logo.
-// The SDDM theme (system/sddm/hypora/Main.qml) draws the same SVG; keep them in sync.
+// The Hypora mark with a fixed gradient so it looks the same in every theme; keep in sync with the SDDM theme's SVG.
 Image {
     id: root
     property real size: 18

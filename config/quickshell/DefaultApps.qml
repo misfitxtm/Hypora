@@ -3,12 +3,7 @@ import Quickshell.Io
 import QtQuick
 import QtQuick.Layouts
 
-// Default apps: which app opens each kind of file, and a box to add a type of your own
-// (".qml opens in Neovim"). Everything goes through bin/hypora-defaults, which only writes
-// your ~/.config/mimeapps.list (the file Files, Firefox and xdg-open all read), so a choice
-// holds everywhere and needs no password. Run `hypora-defaults list` to see what this
-// window reads. Open it from the menu (Settings > Default Apps) or with:
-// qs ipc call defaults open
+// Default apps via bin/hypora-defaults, which writes only the user's mimeapps.list so no password is needed.
 Scope {
     id: root
 

@@ -7,13 +7,7 @@ import QtQuick
 Singleton {
     id: state
 
-    // The main display, chosen in Display Settings and stored in ~/.config/hypr/monitors.lua
-    // as HYPORA_PRIMARY. It is read here so there is one reader.
-    //
-    // Single-instance panels (app menu, clipboard history) need one screen to live on.
-    // `Quickshell.screens[0]` is enumeration order, which changes when a cable moves.
-    //
-    // It falls back to screens[0] when nothing is saved or the saved output is unplugged.
+    // The main display (HYPORA_PRIMARY in monitors.lua) read in one place; falls back to screens[0] when unset or unplugged.
     property string primaryName: ""
     readonly property var primaryScreen:
         Quickshell.screens.find(s => s.name === primaryName) ?? Quickshell.screens[0] ?? null
@@ -24,8 +18,7 @@ Singleton {
         path: Quickshell.env("HOME") + "/.config/hypr/monitors.lua"
         watchChanges: true
         printErrors: false
-        // Read synchronously, like SysInfo: this singleton is created on first use, and an async
-        // load would let the first binding of primaryScreen fall back to screens[0].
+        // Read synchronously: this singleton is created on first use, and an async load would fall back to screens[0].
         blockLoading: true
         onFileChanged: reload()
         onLoaded: {

@@ -3,9 +3,7 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Live RAM / CPU / GPU readings, plus which of them the bar widget shows.
-// The numbers come from bin/hypora-sysinfo, which prints a line of JSON on a timer.
-// Your choice of readings is kept in ~/.config/hypora/sysinfo.json.
+// Live RAM/CPU/GPU readings from bin/hypora-sysinfo, and which ones show, kept in ~/.config/hypora/sysinfo.json.
 Singleton {
     id: root
 
@@ -80,8 +78,7 @@ Singleton {
         path: Quickshell.env("HOME") + "/.config/hypora/sysinfo.json"
         watchChanges: true
         printErrors: false
-        // Read synchronously: this singleton is created on first use, and an async load would
-        // briefly give the bar the defaults instead of your saved choice.
+        // Read synchronously, or the bar would briefly show defaults instead of your saved choice.
         blockLoading: true
         onFileChanged: reload()
         onLoaded: {
