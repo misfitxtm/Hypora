@@ -1,5 +1,4 @@
-# Claude Code sandbox placeholders
-.claude/
+# Local tool config that can hold access tokens
 .mcp.json
 
 # Python bytecode
