@@ -31,6 +31,7 @@ from pathlib import Path
 SB_GUID = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
 EFIVARS = Path("/sys/firmware/efi/efivars")
 SELINUX_CONFIG = Path("/etc/selinux/config")
+AUTORELABEL = Path("/.autorelabel")
 
 
 def atomic_write(path, text):
@@ -651,13 +652,17 @@ def set_selinux_boot(mode):
         text = SELINUX_CONFIG.read_text()
     except OSError as e:
         sys.exit(f"cannot read {SELINUX_CONFIG}: {e}")
+    was = re.search(r"^\s*SELINUX\s*=\s*(\w+)", text, re.M)
+    was = was.group(1) if was else ""
     new, n = re.subn(r"^\s*SELINUX\s*=\s*\w+", f"SELINUX={mode}", text, count=1, flags=re.M)
     if n == 0:
         new = text.rstrip("\n") + f"\nSELINUX={mode}\n"
     atomic_write(SELINUX_CONFIG, new)
-    # relabel on the next boot so enforcing can work
-    Path("/.autorelabel").touch()
-    print(f"SELINUX={mode} set for the next boot")
+    # Files made while it was off or permissive can lack labels, so relabel once when moving to enforcing; no other change needs it.
+    relabel = mode == "enforcing" and was != "enforcing"
+    if relabel:
+        AUTORELABEL.touch()
+    print(f"SELINUX={mode} set for the next boot" + ("; the disk is relabelled on that boot" if relabel else ""))
 
 
 def set_camera(state):

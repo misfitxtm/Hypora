@@ -94,12 +94,70 @@ class SwapfileTests(unittest.TestCase):
         self.assertEqual(self.fstab.read_text(), "UUID=abc / btrfs defaults 0 0")
 
 
+class RootBoundFileTests(unittest.TestCase):
+    """Files that root copies under /usr and /etc come from templates in the user's home, so they are checked first."""
+    ROOT_FILES = ("sddm-theme.conf", "plymouth.plymouth", "qt6ct-system.conf")
+
+    def render(self, tamper=None):
+        with tempfile.TemporaryDirectory() as home:
+            conf = Path(home) / ".config/hypora"
+            (conf / "themes/Nord").mkdir(parents=True)
+            (conf / "themes/Nord/colors.toml").write_text((ROOT / "themes/Nord/colors.toml").read_text())
+            (conf / "templates").mkdir()
+            for t in (ROOT / "themes/templates").glob("*.tpl"):
+                (conf / "templates" / t.name).write_text(t.read_text())
+            for name, extra in (tamper or {}).items():
+                with open(conf / "templates" / name, "a") as f:
+                    f.write(extra)
+            stubs = Path(home) / "stubs"       # keep the test away from the real session
+            stubs.mkdir()
+            for cmd in ("pkill", "gsettings"):
+                (stubs / cmd).write_text("#!/bin/sh\nexit 0\n")
+                (stubs / cmd).chmod(0o755)
+            r = subprocess.run(["bash", str(ROOT / "bin/hypora-theme"), "Nord"], stdin=subprocess.DEVNULL,
+                               env={"HOME": home, "PATH": f"{stubs}:{os.environ['PATH']}"}, capture_output=True, text=True)
+            return r, {f for f in self.ROOT_FILES if (conf / "current" / f).exists()}, (conf / "current/kitty.conf").exists()
+
+    def test_shipped_templates_pass(self):
+        r, kept, _ = self.render()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(kept, set(self.ROOT_FILES))
+        self.assertNotIn("Not installing", r.stderr)
+
+    def test_edited_templates_are_not_offered_to_root(self):
+        r, kept, user_file = self.render({"plymouth.plymouth.tpl": "ScriptFile=/home/x/evil.script\n",
+                                          "sddm-theme.conf.tpl": 'x="$(id)"\n',
+                                          "qt6ct.conf.tpl": "stylesheets=/tmp/x.qss\n"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(kept, set())
+        self.assertTrue(user_file)          # the user's own theme still applies
+        for line in ("ScriptFile=/home/x/evil.script", 'x="$(id)"', "stylesheets=/tmp/x.qss"):
+            self.assertIn(line, r.stderr)
+
+
 class SelinuxBootTests(unittest.TestCase):
     def test_disabled_is_refused(self):
         hs = load("hypora-security")
         with mock.patch.object(hs.os, "geteuid", return_value=0):
             with self.assertRaises(SystemExit):
                 hs.set_selinux_boot("disabled")
+
+
+    def set_boot(self, before, mode):
+        hs = load("hypora-security")
+        with tempfile.TemporaryDirectory() as d:
+            conf, mark = Path(d) / "config", Path(d) / "autorelabel"
+            conf.write_text(before)
+            with mock.patch.object(hs.os, "geteuid", return_value=0), \
+                 mock.patch.object(hs, "SELINUX_CONFIG", conf), mock.patch.object(hs, "AUTORELABEL", mark):
+                hs.set_selinux_boot(mode)
+            return conf.read_text(), mark.exists()
+
+    def test_relabels_only_when_moving_to_enforcing(self):
+        self.assertEqual(self.set_boot("SELINUX=permissive\n", "enforcing"), ("SELINUX=enforcing\n", True))
+        self.assertEqual(self.set_boot("# no mode yet\n", "enforcing")[1], True)
+        self.assertEqual(self.set_boot("SELINUX=enforcing\n", "enforcing"), ("SELINUX=enforcing\n", False))
+        self.assertEqual(self.set_boot("SELINUX=enforcing\n", "permissive"), ("SELINUX=permissive\n", False))
 
 
 if __name__ == "__main__":

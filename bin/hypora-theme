@@ -88,6 +88,26 @@ for tpl in "$TEMPLATES"/*.tpl; do
     fi
     mv "$out.new" "$out"
 done
+# Files that root installs under /usr or /etc are rendered from templates in your home, which anything running as you
+# can edit. Install one only if every line is a shape the shipped template produces; otherwise drop it and say why.
+# check_rendered FILE REGEX: succeed if every line of FILE matches the extended regex REGEX.
+check_rendered() {
+    local f=$1 re=$2 bad
+    [ -f "$f" ] || return 1
+    bad=$(grep -nvE "$re" "$f" | head -3 || true)
+    [ -z "$bad" ] && return 0
+    echo "Not installing $(basename "$f") as root: it has lines the shipped template never makes (a template was edited?):" >&2
+    printf '  %s\n' "$bad" >&2
+    rm -f "$f"
+    return 1
+}
+SDDM_RE='^(#.*|\[General\]|[a-z_]+="[^"\\$`]*"|)$'
+PLY_RE='^(#.*|\[[A-Za-z -]+\]|Name=Hypora|Description=[A-Za-z0-9 ,._-]*|ModuleName=two-step|ImageDir=/usr/share/plymouth/themes/hypora|(Font|TitleFont)=[A-Za-z0-9 ._+-]+|(BackgroundStartColor|BackgroundEndColor|ProgressBarBackgroundColor|ProgressBarForegroundColor)=0x[0-9a-fA-F]{6}|ProgressBar(Width|Height)=[0-9]+|[A-Za-z]+Alignment=[.0-9]+|Transition=none|TransitionDuration=[.0-9]+|(MessageBelowAnimation|DialogClearsFirmwareBackground|UseFirmwareBackground|UseEndAnimation|UseProgressBar|SuppressMessages|ProgressBarShowPercentComplete)=(true|false)|(Title|SubTitle)=[A-Za-z0-9 .,_-]+|)$'
+QT_RE='^(#.*|\[(Appearance|Fonts)\]|style=[A-Za-z]+|custom_palette=true|color_scheme_path=/etc/xdg/qt6ct/colors\.conf|icon_theme=[A-Za-z0-9 ._+-]+|standard_dialogs=default|(fixed|general)="[A-Za-z0-9 ._+-]+,[0-9,-]+"|)$'
+QTC_RE='^(\[ColorScheme\]|(active|disabled|inactive)_colors=#ff[0-9a-fA-F]{6}(, #ff[0-9a-fA-F]{6})*|)$'
+check_rendered "$OUT/sddm-theme.conf" "$SDDM_RE" || true
+check_rendered "$OUT/plymouth.plymouth" "$PLY_RE" || true
+
 # Use the copy next to this script because ~/.local/bin may not be on PATH during install.
 PLYGEN=$(command -v hypora-plymouth 2>/dev/null || true)
 [ -n "$PLYGEN" ] || PLYGEN="$(dirname "$(readlink -f "$0")")/hypora-plymouth"
@@ -141,11 +161,11 @@ pkill -USR1 -x kitty 2>/dev/null || true   # kitty reloads its config on SIGUSR1
 # The login colours file is root-owned, so update it only when sudo can be asked (terminal or install.sh).
 SDDM_CONF=/usr/share/sddm/themes/hypora/theme.conf
 # Copy hypora-greeter's `primary` line across, or a theme switch would show the login panel on every monitor.
-if [ -f "$SDDM_CONF" ]; then
+if [ -f "$SDDM_CONF" ] && [ -f "$OUT/sddm-theme.conf" ]; then
     keep_primary=$(grep -E '^primary[[:space:]]*=' "$SDDM_CONF" 2>/dev/null | head -1 || true)
     [ -n "$keep_primary" ] && printf '%s\n' "$keep_primary" >> "$OUT/sddm-theme.conf"
 fi
-if [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF"; then
+if [ -f "$OUT/sddm-theme.conf" ] && [ -d "$(dirname "$SDDM_CONF")" ] && ! cmp -s "$OUT/sddm-theme.conf" "$SDDM_CONF"; then
     if [ -w "$SDDM_CONF" ]; then
         cat "$OUT/sddm-theme.conf" > "$SDDM_CONF"
     elif [ -t 0 ]; then
@@ -159,7 +179,8 @@ fi
 QT_SYS_DIR=/etc/xdg/qt6ct
 sed "s|^color_scheme_path=.*|color_scheme_path=$QT_SYS_DIR/colors.conf|" \
     "$OUT/qt6ct.conf" > "$OUT/qt6ct-system.conf"
-if [ -t 0 ] || [ -w "$QT_SYS_DIR" ]; then
+if check_rendered "$OUT/qt6ct-system.conf" "$QT_RE" && check_rendered "$OUT/qt6ct-colors.conf" "$QTC_RE" \
+   && { [ -t 0 ] || [ -w "$QT_SYS_DIR" ]; }; then
     if ! cmp -s "$OUT/qt6ct-system.conf" "$QT_SYS_DIR/qt6ct.conf" \
        || ! cmp -s "$OUT/qt6ct-colors.conf" "$QT_SYS_DIR/colors.conf"; then
         sudo install -d -m755 "$QT_SYS_DIR" 2>/dev/null \

@@ -716,10 +716,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable hypora-flatpak-update.timer \
     || warn "Could not enable the flatpak update timer"
 
-# Fix hardware that did not come up; runs from $REPO since ~/.local/bin is user-writable and absent on fresh installs.
+# Fix hardware that did not come up; install the root-owned copy first, since the checkout is user-writable.
 if [ -x "$REPO/bin/hypora-hardware" ]; then
     log "Checking hardware, firmware and drivers"
-    sudo "$REPO/bin/hypora-hardware" fix || warn "Some hardware could not be fixed"
+    sudo install -m755 -o root -g root "$REPO/bin/hypora-hardware" /usr/local/bin/hypora-hardware
+    sudo /usr/local/bin/hypora-hardware fix || warn "Some hardware could not be fixed"
     "$REPO/bin/hypora-hardware" probe || true
 fi
 

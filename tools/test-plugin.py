@@ -190,6 +190,29 @@ class InstallTests(unittest.TestCase):
         hp.remove(self.paths, "demo-pods", assume_yes=True, out=self.out.append)
         self.assertEqual(mark.read_text().split(), ["in", "1", "1", "out"])
 
+    def test_a_script_changed_after_the_summary_is_not_run(self):
+        mark = Path(self.tmp.name) / "marks"
+        make_plugin(self.src, MANIFEST + '\n[setup]\ninstall = "run/in.sh"\n', {"run/in.sh": f"#!/bin/sh\necho shown >> {mark}\n"})
+        os.chmod(self.src / "run/in.sh", 0o755)
+
+        def swap_then_say_yes(*_):
+            (self.src / "run/in.sh").write_text(f"#!/bin/sh\necho swapped >> {mark}\n")
+            return True
+        real, hp.confirm = hp.confirm, swap_then_say_yes
+        try:
+            with self.assertRaises(hp.PluginError) as ctx:
+                hp.install(self.paths, str(self.src), assume_yes=False, out=self.out.append)
+        finally:
+            hp.confirm = real
+        self.assertIn("changed after you were shown it", str(ctx.exception))
+        self.assertFalse(mark.exists())
+
+    def test_summary_warns_a_script_can_run_more_than_its_own_file(self):
+        make_plugin(self.src, MANIFEST + '\n[setup]\ninstall = "run/in.sh"\n', {"run/in.sh": "#!/bin/sh\n"})
+        os.chmod(self.src / "run/in.sh", 0o755)
+        self.install()
+        self.assertIn("any code in the plugin", "\n".join(self.out))
+
     def test_failed_setup_leaves_files_and_says_how_to_retry(self):
         make_plugin(self.src, MANIFEST + '\n[setup]\ninstall = "run/in.sh"\n', {"run/in.sh": "#!/bin/sh\nexit 3\n"})
         os.chmod(self.src / "run/in.sh", 0o755)

@@ -66,7 +66,7 @@ Reboot when it finishes. SDDM shows the Hypora login screen and starts the **Hyp
 - **Hyprland** (started through `uwsm`) with **Quickshell** as the shell: bar, menu, control center, launcher, notifications and a polkit prompt. It replaces Waybar, Mako and a standalone polkit agent
 - **Six themes**: Nord, Tokyo Night, Catppuccin Mocha, Gruvbox, Kanagawa and Osaka Jade, each with wallpapers. One `colors.toml` per theme drives everything, and **SUPER + ALT + T** switches ([make your own](docs/theming.md))
 - **Settings windows** for Network, Bluetooth, Sound, Display, Default Apps, and Security & Privacy
-- **Privacy and security by default**: encrypted DNS, a closed firewall, MAC randomization, automatic security updates and no telemetry ([details](docs/security.md))
+- **Privacy and security by default**: DNS-over-TLS where the network allows it, a closed firewall, MAC randomization, automatic security updates and no telemetry ([details](docs/security.md))
 - **Plugins** for the bar, with every file and script shown to you before anything is installed ([plugins](docs/plugins.md))
 - **Terminal tools**: kitty, zsh with Oh My Zsh, eza, Neovim with LazyVim, and fastfetch
 
@@ -96,7 +96,7 @@ The reasoning behind each subsystem (what it does, why it is done that way, and 
 | [Security and privacy](docs/security.md) | What privacy means here, the Security window, where software comes from, the keyring, firmware and updates |
 | [Boot](docs/boot.md) | The GRUB menu, the Plymouth splash and the themed text console |
 | [Storage](docs/storage.md) | btrfs snapshots with snapper, and why Hypora would rather you had no swap partition |
-| [Network](docs/network.md) | Encrypted DNS, and per-network MAC randomization |
+| [Network](docs/network.md) | DNS-over-TLS where the network allows it, and per-network MAC randomization |
 | [Power](docs/power.md) | Measuring what a laptop draws, and the profiles that reduce it |
 | [Hardware](docs/hardware.md) | Finding hardware that came up without a driver, firmware or radio |
 | [Desktop](docs/desktop.md) | Workspaces and monitors, the main display, customizing, and replacing another desktop |

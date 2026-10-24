@@ -333,6 +333,8 @@ def summarize(m, root, plan, commit, dirty, source, previous):
     for label, rel in (("install", m.setup_install), ("remove", m.setup_remove)):
         if rel:
             lines.append(f"  RUNS AS YOU on {label}: {rel}  [sha256 {sha(read_source_file(root, rel))[:12]}]")
+    if m.setup_install or m.setup_remove:
+        lines.append("  (a script can run any code in the plugin, not only that file)")
     if m.setup_env:
         lines.append("  with environment: " + ", ".join(f"{k}={clean(v, 40)}" for k, v in m.setup_env.items()))
     return "\n".join(lines)
@@ -375,6 +377,7 @@ def install(paths, source, assume_yes=False, ref=None, commit=None, out=print):
         m = parse_manifest(mpath.read_text())
         previous = load_state(paths, m.id)
         plan = plan_files(paths, m, root, previous)
+        shown_hash = sha(read_source_file(root, m.setup_install)) if m.setup_install else ""
         commit_id, dirty = describe_source(root)
         out("Plugin to install:\n" + summarize(m, root, plan, commit_id, dirty, source or str(root), previous))
         if not confirm("Install this plugin?", assume_yes):
@@ -413,6 +416,10 @@ def install(paths, source, assume_yes=False, ref=None, commit=None, out=print):
         if m.setup_install:
             out(f"Running {m.setup_install} ...")
             script = (root / m.setup_install).resolve()
+            # shortcut: a check just before the run, not a lock, so a swap in that instant still gets through; copy the folder if that matters.
+            if sha(read_source_file(root, m.setup_install)) != shown_hash:
+                raise PluginError(f"{m.setup_install} changed after you were shown it, so it was not run. "
+                                  f"The plugin's files are in place; run: hypora-plugin update {m.id}")
             code = run_script(script, m.setup_env, root)
             if code != 0:
                 raise PluginError(f"{m.setup_install} exited with {code}. The plugin's files are in place; "

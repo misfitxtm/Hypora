@@ -73,8 +73,8 @@ def search(query):
         out.append({
             "name": r["name"],
             "detail": where,
-            "latitude": round(r["latitude"], 4),
-            "longitude": round(r["longitude"], 4),
+            "latitude": round(r["latitude"], 2),
+            "longitude": round(r["longitude"], 2),
         })
     return {"results": out}
 
@@ -82,8 +82,9 @@ def search(query):
 def fetch(lat, lon, unit):
     fahrenheit = unit.lower().startswith("f")
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        # 2 decimals is about 1 km: plenty for a forecast, and it tells the service less about where you are
+        "latitude": round(float(lat), 2),
+        "longitude": round(float(lon), 2),
         "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,weather_code,wind_speed_10m",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min",
         "timezone": "auto",
